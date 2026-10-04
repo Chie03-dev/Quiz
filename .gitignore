@@ -1,0 +1,11 @@
+node_modules/
+out/
+dist/
+.vite/
+*.log
+*.err
+screen*.png
+*.png
+server-info.json
+.fake-student-token.json
+tsconfig.*.tsbuildinfo
