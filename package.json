@@ -1,0 +1,48 @@
+{
+  "name": "quiz-instructor",
+  "version": "0.1.0",
+  "description": "LAN quiz instructor app - step 1: lobby skeleton",
+  "main": "./out/main/index.js",
+  "author": "Quiz",
+  "license": "MIT",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "start": "electron-vite preview",
+    "build": "npm run typecheck && electron-vite build",
+    "typecheck": "npm run typecheck:node && npm run typecheck:web",
+    "typecheck:node": "tsc -p tsconfig.node.json --noEmit",
+    "typecheck:web": "tsc -p tsconfig.web.json --noEmit",
+    "fake-student": "tsx scripts/fake-student.ts",
+    "check": "tsx scripts/check.ts",
+    "ui-check": "tsx scripts/ui-check.ts"
+  },
+  "dependencies": {
+    "@fastify/websocket": "^11.0.2",
+    "bonjour-service": "^1.3.0",
+    "fastify": "^5.2.1",
+    "qrcode": "^1.5.4",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.0",
+    "@types/qrcode": "^1.5.5",
+    "@types/react": "^19.0.8",
+    "@types/react-dom": "^19.0.3",
+    "@types/ws": "^8.5.14",
+    "@vitejs/plugin-react": "^4.3.4",
+    "electron": "^34.0.0",
+    "electron-vite": "^3.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3",
+    "vite": "^6.0.11"
+  },
+  "allowScripts": {
+    "electron@34.5.8": true,
+    "esbuild@0.25.12": true,
+    "esbuild@0.28.2": true
+  }
+}
