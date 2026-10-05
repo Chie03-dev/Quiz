@@ -8,6 +8,8 @@
 import WebSocket from 'ws'
 import { createServer } from 'node:net'
 import { startServer } from '../src/main/server'
+import { isValidAnswer } from '../src/main/server/quizRun'
+import { SAMPLE_QUIZ } from '../src/main/sampleQuiz'
 import { buildCheckArgs, buildInstallCommand, CHECK_OPTIONS, classifyCheckOutput, encodePowerShell, FIREWALL_RULES, FIREWALL_PROFILE } from '../src/main/firewall'
 import { FIRST_PORT, MAX_PORT, PORT_RANGE } from '../src/shared/types'
 
@@ -161,12 +163,55 @@ function client(port: number, host = '127.0.0.1'): Client {
   return c
 }
 
+/**
+ * Waits for the next message of a type, ignoring ones already received. Used by
+ * the step-3 checks, where the same message type arrives several times.
+ */
+function waitFresh(c: Client, t: string, ms = 3000, from = c.msgs.length): Promise<any> {
+  return new Promise((res, rej) => {
+    const timer = setTimeout(() => rej(new Error(`timeout waiting for a fresh ${t}`)), ms)
+    const iv = setInterval(() => {
+      const hit = c.msgs.slice(from).find((m) => m.t === t)
+      if (hit) {
+        clearInterval(iv)
+        clearTimeout(timer)
+        res(hit)
+      }
+    }, 25)
+  })
+}
+
+/** Recursively looks for a forbidden field name anywhere in a payload. */
+function findField(value: unknown, name: string): boolean {
+  if (Array.isArray(value)) return value.some((v) => findField(v, name))
+  if (value && typeof value === 'object') {
+    return Object.entries(value as Record<string, unknown>).some(
+      ([k, v]) => k.toLowerCase() === name || findField(v, name)
+    )
+  }
+  return false
+}
+
+/** One correct-looking answer per question type. */
+const TYPE_ANSWERS: Record<string, unknown> = {
+  q1: 'b',
+  q2: true,
+  q3: 'Tokyo',
+  q4: ['Au', 'Ag'],
+  q5: ['red', 'green', 'blue'],
+  q6: '15 €',
+  q7: { l1: 'r3', l2: 'r2', l3: 'r1' },
+  q8: { p1: 'a2', p2: 'a3', p3: 'a1' }
+}
+
 async function main(): Promise<void> {
   const seen: any[] = []
   let lastInfo: any = null
   const server = await startServer({
     onStudentsChanged: (s) => seen.push(JSON.parse(JSON.stringify(s))),
-    onServerChanged: (i) => (lastInfo = i)
+    onServerChanged: (i) => (lastInfo = i),
+    onQuizChanged: () => {},
+    onLockChanged: () => {}
   })
   const port = server.info().port
   const pin = server.session.pin
@@ -214,6 +259,10 @@ async function main(): Promise<void> {
   log(kicked, 'kick() returns true')
   log(a2.msgs.some((m) => m.t === 'kick'), 'kicked client receives the kick message')
   log(server.session.list().length === 0, 'kick removes the student from the list')
+
+  // --- quiz run (step 2), before the rate-limit tests block the IP ---
+  console.log('\n--- quiz run ---')
+  await checkQuizRun(server, port)
 
   // 7. five wrong PINs then RATE_LIMITED on the 6th (per IP, so run last)
   for (let i = 0; i < 5; i++) {
@@ -278,7 +327,12 @@ async function main(): Promise<void> {
   // 12. port fallback when 8080 is already taken
   const blocker = createServer()
   await new Promise<void>((res, rej) => blocker.listen(8080, '0.0.0.0', () => res()).once('error', rej))
-  const fallback = await startServer({ onStudentsChanged: () => {}, onServerChanged: () => {} })
+  const fallback = await startServer({
+    onStudentsChanged: () => {},
+    onServerChanged: () => {},
+    onQuizChanged: () => {},
+    onLockChanged: () => {}
+  })
   log(fallback.info().port !== 8080, `falls back to port ${fallback.info().port} when 8080 is taken`)
   const fc = client(fallback.info().port)
   await fc.open()
@@ -297,3 +351,338 @@ async function main(): Promise<void> {
 }
 
 main().catch((e) => { console.error(e); process.exit(1) })
+/** Step-2 quiz run against the live server. */
+async function checkQuizRun(server: any, port: number): Promise<void> {
+  // A fresh lobby with no students: the server must refuse to start.
+  server.newSession()
+  const freshPin = server.session.pin
+  log(server.session.status() === 'lobby', 'a new session is back in the lobby')
+  log(server.startQuiz(SAMPLE_QUIZ) === false, 'startQuiz refuses with no students')
+
+  const alice = client(port)
+  await alice.open()
+  alice.send('join', { pin: freshPin, name: 'RunAlice', deviceToken: 'run-alice' })
+  const aliceId = (await alice.wait('joined')).d.studentId
+
+  // --- start ---
+  const t0 = Date.now()
+  log(server.startQuiz(SAMPLE_QUIZ), 'startQuiz succeeds with a student in the lobby')
+  log(server.session.status() === 'running', 'the session status becomes running')
+  const start = await alice.wait('quiz_start')
+  log(start.d.questions.length === SAMPLE_QUIZ.questions.length, 'quiz_start carries every question')
+  log(
+    start.d.endsAt >= t0 + SAMPLE_QUIZ.limitMs - 1000 &&
+      start.d.endsAt <= Date.now() + SAMPLE_QUIZ.limitMs,
+    'quiz_start sets endsAt limitMs from the server clock'
+  )
+  log(start.d.serverTime > 0, 'quiz_start carries serverTime for the phone clock offset')
+  log(server.startQuiz(SAMPLE_QUIZ) === false, 'startQuiz is refused while already running')
+
+  // No key material of any kind may appear in the phone-facing payload.
+  for (const forbidden of ['key', 'accepted', 'tolerance', 'correct', 'answer']) {
+    log(!findField(start.d, forbidden), `quiz_start contains no "${forbidden}" field`)
+  }
+
+  // --- answers: one per question type, all acked ---
+  let seq = 0
+  for (const q of SAMPLE_QUIZ.questions) {
+    alice.send('answer', { qid: q.qid, value: TYPE_ANSWERS[q.qid], seq: ++seq })
+  }
+  const acks = await alice.wait('ack')
+  log(acks.d.qid === 'q1' && acks.d.seq === 1, 'the first answer is acked with its qid and seq')
+  await sleep(300)
+  const ackedCount = alice.msgs.filter((m) => m.t === 'ack').length
+  log(
+    ackedCount === SAMPLE_QUIZ.questions.length,
+    `every answer type is acked (${ackedCount}/${SAMPLE_QUIZ.questions.length})`
+  )
+  const state = server.session.quizState()
+  log(state.questions.every((q: any) => q.answered === 1), 'the per-question counts show one answered')
+  log(
+    state.answeredByStudent[aliceId] === SAMPLE_QUIZ.questions.length,
+    'the student shows all questions answered'
+  )
+
+  // --- type validation ---
+  const badAnswers: [string, unknown, string][] = [
+    ['q1', 'zzz', 'mcq with an unknown option'],
+    ['q1', true, 'mcq with a boolean'],
+    ['q2', 'yes', 'tf with a string'],
+    ['q3', ['Tokyo'], 'identification with an array'],
+    ['q4', ['Au'], 'fillin with the wrong number of blanks'],
+    ['q5', ['a', 'b', 'c', 'd'], 'enumeration with more items than count'],
+    ['q6', 15, 'problem with a number'],
+    ['q7', { l1: 'nope', l2: 'r2' }, 'matching with an unknown right id'],
+    ['q7', { l1: 'r1', l2: 'r1' }, 'matching that uses one right id twice'],
+    ['q7', ['r1'], 'matching sent as an array'],
+    ['q8', { pX: 'a1' }, 'connect with an unknown prompt id'],
+    ['q8', { p1: 'aX' }, 'connect with an unknown answer id'],
+    ['q8', { p1: 'a1', p2: 'a1' }, 'connect that uses one answer id twice']
+  ]
+  for (const [qid, value, why] of badAnswers) {
+    const before = JSON.stringify(server.session.quizState().answeredByStudent)
+    const seen = alice.msgs.filter((m) => m.t === 'error').length
+    alice.send('answer', { qid, value, seq: ++seq })
+    await sleep(120)
+    const fresh = alice.msgs.filter((m) => m.t === 'error').slice(seen)
+    const after = JSON.stringify(server.session.quizState().answeredByStudent)
+    log(
+      fresh.length === 1 && fresh[0].d.code === 'BAD_ANSWER' && before === after,
+      `${why} returns BAD_ANSWER and stores nothing`
+    )
+  }
+  const q8 = SAMPLE_QUIZ.questions.find((q) => q.type === 'connect')!
+  log(isValidAnswer(q8, { p1: 'a2', p2: 'a3' }), 'a partial connect map with known ids is valid')
+  log(!isValidAnswer(q8, 'not an object'), 'a connect answer that is not a map is invalid')
+  log(!isValidAnswer(q8, { p1: 'a1', p2: 'a2', p3: 'a1' }), 'connect with a repeated answer id is invalid')
+
+  const errorsBefore = alice.msgs.filter((m) => m.t === 'error').length
+  alice.send('answer', { qid: 'nope', value: 'x', seq: ++seq })
+  await sleep(200)
+  const newErrors = alice.msgs.filter((m) => m.t === 'error').slice(errorsBefore)
+  log(
+    newErrors.length === 1 && newErrors[0].d.code === 'UNKNOWN_QUESTION',
+    'an unknown qid returns UNKNOWN_QUESTION'
+  )
+
+  // --- stale seq: ignored but still acked ---
+  const highSeq = seq + 100
+  alice.send('answer', { qid: 'q1', value: 'a', seq: highSeq })
+  await sleep(200)
+  const stale = client(port)
+  await stale.open()
+  stale.send('join', { pin: freshPin, name: 'RunAlice', deviceToken: 'run-alice' })
+  await stale.wait('joined')
+  stale.send('answer', { qid: 'q1', value: 'c', seq: highSeq - 1 })
+  const staleAck = await stale.wait('ack')
+  log(staleAck.d.seq === highSeq - 1 && staleAck.d.qid === 'q1', 'a stale seq is still acked')
+  const afterStale = server.session.quizState()
+  log(
+    afterStale.questions.find((q: any) => q.qid === 'q1').answered === 1,
+    'the stale answer did not change the stored count'
+  )
+  const restoredStale = await stale.wait('answers_state')
+  log(restoredStale.d.answers.q1 === 'a', 'the stored value is still the newer one, not the stale one')
+
+  // --- a stranger during the run gets CLOSED ---
+  const stranger = client(port)
+  await stranger.open()
+  stranger.send('join', { pin: freshPin, name: 'RunStranger', deviceToken: 'run-stranger' })
+  log((await stranger.wait('error')).d.code === 'CLOSED', 'a new joiner during the quiz gets CLOSED')
+  stranger.close()
+
+  // --- rejoin mid-quiz restores the answers ---
+  stale.close()
+  await sleep(200)
+  const back = client(port)
+  await back.open()
+  back.send('join', { pin: freshPin, name: 'RunAlice', deviceToken: 'run-alice' })
+  const rejoinStart = await back.wait('quiz_start')
+  log(rejoinStart.d.questions.length === SAMPLE_QUIZ.questions.length, 'a mid-quiz rejoin gets quiz_start again')
+  const restored = await back.wait('answers_state')
+  log(
+    Object.keys(restored.d.answers).length === SAMPLE_QUIZ.questions.length &&
+      restored.d.answers.q1 === 'a' &&
+      JSON.stringify(restored.d.answers.q8) === JSON.stringify({ p1: 'a2', p2: 'a3', p3: 'a1' }),
+    'answers_state returns the same answers, including the connect value'
+  )
+
+  // --- instructor ends it ---
+  log(server.endQuiz(), 'endQuiz succeeds while running')
+  const endedMsg = await back.wait('quiz_end')
+  log(endedMsg.d.reason === 'instructor', 'quiz_end reports reason "instructor"')
+  log(server.session.status() === 'ended', 'the session status becomes ended')
+  back.send('answer', { qid: 'q2', value: false, seq: ++seq })
+  log((await back.wait('error')).d.code === 'QUIZ_ENDED', 'a late answer returns QUIZ_ENDED')
+
+  // --- the server timer ends the quiz on its own ---
+  server.newSession()
+  const timerPin = server.session.pin
+  const bob = client(port)
+  await bob.open()
+  bob.send('join', { pin: timerPin, name: 'RunBob', deviceToken: 'run-bob' })
+  await bob.wait('joined')
+  log(server.startQuiz({ ...SAMPLE_QUIZ, limitMs: 1500 }), 'a short quiz starts for the timer test')
+  await bob.wait('quiz_start')
+  const timerEnd = await bob.wait('quiz_end', 6000)
+  log(timerEnd.d.reason === 'time', 'the server timer ends the quiz with reason "time"')
+  log(server.session.quizState().status === 'ended', 'the timer moves the status to ended')
+
+  // --- step 3: lock and pause ---
+  console.log('\n--- lock and pause ---')
+  await checkLockPause(server, port)
+  alice.close()
+  back.close()
+  bob.close()
+  await sleep(150)
+  server.newSession()
+}
+
+/** Step-3 lock and pause against the live server. */
+async function checkLockPause(server: any, port: number): Promise<void> {
+  server.newSession()
+  // A short heartbeat timeout keeps the network-pause test fast.
+  server.session.heartbeatTimeoutMs = 1500
+  const pin = server.session.pin
+
+  const alice = client(port)
+  await alice.open()
+  alice.send('join', { pin, name: 'LockAlice', deviceToken: 'lock-alice' })
+  const aliceId = (await alice.wait('joined')).d.studentId
+  const aliceHb = setInterval(() => alice.send('hb', {}), 400)
+
+  const bob = client(port)
+  await bob.open()
+  bob.send('join', { pin, name: 'LockBob', deviceToken: 'lock-bob' })
+  const bobId = (await bob.wait('joined')).d.studentId
+  const bobHb = setInterval(() => bob.send('hb', {}), 400)
+
+  const info = (id: string): any => server.session.list().find((s: any) => s.id === id)
+
+  log(server.session.lockEnabled() === true, 'lockMode is on by default')
+  log(server.startQuiz(SAMPLE_QUIZ), 'the quiz starts with lock on')
+  const start = await alice.wait('quiz_start')
+  log(start.d.lockMode === true, 'quiz_start carries lockMode: true')
+
+  // --- focus_lost pauses while the lock is on ---
+  alice.send('focus_lost', { reason: 'background' })
+  const pausedFocus = await alice.wait('paused')
+  log(pausedFocus.d.reason === 'focus', 'focus_lost with lock on sends paused { reason: "focus" }')
+  log(info(aliceId).paused === true, 'the student shows as paused in the student list')
+  log(info(aliceId).pauseReason === 'focus', 'the pause reason is focus')
+
+  // --- answers while paused are rejected and never stored ---
+  const beforePaused = JSON.stringify(server.session.quizState().answeredByStudent)
+  alice.send('answer', { qid: 'q1', value: 'b', seq: 1 })
+  const pausedErr = await alice.wait('error')
+  log(pausedErr.d.code === 'PAUSED', 'an answer while paused returns PAUSED')
+  log(
+    JSON.stringify(server.session.quizState().answeredByStudent) === beforePaused,
+    'a PAUSED answer stores nothing'
+  )
+  log(!alice.msgs.some((m) => m.t === 'ack'), 'a PAUSED answer is not acked either')
+
+  // --- only the instructor resumes ---
+  alice.send('focus_gained', {})
+  alice.send('resume_request', {})
+  await sleep(300)
+  log(!alice.msgs.some((m) => m.t === 'resumed'), 'focus_gained and resume_request never resume')
+  log(info(aliceId).paused === true, 'the student is still paused after a resume_request')
+  log(info(aliceId).resumeRequested === true, 'the resume_request is marked for the instructor')
+  log(server.approveResume('no-such-student') === false, 'approving an unknown student does nothing')
+  log(server.approveResume(aliceId), 'approveResume succeeds for a paused student')
+  log(!!(await alice.wait('resumed')), 'approveResume sends resumed to the phone')
+  log(info(aliceId).paused === false, 'the student is no longer paused after approval')
+  log(info(aliceId).resumeRequested === false, 'the resume-request marker is cleared')
+  log(
+    server.approveResume(aliceId) === false,
+    'approving a student who is not paused does nothing'
+  )
+
+  // --- focus_lost is ignored while the lock is off ---
+  const mark = alice.msgs.length
+  server.setLock(false)
+  const lockMsg = await alice.wait('lock')
+  log(lockMsg.d.on === false, 'setLock(false) broadcasts lock { on: false }')
+  log(server.session.lockEnabled() === false, 'the session lock flag follows the toggle')
+  alice.send('focus_lost', { reason: 'window' })
+  await sleep(300)
+  log(!alice.msgs.slice(mark).some((m) => m.t === 'paused'), 'focus_lost with lock off sends no paused')
+  log(info(aliceId).paused === false, 'focus_lost with lock off does not pause the student')
+  log(
+    info(aliceId).focusLosses === 2 && info(aliceId).events.some((e: any) => e.type === 'focus_lost'),
+    'focus_lost with lock off is still counted and logged'
+  )
+
+  // --- turning the lock off resumes focus pauses ---
+  const markPause = alice.msgs.length
+  server.setLock(true)
+  await sleep(150)
+  alice.send('focus_lost', { reason: 'unpinned' })
+  await waitFresh(alice, 'paused', 3000, markPause)
+  log(info(aliceId).paused === true, 'turning the lock back on pauses on focus_lost again')
+  const resumedBefore = alice.msgs.filter((m) => m.t === 'resumed').length
+  server.setLock(false)
+  await sleep(300)
+  log(
+    alice.msgs.filter((m) => m.t === 'resumed').length === resumedBefore + 1,
+    'setLock(false) resumes a focus pause'
+  )
+  log(info(aliceId).paused === false, 'the focus pause is cleared when the lock goes off')
+
+  // --- heartbeat timeout while running pauses for network ---
+  clearInterval(bobHb)
+  const t0 = Date.now()
+  while (!info(bobId).paused && Date.now() - t0 < 6000) await sleep(100)
+  log(info(bobId).paused === true, 'no heartbeat while running pauses the student')
+  log(info(bobId).pauseReason === 'network', 'the heartbeat pause reason is network')
+  log(
+    server.session.quizState().status === 'running' && server.session.quizState().endsAt !== null,
+    'the quiz clock keeps running for a paused student'
+  )
+  bob.send('answer', { qid: 'q1', value: 'b', seq: 1 })
+  log((await bob.wait('error')).d.code === 'PAUSED', 'a network-paused student also gets PAUSED')
+
+  // --- a network-paused student rejoining stays paused ---
+  bob.close()
+  await sleep(200)
+  const bob2 = client(port)
+  await bob2.open()
+  bob2.send('join', { pin, name: 'LockBob', deviceToken: 'lock-bob' })
+  await bob2.wait('quiz_start')
+  await bob2.wait('answers_state')
+  const rejoinPaused = await bob2.wait('paused')
+  log(
+    rejoinPaused.d.reason === 'network',
+    'a network-paused rejoin gets quiz_start, answers_state, then paused { reason: "network" }'
+  )
+  log(info(bobId).paused === true, 'the rejoin did not clear the pause')
+  const bob2Hb = setInterval(() => bob2.send('hb', {}), 400)
+  bob2.send('resume_request', {})
+  await sleep(250)
+  log(!bob2.msgs.some((m) => m.t === 'resumed'), 'a rejoined student is still not auto-resumed')
+
+  // --- lock off does not touch network pauses ---
+  server.setLock(false)
+  await sleep(300)
+  log(!bob2.msgs.some((m) => m.t === 'resumed'), 'setLock(false) does not resume network pauses')
+  log(info(bobId).paused === true, 'the network pause survives the lock going off')
+
+  // --- approve all ---
+  server.setLock(true)
+  await sleep(150)
+  const markPause2 = alice.msgs.length
+  alice.send('focus_lost', { reason: 'background' })
+  await waitFresh(alice, 'paused', 3000, markPause2)
+  const approved = server.approveAllResume()
+  log(approved === 2, `approveAllResume resumed both paused students (${approved})`)
+  await sleep(250)
+  log(info(aliceId).paused === false && info(bobId).paused === false, 'nobody is paused any more')
+
+  // --- the in-memory event log ---
+  const aliceEvents = info(aliceId).events.map((e: any) => e.type)
+  const bobEvents = info(bobId).events.map((e: any) => e.type)
+  for (const type of ['focus_lost', 'focus_gained', 'paused', 'resumed', 'resume_request']) {
+    log(aliceEvents.includes(type), `Alice's event log holds a "${type}" event`)
+  }
+  for (const type of ['paused', 'disconnect', 'resume_request']) {
+    log(bobEvents.includes(type), `Bob's event log holds a "${type}" event`)
+  }
+  log(
+    info(aliceId).events.every((e: any) => typeof e.at === 'number' && Number.isFinite(e.at)),
+    'every event carries a timestamp'
+  )
+  log(
+    info(aliceId).events.filter((e: any) => e.type === 'focus_lost').length ===
+      info(aliceId).focusLosses,
+    'the focus-loss counter matches the number of focus_lost events'
+  )
+
+  clearInterval(aliceHb)
+  clearInterval(bob2Hb)
+  bob2.close()
+  server.endQuiz()
+  await sleep(150)
+  server.session.heartbeatTimeoutMs = 10_000
+  server.newSession()
+}

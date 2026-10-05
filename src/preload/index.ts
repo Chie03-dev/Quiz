@@ -6,6 +6,12 @@ const api = {
   getState: (): Promise<StateSnapshot | null> => ipcRenderer.invoke('server:info'),
   newSession: (): Promise<StateSnapshot | null> => ipcRenderer.invoke('server:newSession'),
   kick: (studentId: string): Promise<boolean> => ipcRenderer.invoke('server:kick', studentId),
+  startQuiz: (): Promise<boolean> => ipcRenderer.invoke('server:startQuiz'),
+  endQuiz: (): Promise<boolean> => ipcRenderer.invoke('server:endQuiz'),
+  setLock: (on: boolean): Promise<boolean> => ipcRenderer.invoke('server:setLock', on),
+  approveResume: (studentId: string): Promise<boolean> =>
+    ipcRenderer.invoke('server:approveResume', studentId),
+  approveAllResume: (): Promise<number> => ipcRenderer.invoke('server:approveAllResume'),
   selectIp: (ip: string): Promise<boolean> => ipcRenderer.invoke('server:selectIp', ip),
   firewallStatus: (): Promise<FirewallStatus> => ipcRenderer.invoke('firewall:status'),
   /** Triggers the UAC prompt. Only ever called from an explicit instructor click. */

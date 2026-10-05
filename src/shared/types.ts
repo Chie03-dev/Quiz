@@ -14,10 +14,106 @@ export const PORT_RANGE = `${FIRST_PORT}-${MAX_PORT}`
 
 export type StudentStatus = 'connected' | 'disconnected'
 
+/** Why a student is paused (see docs/protocol.md, step 3). */
+export type PauseReason = 'focus' | 'network'
+
+/** Events kept in memory per student for the instructor's event list. */
+export type StudentEventType =
+  | 'focus_lost'
+  | 'focus_gained'
+  | 'paused'
+  | 'resumed'
+  | 'resume_request'
+  | 'disconnect'
+  | 'reconnect'
+
+export interface StudentEvent {
+  at: number
+  type: StudentEventType
+}
+
+/** Question shapes and the session status machine (see docs/protocol.md, step 2). */
+export type QuestionType =
+  | 'mcq'
+  | 'tf'
+  | 'identification'
+  | 'fillin'
+  | 'enumeration'
+  | 'problem'
+  | 'matching'
+  | 'connect'
+
+export interface Choice {
+  id: string
+  text: string
+}
+
+/**
+ * A question as a phone sees it. Only the fields listed here are ever sent;
+ * the answer key never leaves the main process.
+ */
+export interface PublicQuestion {
+  qid: string
+  type: QuestionType
+  body: string
+  points: number
+  options?: Choice[] // mcq
+  blanks?: number // fillin
+  count?: number // enumeration
+  left?: Choice[] // matching
+  right?: Choice[] // matching
+  prompts?: Choice[] // connect
+  answers?: Choice[] // connect
+}
+
+/** What a phone may send back: a scalar, a list, or a leftId -> rightId map. */
+export type AnswerValue = string | boolean | string[] | Record<string, string>
+
+/** A question plus its key. Main process only. */
+export interface QuizQuestion extends PublicQuestion {
+  key: AnswerValue
+}
+
+export interface Quiz {
+  quizId: string
+  title: string
+  limitMs: number
+  questions: QuizQuestion[]
+}
+
+export type SessionStatus = 'lobby' | 'running' | 'ended'
+
+export interface QuestionProgress {
+  qid: string
+  type: QuestionType
+  body: string
+  /** How many students have sent an answer for this question. */
+  answered: number
+}
+
+export interface QuizState {
+  status: SessionStatus
+  title: string | null
+  endsAt: number | null
+  questions: QuestionProgress[]
+  /** Answers per student id. Counters only: no values, no scores. */
+  answeredByStudent: Record<string, number>
+  endReason: 'time' | 'instructor' | null
+}
+
 export interface StudentInfo {
   id: string
   name: string
   status: StudentStatus
+  /** Lock/pause state, step 3. */
+  paused: boolean
+  pauseReason: PauseReason | null
+  /** How many times this student reported losing focus. */
+  focusLosses: number
+  /** The phone asked to be resumed. A marker only; it never resumes anything. */
+  resumeRequested: boolean
+  /** Recent events, oldest first. */
+  events: StudentEvent[]
 }
 
 export interface ServerInfo {
@@ -32,10 +128,21 @@ export interface ServerInfo {
 export interface StateSnapshot {
   server: ServerInfo
   students: StudentInfo[]
+  quiz: QuizState
+  /** Step 3: when on, focus_lost pauses the student. Always true in a fresh session. */
+  lockMode: boolean
 }
 
 /** Error codes defined in docs/protocol.md. */
-export type ServerErrorCode = 'BAD_PIN' | 'NAME_TAKEN' | 'RATE_LIMITED' | 'CLOSED'
+export type ServerErrorCode =
+  | 'BAD_PIN'
+  | 'NAME_TAKEN'
+  | 'RATE_LIMITED'
+  | 'CLOSED'
+  | 'QUIZ_ENDED'
+  | 'BAD_ANSWER'
+  | 'UNKNOWN_QUESTION'
+  | 'PAUSED'
 
 // --- Windows firewall (see src/main/firewall.ts) ---
 
@@ -70,8 +177,6 @@ export interface HeartbeatMessage {
   id?: string
   d: Record<string, never>
 }
-export type PhoneMessage = JoinMessage | HeartbeatMessage
-
 export interface JoinedMessage {
   t: 'joined'
   id?: string
@@ -87,4 +192,85 @@ export interface KickMessage {
   id?: string
   d: Record<string, never>
 }
-export type ServerMessage = JoinedMessage | ErrorMessage | KickMessage
+export interface AnswerMessage {
+  t: 'answer'
+  id?: string
+  d: { qid: string; value: unknown; seq: number }
+}
+export interface FocusLostMessage {
+  t: 'focus_lost'
+  id?: string
+  d: { reason: 'background' | 'window' | 'unpinned' }
+}
+export interface FocusGainedMessage {
+  t: 'focus_gained'
+  id?: string
+  d: Record<string, never>
+}
+export interface ResumeRequestMessage {
+  t: 'resume_request'
+  id?: string
+  d: Record<string, never>
+}
+export type PhoneMessage =
+  | JoinMessage
+  | HeartbeatMessage
+  | AnswerMessage
+  | FocusLostMessage
+  | FocusGainedMessage
+  | ResumeRequestMessage
+
+export interface QuizStartMessage {
+  t: 'quiz_start'
+  id?: string
+  d: {
+    quizId: string
+    title: string
+    questions: PublicQuestion[]
+    endsAt: number
+    serverTime: number
+    /** Step 3: when true, focus_lost pauses this student. */
+    lockMode: boolean
+  }
+}
+export interface AnswersStateMessage {
+  t: 'answers_state'
+  id?: string
+  d: { answers: Record<string, unknown> }
+}
+export interface AckMessage {
+  t: 'ack'
+  id?: string
+  d: { qid: string; seq: number }
+}
+export interface QuizEndMessage {
+  t: 'quiz_end'
+  id?: string
+  d: { reason: 'time' | 'instructor' }
+}
+export interface PausedMessage {
+  t: 'paused'
+  id?: string
+  d: { reason: PauseReason }
+}
+export interface ResumedMessage {
+  t: 'resumed'
+  id?: string
+  d: Record<string, never>
+}
+export interface LockMessage {
+  t: 'lock'
+  id?: string
+  d: { on: boolean }
+}
+export type ServerMessage =
+  | JoinedMessage
+  | ErrorMessage
+  | KickMessage
+  | QuizStartMessage
+  | AnswersStateMessage
+  | AckMessage
+  | QuizEndMessage
+  | PausedMessage
+  | ResumedMessage
+  | LockMessage

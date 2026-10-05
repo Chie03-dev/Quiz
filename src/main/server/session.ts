@@ -1,9 +1,22 @@
 import { randomInt, randomUUID } from 'node:crypto'
-import type { ServerErrorCode, ServerMessage, StudentInfo, StudentStatus } from '../../shared/types'
+import type {
+  PauseReason,
+  Quiz,
+  QuizState,
+  ServerErrorCode,
+  ServerMessage,
+  StudentEvent,
+  StudentEventType,
+  StudentInfo,
+  StudentStatus
+} from '../../shared/types'
 import { PinRateLimiter } from './rateLimit'
+import { QuizRun } from './quizRun'
 
 export const HEARTBEAT_TIMEOUT_MS = 10_000
 const SWEEP_INTERVAL_MS = 1_000
+/** Keep the per-student event list bounded; the newest entries are what matter. */
+const MAX_EVENTS = 100
 
 /** Minimal socket surface so the session logic stays testable without a real server. */
 export interface SocketLike {
@@ -21,6 +34,12 @@ export interface Student {
   status: StudentStatus
   lastSeen: number
   socket: SocketLike | null
+  // --- step 3: lock and pause ---
+  paused: boolean
+  pauseReason: PauseReason | null
+  focusLosses: number
+  resumeRequested: boolean
+  events: StudentEvent[]
 }
 
 /** Random 4-digit PIN, zero padded so it is always 4 characters. */
@@ -30,13 +49,39 @@ export function generatePin(): string {
 
 export class QuizSession {
   pin: string
+  /** Step 3: on by default. Lock is a deterrent plus visibility, not enforcement. */
+  private lockMode = true
   private students = new Map<string, Student>()
   private byDeviceToken = new Map<string, Student>()
   private limiter = new PinRateLimiter()
   private sweeper: NodeJS.Timeout | null = null
+  private run: QuizRun
+  /** Configurable so the check script does not have to wait 10 real seconds. */
+  heartbeatTimeoutMs = HEARTBEAT_TIMEOUT_MS
 
-  constructor(private onChange: (students: StudentInfo[]) => void) {
+  constructor(
+    private onChange: (students: StudentInfo[]) => void,
+    onQuizChange: (state: QuizState) => void,
+    private onLockChange: (lockMode: boolean) => void = () => {}
+  ) {
     this.pin = generatePin()
+    this.run = new QuizRun(
+      () => this.broadcast({ t: 'quiz_end', d: { reason: this.run.state().endReason ?? 'instructor' } }),
+      onQuizChange
+    )
+  }
+
+  status(): QuizState['status'] {
+    return this.run.currentStatus
+  }
+
+  /** Step 3: whether focus_lost pauses a student. */
+  lockEnabled(): boolean {
+    return this.lockMode
+  }
+
+  quizState(): QuizState {
+    return this.run.state()
   }
 
   start(): void {
@@ -56,6 +101,9 @@ export class QuizSession {
     this.byDeviceToken.clear()
     this.limiter = new PinRateLimiter()
     this.pin = generatePin()
+    this.lockMode = true
+    this.run.reset()
+    this.onLockChange(this.lockMode)
     this.notify()
   }
 
@@ -63,7 +111,12 @@ export class QuizSession {
     return [...this.students.values()].map((s) => ({
       id: s.id,
       name: s.name,
-      status: s.status
+      status: s.status,
+      paused: s.paused,
+      pauseReason: s.pauseReason,
+      focusLosses: s.focusLosses,
+      resumeRequested: s.resumeRequested,
+      events: [...s.events]
     }))
   }
 
@@ -81,6 +134,12 @@ export class QuizSession {
 
   private error(socket: SocketLike, code: ServerErrorCode): void {
     this.send(socket, { t: 'error', d: { code } })
+  }
+
+  private broadcast(msg: ServerMessage): void {
+    for (const student of this.students.values()) {
+      if (student.socket) this.send(student.socket, msg)
+    }
   }
 
   handleJoin(
@@ -104,6 +163,13 @@ export class QuizSession {
 
     // Identity restore: same deviceToken => same studentId.
     const existing = d.deviceToken ? this.byDeviceToken.get(d.deviceToken) : undefined
+
+    // Outside the lobby only a known device may (re)join; anyone else is too late.
+    if (this.run.currentStatus !== 'lobby' && !existing) {
+      this.error(socket, 'CLOSED')
+      return
+    }
+
     if (existing) {
       this.attach(existing, socket, existing.name)
       return
@@ -124,7 +190,12 @@ export class QuizSession {
       deviceToken: d.deviceToken ?? randomUUID(),
       status: 'connected',
       lastSeen: Date.now(),
-      socket
+      socket,
+      paused: false,
+      pauseReason: null,
+      focusLosses: 0,
+      resumeRequested: false,
+      events: []
     }
     this.students.set(student.id, student)
     this.byDeviceToken.set(student.deviceToken, student)
@@ -138,7 +209,65 @@ export class QuizSession {
     const wasDisconnected = student.status === 'disconnected'
     student.lastSeen = Date.now()
     student.status = 'connected'
-    if (wasDisconnected) this.notify()
+    if (wasDisconnected) {
+      // A network pause is NOT cleared here: only the instructor resumes.
+      this.log(student, 'reconnect')
+      this.notify()
+    }
+  }
+
+  // --- step 3: focus and resume requests ---
+
+  /** focus_lost only pauses while the lock is on. It is always logged. */
+  handleFocusLost(socket: SocketLike): void {
+    const student = this.findBySocket(socket)
+    if (!student) return
+    student.focusLosses++
+    this.log(student, 'focus_lost')
+    if (!this.lockMode) {
+      this.notify()
+      return
+    }
+    // Already paused: logged, but nothing changes.
+    if (student.paused) {
+      this.notify()
+      return
+    }
+    this.pause(student, 'focus')
+  }
+
+  /** focus_gained is informational only: it never resumes anyone. */
+  handleFocusGained(socket: SocketLike): void {
+    const student = this.findBySocket(socket)
+    if (!student) return
+    this.log(student, 'focus_gained')
+    this.notify()
+  }
+
+  /** A request is a marker for the instructor, never a resume by itself. */
+  handleResumeRequest(socket: SocketLike): void {
+    const student = this.findBySocket(socket)
+    if (!student) return
+    student.resumeRequested = true
+    this.log(student, 'resume_request')
+    this.notify()
+  }
+
+  handleAnswer(socket: SocketLike, d: { qid?: unknown; value?: unknown; seq?: unknown }): void {
+    const student = this.findBySocket(socket)
+    if (!student) return
+    // A paused student's answer is rejected and never stored; the phone keeps it
+    // queued and resends it after resumed.
+    if (student.paused) {
+      this.error(socket, 'PAUSED')
+      return
+    }
+    const outcome = this.run.handleAnswer(student.id, d.qid, d.value, d.seq)
+    if (outcome.kind === 'error') {
+      this.error(socket, outcome.code)
+      return
+    }
+    this.send(socket, { t: 'ack', d: { qid: String(d.qid), seq: outcome.seq } })
   }
 
   handleClose(socket: SocketLike): void {
@@ -147,11 +276,64 @@ export class QuizSession {
     student.socket = null
     if (student.status === 'connected') {
       student.status = 'disconnected'
+      this.log(student, 'disconnect')
       this.notify()
     }
   }
 
   // --- instructor commands (local UI only, via IPC) ---
+
+  /**
+   * Instructor toggles lock. Turning it off resumes students paused for "focus";
+   * network pauses are never auto-resumed.
+   */
+  setLock(on: boolean): void {
+    this.lockMode = on
+    this.broadcast({ t: 'lock', d: { on } })
+    if (!on) {
+      for (const student of this.students.values()) {
+        if (student.paused && student.pauseReason === 'focus') this.resume(student)
+      }
+    }
+    this.onLockChange(this.lockMode)
+    this.notify()
+  }
+
+  /** Approves one student. Unknown or not-connected students do nothing. */
+  approveResume(studentId: string): boolean {
+    const student = this.students.get(studentId)
+    if (!student) return false
+    if (!student.socket) return false
+    if (!student.paused) return false
+    this.resume(student)
+    return true
+  }
+
+  /** Approves every paused student that is currently connected. */
+  approveAllResume(): number {
+    let n = 0
+    for (const student of this.students.values()) {
+      if (student.paused && student.socket) {
+        this.resume(student)
+        n++
+      }
+    }
+    return n
+  }
+
+  /** Starts the run. Only from the lobby, and only with students in it. */
+  startQuiz(quiz: Quiz): boolean {
+    if (this.run.currentStatus !== 'lobby') return false
+    if (this.students.size === 0) return false
+    this.run.start(quiz, Date.now())
+    this.broadcast({ t: 'quiz_start', d: this.startPayload(Date.now()) })
+    return true
+  }
+
+  /** Instructor ends the quiz early; the run then sends quiz_end itself. */
+  endQuiz(): boolean {
+    return this.run.end('instructor')
+  }
 
   kick(studentId: string): boolean {
     const student = this.students.get(studentId)
@@ -185,6 +367,44 @@ export class QuizSession {
     student.lastSeen = Date.now()
     student.socket = socket
     this.send(socket, { t: 'joined', d: { studentId: student.id, deviceToken: student.deviceToken } })
+
+    // A known device rejoining mid-quiz gets the quiz again plus its own answers.
+    if (this.run.currentStatus === 'running') {
+      this.send(socket, { t: 'quiz_start', d: this.startPayload(Date.now()) })
+      this.send(socket, { t: 'answers_state', d: { answers: this.run.answersFor(student.id) } })
+      // A student paused for a network drop stays paused after rejoining.
+      if (student.paused && student.pauseReason === 'network') {
+        this.send(socket, { t: 'paused', d: { reason: 'network' } })
+      }
+    }
+    this.notify()
+  }
+
+  /** quiz_start plus the step-3 lockMode flag. */
+  private startPayload(now: number): ReturnType<QuizRun['startPayload']> & { lockMode: boolean } {
+    return { ...this.run.startPayload(now), lockMode: this.lockMode }
+  }
+
+  /** Records an event and keeps the list bounded. */
+  private log(student: Student, type: StudentEventType): void {
+    student.events.push({ at: Date.now(), type })
+    if (student.events.length > MAX_EVENTS) student.events.shift()
+  }
+
+  private pause(student: Student, reason: PauseReason): void {
+    student.paused = true
+    student.pauseReason = reason
+    this.log(student, 'paused')
+    if (student.socket) this.send(student.socket, { t: 'paused', d: { reason } })
+    this.notify()
+  }
+
+  private resume(student: Student): void {
+    student.paused = false
+    student.pauseReason = null
+    student.resumeRequested = false
+    this.log(student, 'resumed')
+    if (student.socket) this.send(student.socket, { t: 'resumed', d: {} })
     this.notify()
   }
 
@@ -195,14 +415,22 @@ export class QuizSession {
     return undefined
   }
 
-  /** Marks students that stopped sending heartbeats as disconnected. */
+  /**
+   * Marks students that stopped sending heartbeats as disconnected, and pauses
+   * them for "network" while the quiz is running. The clock never stops.
+   */
   private sweep(): void {
     const now = Date.now()
     let changed = false
     for (const student of this.students.values()) {
-      if (student.status === 'connected' && now - student.lastSeen > HEARTBEAT_TIMEOUT_MS) {
-        student.status = 'disconnected'
-        changed = true
+      if (student.status !== 'connected' || now - student.lastSeen <= this.heartbeatTimeoutMs) {
+        continue
+      }
+      student.status = 'disconnected'
+      this.log(student, 'disconnect')
+      changed = true
+      if (this.run.currentStatus === 'running' && !student.paused) {
+        this.pause(student, 'network') // pause() notifies on its own
       }
     }
     if (changed) this.notify()

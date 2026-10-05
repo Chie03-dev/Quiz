@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { StateSnapshot } from '../shared/types'
 import { Lobby } from './Lobby'
+import { QuizRun } from './QuizRun'
 
 export function App(): React.JSX.Element {
   const [state, setState] = useState<StateSnapshot | null>(null)
@@ -31,5 +32,6 @@ export function App(): React.JSX.Element {
   if (!state) {
     return <div className="empty">Starting server…</div>
   }
-  return <Lobby state={state} />
+  if (state.quiz.status === 'lobby') return <Lobby state={state} />
+  return <QuizRun state={state} />
 }
