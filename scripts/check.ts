@@ -7,11 +7,17 @@
  */
 import WebSocket from 'ws'
 import { createServer } from 'node:net'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { startServer } from '../src/main/server'
-import { isValidAnswer } from '../src/main/server/quizRun'
+import { isValidAnswer, toPublicQuestions } from '../src/main/server/quizRun'
 import { SAMPLE_QUIZ } from '../src/main/sampleQuiz'
+import { openQuizLibrary, runtimeQuizForStart, type QuizLibrary } from '../src/main/db'
+import { parseQuizJson, serializeQuiz, toRuntimeQuiz } from '../src/main/quizFormat'
+import { quizStartError, validateQuestion } from '../src/shared/validation'
 import { buildCheckArgs, buildInstallCommand, CHECK_OPTIONS, classifyCheckOutput, encodePowerShell, FIREWALL_RULES, FIREWALL_PROFILE } from '../src/main/firewall'
-import { FIRST_PORT, MAX_PORT, PORT_RANGE } from '../src/shared/types'
+import { FIRST_PORT, MAX_PORT, PORT_RANGE, type QuestionType, type Quiz, type StoredQuestion, type StoredQuiz } from '../src/shared/types'
 
 /**
  * Firewall command building. Pure string work only: these tests never run
@@ -129,6 +135,27 @@ const log = (ok: boolean, msg: string): void => {
 }
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
+/** Structural equality for the JSON-shaped objects these checks compare. */
+function deepEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true
+  if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) return false
+  if (Array.isArray(a) !== Array.isArray(b)) return false
+  if (Array.isArray(a) && Array.isArray(b)) {
+    return a.length === b.length && a.every((v, i) => deepEqual(v, b[i]))
+  }
+  const ra = a as Record<string, unknown>
+  const rb = b as Record<string, unknown>
+  const keys = Object.keys(ra)
+  return keys.length === Object.keys(rb).length && keys.every((k) => deepEqual(ra[k], rb[k]))
+}
+
+/** No key material of any kind may appear in a phone-facing payload. */
+function assertNoKeys(payload: unknown, label: string): void {
+  for (const forbidden of ['key', 'accepted', 'tolerance', 'correct', 'answer']) {
+    log(!findField(payload, forbidden), `${label} contains no "${forbidden}" field`)
+  }
+}
+
 interface Client {
   ws: WebSocket
   msgs: any[]
@@ -205,6 +232,10 @@ const TYPE_ANSWERS: Record<string, unknown> = {
 }
 
 async function main(): Promise<void> {
+  // --- quiz library (step 4): exercised offline against a temp database ---
+  console.log('--- quiz library ---')
+  const seededQuiz = checkLibrary()
+
   const seen: any[] = []
   let lastInfo: any = null
   const server = await startServer({
@@ -262,7 +293,7 @@ async function main(): Promise<void> {
 
   // --- quiz run (step 2), before the rate-limit tests block the IP ---
   console.log('\n--- quiz run ---')
-  await checkQuizRun(server, port)
+  await checkQuizRun(server, port, seededQuiz)
 
   // 7. five wrong PINs then RATE_LIMITED on the 6th (per IP, so run last)
   for (let i = 0; i < 5; i++) {
@@ -351,13 +382,420 @@ async function main(): Promise<void> {
 }
 
 main().catch((e) => { console.error(e); process.exit(1) })
+
+/** One valid question of every type, shaped the way the editor submits them. */
+function validQuestions(): StoredQuestion[] {
+  return [
+    {
+      id: 't-mcq', type: 'mcq', body: 'Which is even?', points: 1,
+      data: { options: [{ id: 'a', text: 'one' }, { id: 'b', text: 'two' }] },
+      key: 'b', sourceText: '', status: 'draft'
+    },
+    {
+      id: 't-tf', type: 'tf', body: 'The sky is blue.', points: 1,
+      data: {}, key: true, sourceText: '', status: 'draft'
+    },
+    {
+      id: 't-id', type: 'identification', body: 'Capital of France?', points: 1,
+      data: {}, key: ['Paris'], sourceText: '', status: 'draft'
+    },
+    {
+      id: 't-fillin', type: 'fillin', body: 'A ___ then a ___.', points: 2,
+      data: { blanks: 2 }, key: [['x'], ['y', 'why']], sourceText: '', status: 'draft'
+    },
+    {
+      id: 't-enum', type: 'enumeration', body: 'Name two colours.', points: 2,
+      data: { count: 2 }, key: ['red', 'blue'], sourceText: '', status: 'draft'
+    },
+    {
+      id: 't-prob', type: 'problem', body: 'What is 6 times 7?', points: 3,
+      data: {}, key: { answer: '42', tolerance: 0.5 }, sourceText: '', status: 'draft'
+    },
+    {
+      id: 't-match', type: 'matching', body: 'Match them.', points: 3,
+      data: {
+        left: [{ id: 'l1', text: 'L1' }, { id: 'l2', text: 'L2' }],
+        right: [{ id: 'r1', text: 'R1' }, { id: 'r2', text: 'R2' }, { id: 'r3', text: 'spare' }]
+      },
+      key: { l1: 'r1', l2: 'r2' }, sourceText: '', status: 'draft'
+    },
+    {
+      id: 't-conn', type: 'connect', body: 'Connect them.', points: 3,
+      data: {
+        prompts: [{ id: 'p1', text: 'P1' }, { id: 'p2', text: 'P2' }],
+        answers: [{ id: 'a1', text: 'A1' }, { id: 'a2', text: 'A2' }, { id: 'a3', text: 'decoy' }]
+      },
+      key: { p1: 'a1', p2: 'a2' }, sourceText: '', status: 'draft'
+    }
+  ]
+}
+
+/**
+ * Step-4 library checks against a temp database: seed, CRUD, validation for
+ * all eight types, export/import round trip, malformed import rejection, and
+ * start refusal. Returns the seeded sample quiz as a runtime Quiz so the
+ * existing quiz-run checks exercise a saved quiz rather than a constant.
+ */
+function checkLibrary(): Quiz {
+  const dir = mkdtempSync(join(tmpdir(), 'quiz-check-'))
+  try {
+    const lib = openQuizLibrary(join(dir, 'test.db'))
+
+    // --- first run seeds the step-2 sample quiz ---
+    const first = lib.list()
+    log(first.length === 1 && first[0].title === 'Sample quiz', 'a fresh database seeds the sample quiz')
+    log(
+      first[0].questionCount === 8 && first[0].timeLimitSec === 300,
+      'the seeded quiz lists 8 questions and a 5-minute limit'
+    )
+    const seeded = lib.get(first[0].id)!
+    log(seeded.questions.length === 8, 'the seeded quiz loads all 8 questions')
+    log(
+      deepEqual(
+        seeded.questions.map((q) => q.id),
+        SAMPLE_QUIZ.questions.map((q) => q.qid)
+      ),
+      'seeded questions keep their order and ids'
+    )
+    log(seeded.questions.every((q) => q.status === 'ready'), 'every seeded question is ready')
+    const seededRuntime = toRuntimeQuiz(seeded)
+    log(deepEqual(seededRuntime, SAMPLE_QUIZ), 'the seeded quiz converts back to the step-2 sample exactly')
+    log(quizStartError(seeded) === null, 'the seeded quiz passes the start checks')
+    assertNoKeys(toPublicQuestions(seededRuntime), 'the seeded library quiz')
+
+    // --- create/read/update/delete ---
+    const created = lib.create('Draft quiz')
+    log(created.questions.length === 0, 'create makes an empty quiz')
+    log(lib.list().length === 2, 'the new quiz appears in the list')
+    const saved = lib.save({
+      ...created,
+      title: 'Renamed quiz',
+      timeLimitSec: 120,
+      questions: validQuestions()
+    })
+    log(saved.title === 'Renamed quiz' && saved.timeLimitSec === 120, 'save updates title and time limit')
+    log(
+      saved.questions.length === 8 && saved.questions.every((q) => q.status === 'ready'),
+      'save stores all questions as ready'
+    )
+    const loaded = lib.get(created.id)!
+    log(
+      deepEqual(
+        loaded.questions.map((q) => q.id),
+        validQuestions().map((q) => q.id)
+      ),
+      'saved questions reload in order'
+    )
+    const reordered = lib.save({ ...loaded, questions: [loaded.questions[7], loaded.questions[0]] })
+    log(
+      reordered.questions.length === 2 && reordered.questions[0].id === loaded.questions[7].id,
+      'save replaces the question list and order'
+    )
+    const brokenMcq: StoredQuestion = {
+      ...validQuestions().find((q) => q.type === 'mcq')!,
+      data: { options: [{ id: 'a', text: 'only one' }] },
+      key: 'a'
+    }
+    const withDraft = lib.save({ ...reordered, questions: [brokenMcq] })
+    log(withDraft.questions[0].status === 'draft', 'a question with problems is stored as draft')
+    const copy = lib.duplicate(created.id)!
+    log(copy.id !== created.id && copy.title === 'Renamed quiz copy', 'duplicate copies under a new id')
+    log(
+      deepEqual(
+        copy.questions.map((q) => [q.type, q.body]),
+        withDraft.questions.map((q) => [q.type, q.body])
+      ),
+      'duplicate copies the questions'
+    )
+    log(
+      !copy.questions.some((q) => q.id === withDraft.questions[0].id),
+      'duplicate regenerates question ids'
+    )
+    log(lib.get(created.id)!.questions.length === 1, 'duplicating leaves the original alone')
+    log(lib.duplicate('no-such-quiz') === null, 'duplicating an unknown quiz returns null')
+    log(lib.delete(copy.id) === true, 'delete removes the copy')
+    log(lib.get(copy.id) === null, 'the deleted quiz no longer loads')
+    log(lib.delete(copy.id) === false, 'deleting twice reports false')
+    log(lib.list().length === 2, 'the list is back to seeded plus working quiz')
+
+    checkValidationRules()
+    checkExportImport(lib, seeded)
+    checkStartRefusal(lib, seeded)
+
+    lib.close()
+    return seededRuntime
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+/** Validation rules for all eight types: one good and several bad per type. */
+function checkValidationRules(): void {
+  const good = validQuestions()
+  const byType = (t: QuestionType): StoredQuestion => good.find((q) => q.type === t)!
+  const tweak = (t: QuestionType, patch: Partial<StoredQuestion>): StoredQuestion => ({
+    ...byType(t),
+    ...patch
+  })
+  const cases: { q: StoredQuestion; ready: boolean; label: string }[] = [
+    { q: tweak('mcq', { body: '' }), ready: false, label: 'empty body is not ready' },
+    { q: tweak('mcq', { points: 0 }), ready: false, label: 'zero points is not ready' },
+    { q: byType('mcq'), ready: true, label: 'a valid mcq is ready' },
+    {
+      q: tweak('mcq', { data: { options: [{ id: 'a', text: 'only one' }] }, key: 'a' }),
+      ready: false,
+      label: 'an mcq with one option is not ready'
+    },
+    {
+      q: tweak('mcq', { key: 'zzz' }),
+      ready: false,
+      label: 'an mcq whose key is not an option is not ready'
+    },
+    { q: tweak('mcq', { key: null }), ready: false, label: 'an mcq with no correct option is not ready' },
+    { q: byType('tf'), ready: true, label: 'a valid tf is ready' },
+    { q: tweak('tf', { key: null }), ready: false, label: 'a tf with no choice is not ready' },
+    { q: byType('identification'), ready: true, label: 'a valid identification is ready' },
+    {
+      q: tweak('identification', { key: [] }),
+      ready: false,
+      label: 'an identification with no accepted answers is not ready'
+    },
+    {
+      q: tweak('identification', { key: ['  '] }),
+      ready: false,
+      label: 'an identification with a blank accepted answer is not ready'
+    },
+    { q: byType('fillin'), ready: true, label: 'a valid fillin is ready' },
+    {
+      q: tweak('fillin', { body: 'No blanks here.' }),
+      ready: false,
+      label: 'a fillin with no ___ is not ready'
+    },
+    {
+      q: tweak('fillin', { key: [['x']] }),
+      ready: false,
+      label: 'a fillin with fewer answer lists than blanks is not ready'
+    },
+    {
+      q: tweak('fillin', { key: [['x'], []] }),
+      ready: false,
+      label: 'a fillin with an empty blank is not ready'
+    },
+    { q: byType('enumeration'), ready: true, label: 'a valid enumeration is ready' },
+    {
+      q: tweak('enumeration', { data: { count: 0 } }),
+      ready: false,
+      label: 'an enumeration with count 0 is not ready'
+    },
+    {
+      q: tweak('enumeration', { key: ['red'] }),
+      ready: false,
+      label: 'an enumeration with fewer items than count is not ready'
+    },
+    { q: byType('problem'), ready: true, label: 'a valid problem is ready' },
+    {
+      q: tweak('problem', { key: { answer: '' } }),
+      ready: false,
+      label: 'a problem with an empty answer is not ready'
+    },
+    {
+      q: tweak('problem', { key: { answer: '42', tolerance: -1 } }),
+      ready: false,
+      label: 'a problem with a negative tolerance is not ready'
+    },
+    {
+      q: tweak('problem', { key: { answer: '42' } }),
+      ready: true,
+      label: 'a problem without tolerance is ready'
+    },
+    { q: byType('matching'), ready: true, label: 'a valid matching is ready' },
+    {
+      q: tweak('matching', { key: { l1: 'r1' } }),
+      ready: false,
+      label: 'a matching with an unpaired left item is not ready'
+    },
+    {
+      q: tweak('matching', { key: { l1: 'nope', l2: 'r2' } }),
+      ready: false,
+      label: 'a matching pointing at an unknown right item is not ready'
+    },
+    {
+      q: tweak('matching', { key: { l1: 'r1', l2: 'r1' } }),
+      ready: false,
+      label: 'a matching that reuses a right item is not ready'
+    },
+    { q: byType('connect'), ready: true, label: 'a valid connect is ready' },
+    {
+      q: tweak('connect', { key: { p1: 'a1' } }),
+      ready: false,
+      label: 'a connect with an unpaired prompt is not ready'
+    },
+    {
+      q: tweak('connect', {
+        data: { prompts: [{ id: 'p1', text: '' }], answers: byType('connect').data.answers }
+      }),
+      ready: false,
+      label: 'a connect with an empty prompt is not ready'
+    }
+  ]
+  for (const { q, ready, label } of cases) {
+    const problems = validateQuestion(q)
+    log(ready ? problems.length === 0 : problems.length > 0, `${label} (${q.type})`)
+  }
+}
+
+/** Export/import round trip on a real library quiz, plus malformed rejection. */
+function checkExportImport(lib: QuizLibrary, seeded: StoredQuiz): void {
+  const json = serializeQuiz(seeded)
+  const parsed = parseQuizJson(json)
+  log(parsed.ok, 'the seeded quiz exports to JSON that parses back')
+  if (!parsed.ok) return
+
+  const imported = lib.importQuiz(parsed.quiz)
+  log(imported.title === seeded.title, 'import restores the title')
+  log(
+    imported.timeLimitSec === seeded.timeLimitSec,
+    `import restores the time limit (${imported.timeLimitSec}s)`
+  )
+  log(imported.id !== seeded.id, 'import creates a new quiz id')
+  log(
+    deepEqual(
+      imported.questions.map((q) => q.type),
+      seeded.questions.map((q) => q.type)
+    ),
+    'import keeps question order'
+  )
+  log(
+    deepEqual(serializeQuiz(imported), json),
+    'export/import round-trips byte-identically'
+  )
+  log(imported.questions.every((q) => q.status === 'ready'), 'imported questions are ready')
+  assertNoKeys(toPublicQuestions(toRuntimeQuiz(imported)), 'the imported library quiz')
+
+  // A fix-and-reimport loop: edit the working copy, export, and reimport.
+  const edited: StoredQuiz = {
+    ...imported,
+    questions: imported.questions.map((q, i) =>
+      i === 0 ? { ...q, body: 'Edited body', points: q.points + 1 } : q
+    )
+  }
+  const again = parseQuizJson(serializeQuiz(edited))
+  log(
+    again.ok && again.quiz.questions[0].body === 'Edited body' && again.quiz.questions[0].points === 2,
+    'an exported edit survives a reimport'
+  )
+
+  const bad: [string, string][] = [
+    ['garbage', '{not json'],
+    ['an array', '[]'],
+    ['a wrong format', JSON.stringify({ format: 'quiz', version: 1, title: 'x', timeLimitSec: 60, questions: [] })],
+    ['a wrong version', JSON.stringify({ format: 'quiz-export', version: 99, title: 'x', timeLimitSec: 60, questions: [] })],
+    ['a missing title', JSON.stringify({ format: 'quiz-export', version: 1, title: ' ', timeLimitSec: 60, questions: [] })],
+    ['a zero time limit', JSON.stringify({ format: 'quiz-export', version: 1, title: 'x', timeLimitSec: 0, questions: [] })],
+    [
+      'an unknown type',
+      JSON.stringify({
+        format: 'quiz-export', version: 1, title: 'x', timeLimitSec: 60,
+        questions: [{ type: 'essay', body: 'Write.', points: 1, data: {}, key: null, sourceText: '' }]
+      })
+    ],
+    [
+      'a question with no body',
+      JSON.stringify({
+        format: 'quiz-export', version: 1, title: 'x', timeLimitSec: 60,
+        questions: [{ type: 'tf', body: '', points: 1, data: {}, key: true, sourceText: '' }]
+      })
+    ],
+    [
+      'an mcq with one option',
+      JSON.stringify({
+        format: 'quiz-export', version: 1, title: 'x', timeLimitSec: 60,
+        questions: [
+          { type: 'mcq', body: 'Pick.', points: 1, data: { options: [{ id: 'a', text: 'A' }] }, key: 'a', sourceText: '' }
+        ]
+      })
+    ],
+    [
+      'a matching with a bad pairing',
+      JSON.stringify({
+        format: 'quiz-export', version: 1, title: 'x', timeLimitSec: 60,
+        questions: [
+          {
+            type: 'matching', body: 'Match.', points: 1,
+            data: { left: [{ id: 'l1', text: 'L' }], right: [{ id: 'r1', text: 'R' }] },
+            key: 5, sourceText: ''
+          }
+        ]
+      })
+    ],
+    [
+      'a fillin with a malformed key',
+      JSON.stringify({
+        format: 'quiz-export', version: 1, title: 'x', timeLimitSec: 60,
+        questions: [
+          {
+            type: 'fillin', body: 'A ___ here.', points: 1,
+            data: {}, key: 'Au', sourceText: ''
+          }
+        ]
+      })
+    ]
+  ]
+  for (const [label, text] of bad) {
+    const result = parseQuizJson(text)
+    log(!result.ok && result.error.length > 0, `malformed import rejected with a message: ${label}`)
+  }
+}
+
+/** Start is refused for empty or draft quizzes, naming the blocking questions. */
+function checkStartRefusal(lib: QuizLibrary, seeded: StoredQuiz): void {
+  const empty = lib.create('Empty for a test')
+  const emptyQuiz = lib.get(empty.id)!
+  log(
+    emptyQuiz.questions.length === 0 &&
+      quizStartError(emptyQuiz) === 'This quiz has no questions.',
+    'an empty quiz names its problem'
+  )
+  const emptyAttempt = runtimeQuizForStart(lib, empty.id)
+  log(
+    !emptyAttempt.ok && emptyAttempt.message === 'This quiz has no questions.',
+    'runtimeQuizForStart refuses an empty quiz'
+  )
+
+  const brokenFillin: StoredQuestion = {
+    ...validQuestions().find((q) => q.type === 'fillin')!,
+    body: 'A single ___ here.'
+  }
+  const brokenEnum: StoredQuestion = {
+    ...validQuestions().find((q) => q.type === 'enumeration')!,
+    data: { count: 5 }
+  }
+  const drafty = lib.save({ ...emptyQuiz, questions: [brokenFillin, brokenEnum] })
+  log(
+    drafty.questions.every((q) => q.status === 'draft') &&
+      quizStartError(drafty) === 'Questions 1, 2 are still drafts — fix them before starting.',
+    'draft quizzes name every blocking question'
+  )
+  const draftAttempt = runtimeQuizForStart(lib, drafty.id)
+  log(
+    !draftAttempt.ok && draftAttempt.message.includes('Questions 1, 2'),
+    'runtimeQuizForStart refuses a draft quiz and names the questions'
+  )
+  const missing = runtimeQuizForStart(lib, 'no-such-quiz')
+  log(!missing.ok, 'runtimeQuizForStart refuses an unknown quiz id')
+  const seededAttempt = runtimeQuizForStart(lib, seeded.id)
+  log(
+    seededAttempt.ok && deepEqual(seededAttempt.quiz.quizId, seeded.id),
+    'runtimeQuizForStart converts the seeded quiz for the server'
+  )
+}
 /** Step-2 quiz run against the live server. */
-async function checkQuizRun(server: any, port: number): Promise<void> {
+async function checkQuizRun(server: any, port: number, quiz: Quiz = SAMPLE_QUIZ): Promise<void> {
   // A fresh lobby with no students: the server must refuse to start.
   server.newSession()
   const freshPin = server.session.pin
   log(server.session.status() === 'lobby', 'a new session is back in the lobby')
-  log(server.startQuiz(SAMPLE_QUIZ) === false, 'startQuiz refuses with no students')
+  log(server.startQuiz(quiz) === false, 'startQuiz refuses with no students')
 
   const alice = client(port)
   await alice.open()
@@ -366,26 +804,24 @@ async function checkQuizRun(server: any, port: number): Promise<void> {
 
   // --- start ---
   const t0 = Date.now()
-  log(server.startQuiz(SAMPLE_QUIZ), 'startQuiz succeeds with a student in the lobby')
+  log(server.startQuiz(quiz), 'startQuiz succeeds with a student in the lobby')
   log(server.session.status() === 'running', 'the session status becomes running')
   const start = await alice.wait('quiz_start')
-  log(start.d.questions.length === SAMPLE_QUIZ.questions.length, 'quiz_start carries every question')
+  log(start.d.questions.length === quiz.questions.length, 'quiz_start carries every question')
   log(
-    start.d.endsAt >= t0 + SAMPLE_QUIZ.limitMs - 1000 &&
-      start.d.endsAt <= Date.now() + SAMPLE_QUIZ.limitMs,
+    start.d.endsAt >= t0 + quiz.limitMs - 1000 &&
+      start.d.endsAt <= Date.now() + quiz.limitMs,
     'quiz_start sets endsAt limitMs from the server clock'
   )
   log(start.d.serverTime > 0, 'quiz_start carries serverTime for the phone clock offset')
-  log(server.startQuiz(SAMPLE_QUIZ) === false, 'startQuiz is refused while already running')
+  log(server.startQuiz(quiz) === false, 'startQuiz is refused while already running')
 
   // No key material of any kind may appear in the phone-facing payload.
-  for (const forbidden of ['key', 'accepted', 'tolerance', 'correct', 'answer']) {
-    log(!findField(start.d, forbidden), `quiz_start contains no "${forbidden}" field`)
-  }
+  assertNoKeys(start.d, 'the quiz_start from a library quiz')
 
   // --- answers: one per question type, all acked ---
   let seq = 0
-  for (const q of SAMPLE_QUIZ.questions) {
+  for (const q of quiz.questions) {
     alice.send('answer', { qid: q.qid, value: TYPE_ANSWERS[q.qid], seq: ++seq })
   }
   const acks = await alice.wait('ack')
@@ -393,13 +829,13 @@ async function checkQuizRun(server: any, port: number): Promise<void> {
   await sleep(300)
   const ackedCount = alice.msgs.filter((m) => m.t === 'ack').length
   log(
-    ackedCount === SAMPLE_QUIZ.questions.length,
-    `every answer type is acked (${ackedCount}/${SAMPLE_QUIZ.questions.length})`
+    ackedCount === quiz.questions.length,
+    `every answer type is acked (${ackedCount}/${quiz.questions.length})`
   )
   const state = server.session.quizState()
   log(state.questions.every((q: any) => q.answered === 1), 'the per-question counts show one answered')
   log(
-    state.answeredByStudent[aliceId] === SAMPLE_QUIZ.questions.length,
+    state.answeredByStudent[aliceId] === quiz.questions.length,
     'the student shows all questions answered'
   )
 
@@ -431,7 +867,7 @@ async function checkQuizRun(server: any, port: number): Promise<void> {
       `${why} returns BAD_ANSWER and stores nothing`
     )
   }
-  const q8 = SAMPLE_QUIZ.questions.find((q) => q.type === 'connect')!
+  const q8 = quiz.questions.find((q) => q.type === 'connect')!
   log(isValidAnswer(q8, { p1: 'a2', p2: 'a3' }), 'a partial connect map with known ids is valid')
   log(!isValidAnswer(q8, 'not an object'), 'a connect answer that is not a map is invalid')
   log(!isValidAnswer(q8, { p1: 'a1', p2: 'a2', p3: 'a1' }), 'connect with a repeated answer id is invalid')
@@ -478,10 +914,10 @@ async function checkQuizRun(server: any, port: number): Promise<void> {
   await back.open()
   back.send('join', { pin: freshPin, name: 'RunAlice', deviceToken: 'run-alice' })
   const rejoinStart = await back.wait('quiz_start')
-  log(rejoinStart.d.questions.length === SAMPLE_QUIZ.questions.length, 'a mid-quiz rejoin gets quiz_start again')
+  log(rejoinStart.d.questions.length === quiz.questions.length, 'a mid-quiz rejoin gets quiz_start again')
   const restored = await back.wait('answers_state')
   log(
-    Object.keys(restored.d.answers).length === SAMPLE_QUIZ.questions.length &&
+    Object.keys(restored.d.answers).length === quiz.questions.length &&
       restored.d.answers.q1 === 'a' &&
       JSON.stringify(restored.d.answers.q8) === JSON.stringify({ p1: 'a2', p2: 'a3', p3: 'a1' }),
     'answers_state returns the same answers, including the connect value'
@@ -502,7 +938,7 @@ async function checkQuizRun(server: any, port: number): Promise<void> {
   await bob.open()
   bob.send('join', { pin: timerPin, name: 'RunBob', deviceToken: 'run-bob' })
   await bob.wait('joined')
-  log(server.startQuiz({ ...SAMPLE_QUIZ, limitMs: 1500 }), 'a short quiz starts for the timer test')
+  log(server.startQuiz({ ...quiz, limitMs: 1500 }), 'a short quiz starts for the timer test')
   await bob.wait('quiz_start')
   const timerEnd = await bob.wait('quiz_end', 6000)
   log(timerEnd.d.reason === 'time', 'the server timer ends the quiz with reason "time"')
@@ -510,7 +946,7 @@ async function checkQuizRun(server: any, port: number): Promise<void> {
 
   // --- step 3: lock and pause ---
   console.log('\n--- lock and pause ---')
-  await checkLockPause(server, port)
+  await checkLockPause(server, port, quiz)
   alice.close()
   back.close()
   bob.close()
@@ -519,7 +955,7 @@ async function checkQuizRun(server: any, port: number): Promise<void> {
 }
 
 /** Step-3 lock and pause against the live server. */
-async function checkLockPause(server: any, port: number): Promise<void> {
+async function checkLockPause(server: any, port: number, quiz: Quiz = SAMPLE_QUIZ): Promise<void> {
   server.newSession()
   // A short heartbeat timeout keeps the network-pause test fast.
   server.session.heartbeatTimeoutMs = 1500
@@ -540,7 +976,7 @@ async function checkLockPause(server: any, port: number): Promise<void> {
   const info = (id: string): any => server.session.list().find((s: any) => s.id === id)
 
   log(server.session.lockEnabled() === true, 'lockMode is on by default')
-  log(server.startQuiz(SAMPLE_QUIZ), 'the quiz starts with lock on')
+  log(server.startQuiz(quiz), 'the quiz starts with lock on')
   const start = await alice.wait('quiz_start')
   log(start.d.lockMode === true, 'quiz_start carries lockMode: true')
 

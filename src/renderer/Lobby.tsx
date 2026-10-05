@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import QRCode from 'qrcode'
-import type { FirewallInstallResult, StateSnapshot } from '../shared/types'
+import type { FirewallInstallResult, QuizMeta, StateSnapshot } from '../shared/types'
 
 /** Payload a phone scans to find this server. */
 export function joinPayload(ip: string, port: number, pin: string): string {
   return JSON.stringify({ ip, port, pin })
 }
+
+/** Where the last used quiz is remembered across restarts. */
+const LAST_QUIZ_KEY = 'quiz.lastUsedQuizId'
 
 /** How long the green confirmation stays up before hiding itself. */
 const OK_HIDE_MS = 4000
@@ -110,11 +113,44 @@ function FirewallNotice(): React.JSX.Element | null {
   )
 }
 
+/** The library picker; the selection is remembered across restarts. */
+function QuizPicker({
+  quizzes,
+  selectedId,
+  onChange
+}: {
+  quizzes: QuizMeta[]
+  selectedId: string
+  onChange: (id: string) => void
+}): React.JSX.Element {
+  return (
+    <label className="picker">
+      <span className="picker-label">Quiz</span>
+      <select value={selectedId} onChange={(e) => onChange(e.target.value)}>
+        {quizzes.map((q) => (
+          <option key={q.id} value={q.id}>
+            {q.title} · {q.questionCount} question{q.questionCount === 1 ? '' : 's'}
+          </option>
+        ))}
+      </select>
+    </label>
+  )
+}
+
 /**
  * Starting is a one-way action on the phones' side, so it asks once. Disabled
- * with nobody in the lobby: the server would refuse it anyway.
+ * with nobody in the lobby or no quiz selected: the server would refuse it
+ * anyway. A refusal (empty or draft quiz) is shown via onError.
  */
-function StartQuizButton({ connectedCount }: { connectedCount: number }): React.JSX.Element {
+function StartQuizButton({
+  connectedCount,
+  quizId,
+  onError
+}: {
+  connectedCount: number
+  quizId: string
+  onError: (message: string) => void
+}): React.JSX.Element {
   const [confirming, setConfirming] = useState(false)
   useEffect(() => {
     if (!confirming) return
@@ -122,7 +158,7 @@ function StartQuizButton({ connectedCount }: { connectedCount: number }): React.
     return () => clearTimeout(t)
   }, [confirming])
 
-  const none = connectedCount === 0
+  const none = connectedCount === 0 || !quizId
   if (!confirming) {
     return (
       <button className="primary" disabled={none} onClick={() => setConfirming(true)}>
@@ -136,7 +172,9 @@ function StartQuizButton({ connectedCount }: { connectedCount: number }): React.
         className="primary"
         onClick={() => {
           setConfirming(false)
-          void window.quiz.startQuiz()
+          void window.quiz.startQuiz(quizId).then((result) => {
+            if (!result.ok) onError(result.message)
+          })
         }}
       >
         Start for {connectedCount} student{connectedCount === 1 ? '' : 's'}?
@@ -169,12 +207,21 @@ export function LockToggle({
   )
 }
 
-export function Lobby({ state }: { state: StateSnapshot }): React.JSX.Element {
+export function Lobby({
+  state,
+  onOpenLibrary
+}: {
+  state: StateSnapshot
+  onOpenLibrary: () => void
+}): React.JSX.Element {
   const { server, students } = state
   const { pin, port, selectedIp, addresses } = server
   const payload = useMemo(() => joinPayload(selectedIp, port, pin), [selectedIp, port, pin])
   const [qr, setQr] = useState<string>('')
   const [error, setError] = useState<string>('')
+  const [quizzes, setQuizzes] = useState<QuizMeta[]>([])
+  const [selectedQuiz, setSelectedQuiz] = useState('')
+  const [startError, setStartError] = useState('')
 
   useEffect(() => {
     let active = true
@@ -192,6 +239,23 @@ export function Lobby({ state }: { state: StateSnapshot }): React.JSX.Element {
     }
   }, [payload])
 
+  // Load the library and restore the last used quiz selection.
+  const refreshQuizzes = useCallback(() => {
+    void window.quiz.listQuizzes().then((list) => {
+      setQuizzes(list)
+      const remembered = localStorage.getItem(LAST_QUIZ_KEY) ?? ''
+      const pick = list.find((q) => q.id === remembered) ?? list[0]
+      setSelectedQuiz(pick ? pick.id : '')
+    })
+  }, [])
+  useEffect(refreshQuizzes, [refreshQuizzes])
+
+  const selectQuiz = (id: string): void => {
+    setSelectedQuiz(id)
+    setStartError('')
+    localStorage.setItem(LAST_QUIZ_KEY, id)
+  }
+
   const connected = students.filter((s) => s.status === 'connected').length
 
   return (
@@ -200,12 +264,28 @@ export function Lobby({ state }: { state: StateSnapshot }): React.JSX.Element {
         <h1>Lobby</h1>
         <span className="topbar-actions">
           <LockToggle lockMode={state.lockMode} />
-          <StartQuizButton connectedCount={connected} />
+          <button className="secondary" onClick={onOpenLibrary}>
+            Quiz library
+          </button>
           <button className="secondary" onClick={() => void window.quiz.newSession()}>
             New session
           </button>
         </span>
       </header>
+
+      <div className="startbar">
+        {quizzes.length > 0 ? (
+          <QuizPicker quizzes={quizzes} selectedId={selectedQuiz} onChange={selectQuiz} />
+        ) : (
+          <span className="empty">No quizzes yet — create one in the Quiz library.</span>
+        )}
+        <StartQuizButton
+          connectedCount={connected}
+          quizId={selectedQuiz}
+          onError={setStartError}
+        />
+        {startError && <p className="error start-error">{startError}</p>}
+      </div>
 
       <div className="grid">
         <section className="join">

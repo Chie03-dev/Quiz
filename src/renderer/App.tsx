@@ -2,10 +2,16 @@ import { useEffect, useState } from 'react'
 import type { StateSnapshot } from '../shared/types'
 import { Lobby } from './Lobby'
 import { QuizRun } from './QuizRun'
+import { QuizLibrary } from './QuizLibrary'
+import { QuizEditor } from './QuizEditor'
+
+/** Where the instructor is while the session is in the lobby. */
+type View = { name: 'lobby' } | { name: 'library' } | { name: 'editor'; quizId: string }
 
 export function App(): React.JSX.Element {
   const [state, setState] = useState<StateSnapshot | null>(null)
   const [failed, setFailed] = useState(false)
+  const [view, setView] = useState<View>({ name: 'lobby' })
 
   useEffect(() => {
     let active = true
@@ -26,12 +32,28 @@ export function App(): React.JSX.Element {
     }
   }, [])
 
+  // A quiz (or the ended view) always wins over the library screens.
+  useEffect(() => {
+    if (state && state.quiz.status !== 'lobby') setView({ name: 'lobby' })
+  }, [state?.quiz.status])
+
   if (failed) {
     return <div className="empty">Could not start the quiz server.</div>
   }
   if (!state) {
     return <div className="empty">Starting server…</div>
   }
-  if (state.quiz.status === 'lobby') return <Lobby state={state} />
-  return <QuizRun state={state} />
+  if (state.quiz.status !== 'lobby') return <QuizRun state={state} />
+  if (view.name === 'library') {
+    return (
+      <QuizLibrary
+        onBack={() => setView({ name: 'lobby' })}
+        onOpen={(quizId) => setView({ name: 'editor', quizId })}
+      />
+    )
+  }
+  if (view.name === 'editor') {
+    return <QuizEditor quizId={view.quizId} onBack={() => setView({ name: 'library' })} />
+  }
+  return <Lobby state={state} onOpenLibrary={() => setView({ name: 'library' })} />
 }

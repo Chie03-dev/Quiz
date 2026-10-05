@@ -398,3 +398,331 @@ li.events .name {
   font-family: Consolas, monospace;
   color: var(--muted);
 }
+
+/* --- step 4: quiz library and editor --- */
+
+input[type='text'],
+input[type='number'],
+select,
+textarea {
+  font: inherit;
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid #334155;
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+
+textarea {
+  resize: vertical;
+}
+
+input[type='text']:focus,
+input[type='number']:focus,
+select:focus,
+textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* Lobby start bar: picker + start button + refusal message. */
+
+.startbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.startbar .start-error {
+  flex-basis: 100%;
+  margin: 0;
+}
+
+.picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.picker-label {
+  color: var(--muted);
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.picker select {
+  min-width: 260px;
+}
+
+/* Library list */
+
+.lib-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.lib-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-radius: 10px;
+  background: var(--panel);
+}
+
+.lib-row .name {
+  flex: 1;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.lib-notice {
+  color: var(--muted);
+  font-size: 13px;
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.lib-error {
+  margin-top: 0;
+}
+
+/* Editor */
+
+.editor-meta {
+  display: flex;
+  gap: 16px;
+  align-items: flex-end;
+  margin-bottom: 20px;
+  padding: 16px;
+  background: var(--panel);
+  border-radius: 12px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.field > span {
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.field.grow {
+  flex: 1;
+}
+
+.field.narrow {
+  width: 160px;
+}
+
+.field.points {
+  width: 90px;
+}
+
+.question-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-bottom: 20px;
+}
+
+.question-card {
+  background: var(--panel);
+  border-radius: 12px;
+  padding: 16px;
+}
+
+.q-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.q-num {
+  font-family: Consolas, monospace;
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.q-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 6px;
+}
+
+.mini {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid #334155;
+  padding: 3px 9px;
+  border-radius: 6px;
+}
+
+.mini:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.mini.danger {
+  background: #7f1d1d;
+  border-color: #7f1d1d;
+  color: #fee2e2;
+}
+
+.badge.ready {
+  border-color: var(--ok);
+  color: var(--ok);
+}
+
+.badge.draft {
+  border-color: var(--bad);
+  color: var(--bad);
+}
+
+.ready-tag {
+  border-color: var(--ok);
+  color: var(--ok);
+}
+
+.q-problems {
+  list-style: disc;
+  margin: 0 0 10px;
+  padding: 8px 12px 8px 30px;
+  background: #450a0a;
+  border: 1px solid #7f1d1d;
+  border-radius: 8px;
+  color: #fca5a5;
+  font-size: 13px;
+}
+
+.q-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.q-form-head {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.type-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.field-label {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.string-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-start;
+}
+
+.choice-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  max-width: 480px;
+}
+
+.choice-row input[type='text'] {
+  flex: 1;
+  min-width: 0;
+}
+
+.choice-row input[type='radio'] {
+  accent-color: var(--accent);
+}
+
+.tf-choice {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.inline-fields {
+  display: flex;
+  gap: 16px;
+}
+
+.blank-group {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.blank-label {
+  flex: 0 0 70px;
+  color: var(--muted);
+  font-size: 13px;
+  padding-top: 6px;
+}
+
+.pair-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.pair-col {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pair-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 480px;
+}
+
+.pair-name {
+  flex: 0 0 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+}
+
+.pair-row select {
+  flex: 1;
+}
+
+.add-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-top: 4px;
+}
