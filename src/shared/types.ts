@@ -81,6 +81,111 @@ export interface Quiz {
   questions: QuizQuestion[]
 }
 
+// --- step 4: quiz library (SQLite) and editor ---
+
+/** The question types as a list, for editor pickers and import validation. */
+export const QUESTION_TYPES: QuestionType[] = [
+  'mcq',
+  'tf',
+  'identification',
+  'fillin',
+  'enumeration',
+  'problem',
+  'matching',
+  'connect'
+]
+
+/** A stored question is 'ready' only when it passes validation for its type. */
+export type QuestionStatus = 'draft' | 'ready'
+
+/**
+ * The phone-facing parts of a saved question (`data_json`): exactly the
+ * optional fields a PublicQuestion may carry. Which fields apply is decided
+ * by the question type. Answer keys never appear here.
+ */
+export interface QuestionData {
+  options?: Choice[] // mcq
+  blanks?: number // fillin
+  count?: number // enumeration
+  left?: Choice[] // matching
+  right?: Choice[] // matching
+  prompts?: Choice[] // connect
+  answers?: Choice[] // connect
+}
+
+/** The answer key of a problem question; main process only. */
+export interface ProblemKey {
+  answer: string
+  /** Optional accepted numeric tolerance around the answer; grading is a later step. */
+  tolerance?: number
+}
+
+/**
+ * Answer key per type as stored in `key_json` (main process only):
+ * mcq: correct option id · tf: true/false · identification: accepted answers ·
+ * fillin: accepted answers per blank · enumeration: accepted items ·
+ * problem: { answer, tolerance? } · matching/connect: fromId -> toId map.
+ * null means "not decided yet" while editing.
+ */
+export type StoredKey =
+  | string
+  | boolean
+  | null
+  | string[]
+  | string[][]
+  | ProblemKey
+  | Record<string, string>
+
+/** One question as the library stores it: parsed data/key instead of JSON columns. */
+export interface StoredQuestion {
+  id: string
+  type: QuestionType
+  body: string
+  points: number
+  data: QuestionData
+  key: StoredKey
+  /** Optional passage the question came from; empty until imports exist. */
+  sourceText: string
+  status: QuestionStatus
+}
+
+/** One quiz as the library stores it: quiz row plus questions in position order. */
+export interface StoredQuiz {
+  id: string
+  title: string
+  timeLimitSec: number
+  createdAt: number
+  updatedAt: number
+  questions: StoredQuestion[]
+}
+
+/** What the library list shows per quiz. */
+export interface QuizMeta {
+  id: string
+  title: string
+  timeLimitSec: number
+  questionCount: number
+  createdAt: number
+  updatedAt: number
+}
+
+/** Result of a start request; a refusal says which questions block it. */
+export type StartQuizResult = { ok: true } | { ok: false; message: string }
+
+export type SaveQuizResult = { ok: true; quiz: StoredQuiz } | { ok: false; error: string }
+
+/**
+ * Export/import outcomes. `cancelled` means the instructor closed the file
+ * dialog; `error` is a human-readable reason (import rejects malformed files).
+ */
+export type ExportQuizResult =
+  | { ok: true; path: string }
+  | { ok: false; error: string; cancelled?: boolean }
+
+export type ImportQuizResult =
+  | { ok: true; quiz: StoredQuiz }
+  | { ok: false; error: string; cancelled?: boolean }
+
 export type SessionStatus = 'lobby' | 'running' | 'ended'
 
 export interface QuestionProgress {
