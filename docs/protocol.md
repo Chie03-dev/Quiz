@@ -109,3 +109,63 @@ Notes for anyone writing the phone-side scanner:
   convenience for the user, not as authentication on its own: the server still
   requires the `join` message to carry the correct PIN, and rate-limits wrong
   ones.
+
+  # Quiz run (step 2)
+
+## Question shapes (quiz_start.questions[])
+Common fields: { qid, type, body, points }
+- mcq:            options: [{id,text}]                        answer value: "<optionId>"
+- tf:             (none)                                      answer value: true | false
+- identification: (none)                                      answer value: "<text>"
+- fillin:         blanks: <n> (body marks blanks as ___)      answer value: ["<text>", ...] (length n)
+- enumeration:    count: <n>                                  answer value: ["<item>", ...] (up to n)
+- problem:        (none)                                      answer value: "<text>" (final answer)
+- matching:       left: [{id,text}], right: [{id,text}]       answer value: { "<leftId>": "<rightId>", ... }
+Answer keys, accepted answers, and tolerances NEVER appear in any message to phones.
+- connect:        prompts: [{id,text}], answers: [{id,text}]   answer value: { "<promptId>": "<answerId>", ... }
+                  (Activity type. The phone shows prompts and answers as two columns of dots/cards, and the student draws a line from each prompt to its answer. Each prompt connects to at most one answer, and each answer is used by at most one prompt. The answers list may contain extra decoys that match nothing. Items may include an image later, but not in step 2.)
+
+## Phone -> Server
+- answer  d: { qid, value, seq }   (seq increases for every answer the phone sends; persisted on the phone)
+
+## Server -> Phone
+- quiz_start    d: { quizId, title, questions: [...], endsAt, serverTime }   (epoch ms)
+- answers_state d: { answers: { "<qid>": <value>, ... } }   (sent right after quiz_start when a known student rejoins mid-quiz)
+- ack           d: { qid, seq }
+- quiz_end      d: { reason: "time" | "instructor" }
+- error codes added: QUIZ_ENDED | BAD_ANSWER | UNKNOWN_QUESTION
+
+## Rules
+- Session status: lobby -> running -> ended.
+- Time: the phone computes offset = serverTime - phoneNow when quiz_start arrives, and remaining = endsAt - (phoneNow + offset).
+- Answers: the server keeps the latest value per (student, qid). An answer with seq <= the last seq seen for that (student, qid) is ignored but still acked. A value that doesn't match the question type gets BAD_ANSWER. After the quiz ends, answers get QUIZ_ENDED.
+- Joining while running: only a known deviceToken can rejoin; anyone else gets CLOSED.
+- Dropped connections do NOT pause the quiz yet (step 3 adds pause/lock). The phone just reconnects and resends unacked answers.
+- Instructor commands (start, end) are IPC-only, never WebSocket.
+
+# Lock and pause (step 3)
+
+## Changes to existing messages
+- quiz_start d gains: lockMode (boolean)
+- error codes added: PAUSED
+
+## Phone -> Server
+- focus_lost    d: { reason: "background" | "window" | "unpinned" }
+- focus_gained  d: {}
+- resume_request d: {}   (a request only; it never resumes anything by itself)
+
+## Server -> Phone
+- paused  d: { reason: "focus" | "network" }
+- resumed d: {}
+- lock    d: { on: boolean }   (instructor toggled lock during the quiz)
+
+## Rules
+- A student is paused when (a) lockMode is on and the server receives focus_lost, or (b) the quiz is running and no heartbeat arrived for 10 s.
+- focus_lost while lockMode is off is ignored (but logged). focus_lost while already paused is logged but changes nothing.
+- While paused, an answer is rejected with error PAUSED and not stored. The phone keeps it queued and resends after resumed.
+- The quiz clock never stops for paused students.
+- Only the instructor can resume (IPC: approveResume(studentId), approveAllResume()). The server then sends resumed.
+- A student paused for "network" who rejoins with the same deviceToken during the quiz gets quiz_start, answers_state, then paused { reason: "network" }.
+- When the instructor turns lock off, students paused for "focus" are resumed automatically (server sends resumed). Network pauses are not.
+- Events (focus_lost, focus_gained, paused, resumed, resume_request, disconnect, reconnect) are logged in memory per student with a timestamp. Count of focus_lost is shown per student.
+- The server never trusts the phone to enforce anything. Lock is a deterrent plus visibility.

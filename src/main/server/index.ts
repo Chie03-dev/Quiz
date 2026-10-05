@@ -1,6 +1,6 @@
 import Fastify from 'fastify'
 import websocket from '@fastify/websocket'
-import type { PhoneMessage, ServerInfo, StudentInfo } from '../../shared/types'
+import type { PhoneMessage, Quiz, QuizState, ServerInfo, StudentInfo } from '../../shared/types'
 import { FIRST_PORT, MAX_PORT } from '../../shared/types'
 import { advertiseServer, type BonjourAdvertiser } from './mdns'
 import { listLanAddresses } from './network'
@@ -12,6 +12,8 @@ const PORT_ATTEMPTS = MAX_PORT - FIRST_PORT + 1
 export interface QuizServerOptions {
   onStudentsChanged: (students: StudentInfo[]) => void
   onServerChanged: (info: ServerInfo) => void
+  onQuizChanged: (state: QuizState) => void
+  onLockChanged: (lockMode: boolean) => void
 }
 
 export interface QuizServer {
@@ -21,6 +23,12 @@ export interface QuizServer {
   selectIp(ip: string): boolean
   /** New PIN, empty lobby, mDNS re-published under the new name. */
   newSession(): ServerInfo
+  startQuiz(quiz: Quiz): boolean
+  endQuiz(): boolean
+  /** Step 3: the lock toggle. Turning it off resumes focus pauses. */
+  setLock(on: boolean): void
+  approveResume(studentId: string): boolean
+  approveAllResume(): number
   /** Last mDNS failure, if any. mDNS is a convenience only, never required. */
   advertisementError(): string | null
   close(): Promise<void>
@@ -33,7 +41,11 @@ export async function startServer(opts: QuizServerOptions): Promise<QuizServer> 
   let port = FIRST_PORT
   let advertiser: BonjourAdvertiser | null = null
 
-  const session = new QuizSession((students) => opts.onStudentsChanged(students))
+  const session = new QuizSession(
+    (students) => opts.onStudentsChanged(students),
+    (state) => opts.onQuizChanged(state),
+    (lockMode) => opts.onLockChanged(lockMode)
+  )
   const info = (): ServerInfo => ({
     pin: session.pin,
     port,
@@ -67,6 +79,14 @@ export async function startServer(opts: QuizServerOptions): Promise<QuizServer> 
         session.handleJoin(sock, ip, msg.d ?? {})
       } else if (msg.t === 'hb') {
         if (joined) session.handleHeartbeat(sock)
+      } else if (msg.t === 'answer') {
+        if (joined) session.handleAnswer(sock, msg.d ?? {})
+      } else if (msg.t === 'focus_lost') {
+        if (joined) session.handleFocusLost(sock)
+      } else if (msg.t === 'focus_gained') {
+        if (joined) session.handleFocusGained(sock)
+      } else if (msg.t === 'resume_request') {
+        if (joined) session.handleResumeRequest(sock)
       }
       // No other message types are accepted from phones; instructor commands come via IPC only.
     })
@@ -112,6 +132,23 @@ export async function startServer(opts: QuizServerOptions): Promise<QuizServer> 
       advertiser = advertiseServer(session.pin, port)
       broadcastInfo()
       return info()
+    },
+    startQuiz(quiz: Quiz) {
+      const ok = session.startQuiz(quiz)
+      if (ok) broadcastInfo()
+      return ok
+    },
+    endQuiz() {
+      return session.endQuiz()
+    },
+    setLock(on: boolean) {
+      session.setLock(on)
+    },
+    approveResume(studentId: string) {
+      return session.approveResume(studentId)
+    },
+    approveAllResume() {
+      return session.approveAllResume()
     },
     async close() {
       session.stop()

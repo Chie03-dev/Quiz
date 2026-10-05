@@ -89,13 +89,11 @@ const clickByLabel = (cdp: Cdp, label: string, selector = 'button'): Promise<boo
  * Starts a fake student against the running app.
  * tsx is invoked directly (not via npm) so no shell is needed.
  */
-function joinStudent(name: string, pin: string, ip: string, port: number): ChildProcess {
+function joinStudent(name: string, pin: string, ip: string, port: number, answer = false): ChildProcess {
   const tsx = resolve('node_modules', '.bin', process.platform === 'win32' ? 'tsx.cmd' : 'tsx')
-  return spawn(
-    tsx,
-    ['scripts/fake-student.ts', '--pin', pin, '--name', name, '--ip', ip, '--port', String(port)],
-    { stdio: 'ignore', shell: process.platform === 'win32' }
-  )
+  const argv = ['scripts/fake-student.ts', '--pin', pin, '--name', name, '--ip', ip, '--port', String(port)]
+  if (answer) argv.push('--answer')
+  return spawn(tsx, argv, { stdio: 'ignore', shell: process.platform === 'win32' })
 }
 
 /**
@@ -170,6 +168,72 @@ async function main(): Promise<void> {
     log(fresh.server.pin !== pin, `New session issues a new PIN (${pin} -> ${fresh.server.pin})`)
     log(fresh.students.length === 0, 'New session empties the lobby in the UI')
     log(fresh.server.port === port, 'New session keeps the same port')
+
+    // --- Start quiz: disabled with nobody in the lobby ---
+    const lobbyWithNone = await readUi(cdp)
+    log(lobbyWithNone!.quiz.status === 'lobby', 'the fresh UI is in the lobby state')
+    const fresh2 = await cdp.eval<{ status: string; status2: string }>(`(() => {
+      const btn = [...document.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Start quiz')
+      return { status: btn ? 'found' : 'missing', status2: btn && btn.disabled ? 'disabled' : 'enabled' }
+    })()`)
+    log(fresh2.status === 'found', 'the Start quiz button is rendered')
+    log(fresh2.status2 === 'disabled', 'Start quiz is disabled with zero connected students')
+
+    // --- two students join, then the quiz runs ---
+    const freshPin = fresh.server.pin
+    kids.push(joinStudent('Cara', freshPin, selectedIp, port, true))
+    kids.push(joinStudent('Dan', freshPin, selectedIp, port))
+    const joined2 = await waitFor(async () => {
+      const s = await readUi(cdp)
+      return s && s.students.length === 2 ? s : null
+    })
+    log(
+      joined2.students.every((s) => s.status === 'connected'),
+      'two fresh students are connected'
+    )
+    log(await clickByLabel(cdp, 'Start quiz'), 'Start quiz is clickable once students are connected')
+    const askedConfirm = await clickByLabel(cdp, 'Start for 2 students?')
+    log(askedConfirm, 'Start quiz asks for confirmation before starting')
+    const running = await waitFor(async () => {
+      const s = await readUi(cdp)
+      return s && s.quiz.status === 'running' ? s : null
+    })
+    log(running.quiz.status === 'running', 'the lobby switches to the running view')
+    log(running.quiz.endsAt !== null && running.quiz.endsAt > Date.now(), 'the running view carries an endsAt')
+    log(running.quiz.questions.length === 8, `all 8 questions are listed (${running.quiz.questions.length})`)
+    const hasCountdown = await cdp.eval<boolean>(
+      `!!document.querySelector('.countdown') && document.querySelector('.countdown').textContent.trim().length > 0`
+    )
+    log(hasCountdown, 'the running view shows a countdown')
+
+    // Cara answers every question as soon as quiz_start arrives.
+    const answered = await waitFor(async () => {
+      const s = await readUi(cdp)
+      const cara = s?.students.find((x) => x.name === 'Cara')
+      return cara && s!.quiz.answeredByStudent[cara.id] === 8 ? s : null
+    })
+    log(
+      answered.quiz.questions.every((q) => q.answered === 1),
+      'the per-question counts follow the fake student that answered'
+    )
+
+    log(await clickByLabel(cdp, 'End quiz now'), 'the End quiz now button is present')
+    log(await clickByLabel(cdp, 'Yes, end it'), 'ending the quiz asks for confirmation')
+    const ended = await waitFor(async () => {
+      const s = await readUi(cdp)
+      return s && s.quiz.status === 'ended' ? s : null
+    })
+    log(ended.quiz.status === 'ended', 'the UI switches to the ended view')
+    log(ended.quiz.endReason === 'instructor', 'the ended view knows why it ended')
+    const heading = await cdp.eval<string>(`document.querySelector('.topbar h1').textContent.trim()`)
+    log(heading === 'Quiz ended', `the ended view says "Quiz ended" (${heading})`)
+    const shownText = await cdp.eval<string>(`document.body.textContent.toLowerCase()`)
+    log(
+      !shownText.includes('score') && !shownText.includes('point:'),
+      'the ended view shows counts only, never scores'
+    )
+
+    log(await clickByLabel(cdp, 'New session'), 'New session is available on the ended view')
 
     console.log('done')
   } finally {

@@ -110,6 +110,65 @@ function FirewallNotice(): React.JSX.Element | null {
   )
 }
 
+/**
+ * Starting is a one-way action on the phones' side, so it asks once. Disabled
+ * with nobody in the lobby: the server would refuse it anyway.
+ */
+function StartQuizButton({ connectedCount }: { connectedCount: number }): React.JSX.Element {
+  const [confirming, setConfirming] = useState(false)
+  useEffect(() => {
+    if (!confirming) return
+    const t = setTimeout(() => setConfirming(false), 5000)
+    return () => clearTimeout(t)
+  }, [confirming])
+
+  const none = connectedCount === 0
+  if (!confirming) {
+    return (
+      <button className="primary" disabled={none} onClick={() => setConfirming(true)}>
+        Start quiz
+      </button>
+    )
+  }
+  return (
+    <span className="confirm">
+      <button
+        className="primary"
+        onClick={() => {
+          setConfirming(false)
+          void window.quiz.startQuiz()
+        }}
+      >
+        Start for {connectedCount} student{connectedCount === 1 ? '' : 's'}?
+      </button>
+      <button className="secondary" onClick={() => setConfirming(false)}>
+        Cancel
+      </button>
+    </span>
+  )
+}
+
+/** Step 3: the lock toggle, shared by the lobby and the running view. */
+export function LockToggle({
+  lockMode,
+  label = 'Lock student phones'
+}: {
+  lockMode: boolean
+  label?: string
+}): React.JSX.Element {
+  return (
+    <label className={`lock-toggle${lockMode ? ' on' : ''}`}>
+      <input
+        type="checkbox"
+        checked={lockMode}
+        onChange={(e) => void window.quiz.setLock(e.target.checked)}
+      />
+      <span className="lock-label">{label}</span>
+      <span className="lock-state">{lockMode ? 'ON' : 'OFF'}</span>
+    </label>
+  )
+}
+
 export function Lobby({ state }: { state: StateSnapshot }): React.JSX.Element {
   const { server, students } = state
   const { pin, port, selectedIp, addresses } = server
@@ -139,9 +198,13 @@ export function Lobby({ state }: { state: StateSnapshot }): React.JSX.Element {
     <div className="lobby">
       <header className="topbar">
         <h1>Lobby</h1>
-        <button className="secondary" onClick={() => void window.quiz.newSession()}>
-          New session
-        </button>
+        <span className="topbar-actions">
+          <LockToggle lockMode={state.lockMode} />
+          <StartQuizButton connectedCount={connected} />
+          <button className="secondary" onClick={() => void window.quiz.newSession()}>
+            New session
+          </button>
+        </span>
       </header>
 
       <div className="grid">
