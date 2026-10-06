@@ -66,12 +66,17 @@ function StudentRow({
   const [showEvents, setShowEvents] = useState(false)
   const eventTime = (at: number): string =>
     new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  const finishTime = (at: number | null): string =>
+    at === null ? '' : new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
 
   return (
     <>
       <li className={`${student.status}${student.paused ? ' paused' : ''}`}>
         <span className="name">{student.name}</span>
         <span className="status">{student.status}</span>
+        {student.finished && (
+          <span className="badge done">Finished{student.finishedAt !== null ? ` · ${finishTime(student.finishedAt)}` : ''}</span>
+        )}
         {student.paused && (
           <span className="badge pause">
             PAUSED · {student.pauseReason === 'network' ? 'network' : 'focus'}
@@ -166,6 +171,10 @@ export function QuizRun({ state }: { state: StateSnapshot }): React.JSX.Element 
 
   const total = quiz.questions.length
   const paused = students.filter((s) => s.paused)
+  const finishedCount = students.filter((s) => s.finished).length
+  // Nothing ends automatically: the banner is informational only.
+  const connected = students.filter((s) => s.status === 'connected')
+  const allFinished = connected.length > 0 && connected.every((s) => s.finished)
 
   return (
     <div className="lobby">
@@ -187,9 +196,10 @@ export function QuizRun({ state }: { state: StateSnapshot }): React.JSX.Element 
         <div className="students-head">
           <h2>Students</h2>
           <span className="count">
-            {students.length} in the session · {paused.length} paused
+            {students.length} in the session · {paused.length} paused · {finishedCount} finished
           </span>
         </div>
+        {allFinished && <p className="banner">All connected students have finished</p>}
         <ul>
           {students.map((s) => (
             <StudentRow

@@ -39,6 +39,9 @@ export interface Student {
   pauseReason: PauseReason | null
   focusLosses: number
   resumeRequested: boolean
+  // --- step 5: finish ---
+  finished: boolean
+  finishedAt: number | null
   events: StudentEvent[]
 }
 
@@ -116,6 +119,8 @@ export class QuizSession {
       pauseReason: s.pauseReason,
       focusLosses: s.focusLosses,
       resumeRequested: s.resumeRequested,
+      finished: s.finished,
+      finishedAt: s.finishedAt,
       events: [...s.events]
     }))
   }
@@ -195,6 +200,8 @@ export class QuizSession {
       pauseReason: null,
       focusLosses: 0,
       resumeRequested: false,
+      finished: false,
+      finishedAt: null,
       events: []
     }
     this.students.set(student.id, student)
@@ -224,6 +231,11 @@ export class QuizSession {
     if (!student) return
     student.focusLosses++
     this.log(student, 'focus_lost')
+    // A finished student is never paused; the event is still logged.
+    if (student.finished) {
+      this.notify()
+      return
+    }
     if (!this.lockMode) {
       this.notify()
       return
@@ -256,6 +268,11 @@ export class QuizSession {
   handleAnswer(socket: SocketLike, d: { qid?: unknown; value?: unknown; seq?: unknown }): void {
     const student = this.findBySocket(socket)
     if (!student) return
+    // After finish, answers get FINISHED and are not stored or acked.
+    if (student.finished) {
+      this.error(socket, 'FINISHED')
+      return
+    }
     // A paused student's answer is rejected and never stored; the phone keeps it
     // queued and resends it after resumed.
     if (student.paused) {
@@ -268,6 +285,27 @@ export class QuizSession {
       return
     }
     this.send(socket, { t: 'ack', d: { qid: String(d.qid), seq: outcome.seq } })
+  }
+
+  /** Step 5: finish. Valid only while running and not paused; idempotent. */
+  handleFinish(socket: SocketLike): void {
+    const student = this.findBySocket(socket)
+    if (!student) return
+    if (this.run.currentStatus !== 'running') {
+      this.error(socket, 'QUIZ_ENDED')
+      return
+    }
+    if (student.paused) {
+      this.error(socket, 'PAUSED')
+      return
+    }
+    if (!student.finished) {
+      student.finished = true
+      student.finishedAt = Date.now()
+      this.log(student, 'finished')
+    }
+    this.send(student.socket ?? socket, { t: 'finished', d: {} })
+    this.notify()
   }
 
   handleClose(socket: SocketLike): void {
@@ -372,8 +410,11 @@ export class QuizSession {
     if (this.run.currentStatus === 'running') {
       this.send(socket, { t: 'quiz_start', d: this.startPayload(Date.now()) })
       this.send(socket, { t: 'answers_state', d: { answers: this.run.answersFor(student.id) } })
-      // A student paused for a network drop stays paused after rejoining.
-      if (student.paused && student.pauseReason === 'network') {
+      // A finished student gets finished after answers_state.
+      if (student.finished) {
+        this.send(socket, { t: 'finished', d: {} })
+      } else if (student.paused && student.pauseReason === 'network') {
+        // A student paused for a network drop stays paused after rejoining.
         this.send(socket, { t: 'paused', d: { reason: 'network' } })
       }
     }
@@ -429,7 +470,8 @@ export class QuizSession {
       student.status = 'disconnected'
       this.log(student, 'disconnect')
       changed = true
-      if (this.run.currentStatus === 'running' && !student.paused) {
+      // A finished student is never paused by a heartbeat timeout.
+      if (this.run.currentStatus === 'running' && !student.paused && !student.finished) {
         this.pause(student, 'network') // pause() notifies on its own
       }
     }

@@ -8,8 +8,9 @@
  *          --token (default: a stable token cached in .fake-student-token.json),
  *          --answer (answer every question once quiz_start arrives),
  *          --no-hb (never send heartbeats; step 3 pauses on the timeout),
- *          --focus-lost <delayMs>, --focus-gained <delayMs>, --resume-request <delayMs>
- *          (send that step-3 message this many ms after joining).
+ *          --focus-lost <delayMs>, --focus-gained <delayMs>, --resume-request <delayMs>,
+ *          --finish <delayMs>
+ *          (send that step-3/step-5 message this many ms after joining).
  */
 import WebSocket from 'ws'
 import { randomUUID } from 'node:crypto'
@@ -29,6 +30,8 @@ interface Args {
   focusLostAt: number | null
   focusGainedAt: number | null
   resumeRequestAt: number | null
+  /** Step-5 trigger: ms after joining, or null for "never". */
+  finishAt: number | null
 }
 
 const TOKEN_FILE = resolve(process.cwd(), '.fake-student-token.json')
@@ -41,7 +44,7 @@ function parseArgs(argv: string[]): Args {
   const pin = get('--pin')
   const name = get('--name')
   if (!pin || !name) {
-    console.error('Usage: npm run fake-student -- --pin <pin> --name <name> [--ip <ip>] [--port <port>] [--token <token>] [--no-hb] [--answer] [--focus-lost <ms>] [--focus-gained <ms>] [--resume-request <ms>]')
+    console.error('Usage: npm run fake-student -- --pin <pin> --name <name> [--ip <ip>] [--port <port>] [--token <token>] [--no-hb] [--answer] [--focus-lost <ms>] [--focus-gained <ms>] [--resume-request <ms>] [--finish <ms>]')
     process.exit(1)
   }
 
@@ -77,7 +80,8 @@ function parseArgs(argv: string[]): Args {
     answer: argv.includes('--answer'),
     focusLostAt: delay(get('--focus-lost')),
     focusGainedAt: delay(get('--focus-gained')),
-    resumeRequestAt: delay(get('--resume-request'))
+    resumeRequestAt: delay(get('--resume-request')),
+    finishAt: delay(get('--finish'))
   }
 
   /** A missing or invalid delay means "do not send that message at all". */
@@ -139,6 +143,7 @@ function main(): void {
       )
       schedule(args.focusGainedAt, () => ws.send(JSON.stringify({ t: 'focus_gained', d: {} })))
       schedule(args.resumeRequestAt, () => ws.send(JSON.stringify({ t: 'resume_request', d: {} })))
+      schedule(args.finishAt, () => ws.send(JSON.stringify({ t: 'finish', d: {} })))
     } else if (msg.t === 'error') {
       console.log(`[${args.name}] error: ${msg.d.code}`)
       if (msg.d.code === 'RATE_LIMITED') {
@@ -172,6 +177,8 @@ function main(): void {
       console.log(`[${args.name}] resumed`)
     } else if (msg.t === 'lock') {
       console.log(`[${args.name}] lock is now ${msg.d.on ? 'ON' : 'OFF'}`)
+    } else if (msg.t === 'finished') {
+      console.log(`[${args.name}] finished`)
     }
   })
 

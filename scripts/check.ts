@@ -951,6 +951,11 @@ async function checkQuizRun(server: any, port: number, quiz: Quiz = SAMPLE_QUIZ)
   back.close()
   bob.close()
   await sleep(150)
+
+  // --- step 5: finish ---
+  console.log('\n--- finish ---')
+  await checkFinish(server, port, quiz)
+  await sleep(150)
   server.newSession()
 }
 
@@ -1118,6 +1123,127 @@ async function checkLockPause(server: any, port: number, quiz: Quiz = SAMPLE_QUI
   clearInterval(bob2Hb)
   bob2.close()
   server.endQuiz()
+  await sleep(150)
+  server.session.heartbeatTimeoutMs = 10_000
+  server.newSession()
+}
+
+/** Step-5 finish against the live server. */
+async function checkFinish(server: any, port: number, quiz: Quiz = SAMPLE_QUIZ): Promise<void> {
+  server.newSession()
+  // A short heartbeat timeout keeps the exemption test fast.
+  server.session.heartbeatTimeoutMs = 1500
+  const pin = server.session.pin
+
+  const alice = client(port)
+  await alice.open()
+  alice.send('join', { pin, name: 'FinAlice', deviceToken: 'fin-alice' })
+  const aliceId = (await alice.wait('joined')).d.studentId
+  const aliceHb = setInterval(() => alice.send('hb', {}), 400)
+
+  const bob = client(port)
+  await bob.open()
+  bob.send('join', { pin, name: 'FinBob', deviceToken: 'fin-bob' })
+  const bobId = (await bob.wait('joined')).d.studentId
+  const bobHb = setInterval(() => bob.send('hb', {}), 400)
+
+  const info = (id: string): any => server.session.list().find((s: any) => s.id === id)
+
+  log(server.startQuiz(quiz), 'the quiz starts for the finish test')
+  await alice.wait('quiz_start')
+  await bob.wait('quiz_start')
+
+  // --- finish gives finished ---
+  let seq = 0
+  alice.send('answer', { qid: 'q1', value: TYPE_ANSWERS.q1, seq: ++seq })
+  await alice.wait('ack')
+  alice.send('finish', {})
+  await waitFresh(alice, 'finished')
+  log(true, 'finish gives finished')
+  log(info(aliceId).finished === true, 'the student shows as finished in the student list')
+  log(
+    typeof info(aliceId).finishedAt === 'number' && Number.isFinite(info(aliceId).finishedAt),
+    'a finished timestamp is recorded'
+  )
+  log(
+    info(aliceId).events.some((e: any) => e.type === 'finished'),
+    'a "finished" event is logged for the student'
+  )
+
+  // --- later answers get FINISHED and are not stored ---
+  const before = JSON.stringify(server.session.quizState().answeredByStudent)
+  const acksBefore = alice.msgs.filter((m) => m.t === 'ack').length
+  alice.send('answer', { qid: 'q2', value: TYPE_ANSWERS.q2, seq: ++seq })
+  log((await waitFresh(alice, 'error')).d.code === 'FINISHED', 'a later answer gets FINISHED')
+  log(
+    JSON.stringify(server.session.quizState().answeredByStudent) === before,
+    'a FINISHED answer stores nothing'
+  )
+  log(
+    alice.msgs.filter((m) => m.t === 'ack').length === acksBefore,
+    'a FINISHED answer is not acked either'
+  )
+
+  // --- repeated finish is idempotent ---
+  const finishedBefore = alice.msgs.filter((m) => m.t === 'finished').length
+  alice.send('finish', {})
+  await waitFresh(alice, 'finished', 3000, alice.msgs.length)
+  log(
+    alice.msgs.filter((m) => m.t === 'finished').length === finishedBefore + 1,
+    'a repeated finish gets another finished'
+  )
+  log(
+    info(aliceId).events.filter((e: any) => e.type === 'finished').length === 1,
+    'the repeated finish does not log a second finished event'
+  )
+
+  // --- finish while paused gets PAUSED ---
+  bob.send('focus_lost', { reason: 'background' })
+  await waitFresh(bob, 'paused')
+  const pausedErrs = bob.msgs.filter((m) => m.t === 'error').length
+  bob.send('finish', {})
+  log((await waitFresh(bob, 'error', 3000, pausedErrs)).d.code === 'PAUSED', 'finish while paused gets PAUSED')
+  log(info(bobId).finished === false, 'a PAUSED finish does not finish the student')
+  log(server.approveResume(bobId), 'the paused student is approved for the exemption test')
+
+  // --- a finished student is not paused by focus_lost or a heartbeat timeout ---
+  alice.send('focus_lost', { reason: 'background' })
+  await sleep(300)
+  log(info(aliceId).paused === false, 'focus_lost does not pause a finished student')
+  log(
+    info(aliceId).focusLosses === 1 && info(aliceId).events.some((e: any) => e.type === 'focus_lost'),
+    'the focus_lost on a finished student is still counted and logged'
+  )
+  clearInterval(aliceHb)
+  const sweep0 = Date.now()
+  while (info(aliceId).paused && Date.now() - sweep0 < 6000) await sleep(100)
+  await sleep(2200)
+  log(info(aliceId).paused === false, 'a heartbeat timeout does not pause a finished student')
+  log(info(aliceId).status === 'disconnected', 'the finished student still shows as disconnected')
+
+  // --- rejoin sends quiz_start + answers_state + finished ---
+  alice.close()
+  await sleep(200)
+  const rejoin = client(port)
+  await rejoin.open()
+  const from = rejoin.msgs.length
+  rejoin.send('join', { pin, name: 'FinAlice', deviceToken: 'fin-alice' })
+  await rejoin.wait('joined')
+  await waitFresh(rejoin, 'quiz_start', 3000, from)
+  log(true, 'a finished rejoin gets quiz_start again')
+  const state = await waitFresh(rejoin, 'answers_state', 3000, from)
+  log(state.d.answers.q1 === TYPE_ANSWERS.q1, 'a finished rejoin still gets its answers_state')
+  const fin = await waitFresh(rejoin, 'finished', 3000, from)
+  log(!!fin, 'a finished rejoin gets quiz_start + answers_state + finished')
+
+  // --- quiz_end still works afterwards ---
+  log(server.session.quizState().status === 'running', 'the quiz is still running with everyone finished')
+  log(server.endQuiz(), 'endQuiz still works after finishes')
+  await rejoin.wait('quiz_end')
+
+  clearInterval(bobHb)
+  bob.close()
+  rejoin.close()
   await sleep(150)
   server.session.heartbeatTimeoutMs = 10_000
   server.newSession()

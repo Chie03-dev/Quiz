@@ -26,6 +26,7 @@ export type StudentEventType =
   | 'resume_request'
   | 'disconnect'
   | 'reconnect'
+  | 'finished'
 
 export interface StudentEvent {
   at: number
@@ -229,6 +230,10 @@ export interface StudentInfo {
   focusLosses: number
   /** The phone asked to be resumed. A marker only; it never resumes anything. */
   resumeRequested: boolean
+  /** Step 5: the student submitted; no further answers accepted. */
+  finished: boolean
+  /** Step 5: server timestamp of finish, null until finished. */
+  finishedAt: number | null
   /** Recent events, oldest first. */
   events: StudentEvent[]
 }
@@ -260,6 +265,7 @@ export type ServerErrorCode =
   | 'BAD_ANSWER'
   | 'UNKNOWN_QUESTION'
   | 'PAUSED'
+  | 'FINISHED'
 
 // --- Windows firewall (see src/main/firewall.ts) ---
 
@@ -329,6 +335,11 @@ export interface ResumeRequestMessage {
   id?: string
   d: Record<string, never>
 }
+export interface FinishMessage {
+  t: 'finish'
+  id?: string
+  d: Record<string, never>
+}
 export type PhoneMessage =
   | JoinMessage
   | HeartbeatMessage
@@ -336,6 +347,7 @@ export type PhoneMessage =
   | FocusLostMessage
   | FocusGainedMessage
   | ResumeRequestMessage
+  | FinishMessage
 
 export interface QuizStartMessage {
   t: 'quiz_start'
@@ -380,6 +392,11 @@ export interface LockMessage {
   id?: string
   d: { on: boolean }
 }
+export interface FinishedMessage {
+  t: 'finished'
+  id?: string
+  d: Record<string, never>
+}
 export type ServerMessage =
   | JoinedMessage
   | ErrorMessage
@@ -391,3 +408,4 @@ export type ServerMessage =
   | PausedMessage
   | ResumedMessage
   | LockMessage
+  | FinishedMessage

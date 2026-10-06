@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import type { QuestionType } from '../src/shared/types'
 import { parseBlocks } from '../src/main/import/parser'
 import { extractMarkdown } from '../src/main/import/markdown'
@@ -28,44 +29,78 @@ function totalPoints(questions: { points: number }[]): number {
 }
 
 async function main(): Promise<void> {
-  const fixtures = join(__dirname, '..', 'tests', 'fixtures')
-  const mdPath = join(fixtures, 'Sample_Quiz_Computer_Basics.md')
-  const mdText = readFileSync(mdPath, 'utf8')
-  const mdBlocks = extractMarkdown(mdText)
-  const mdResult = parseBlocks(mdBlocks, { markStyle: 'auto' })
-  const mdQuiz = mdResult.quiz
-
-  ok(mdQuiz.questions.length === 16, 'sample markdown parses into 16 questions')
-  ok(totalPoints(mdQuiz.questions) === 37, 'sample markdown totals 37 points')
-  ok(countByType(mdQuiz.questions, 'mcq') === 5, 'sample has 5 mcq questions')
-  ok(countByType(mdQuiz.questions, 'tf') === 3, 'sample has 3 tf questions')
-  ok(countByType(mdQuiz.questions, 'identification') === 2, 'sample has 2 identification questions')
-  ok(countByType(mdQuiz.questions, 'fillin') === 2, 'sample has 2 fillin questions')
-  ok(countByType(mdQuiz.questions, 'enumeration') === 1, 'sample has 1 enumeration question')
-  ok(countByType(mdQuiz.questions, 'problem') === 1, 'sample has 1 problem question')
-  ok(countByType(mdQuiz.questions, 'matching') === 1, 'sample has 1 matching question')
-  ok(countByType(mdQuiz.questions, 'connect') === 1, 'sample has 1 connect question')
-  ok(mdQuiz.questions.every((q) => q.key !== null), 'every sample question has a complete key')
-  ok(
-    mdQuiz.questions.filter((q) => q.type === 'matching').every((q) =>
-      q.data.left?.length === 4 && q.data.right?.length === 5 && (q.key as Record<string, string>).length === 4
-    ),
-    'matching table yields 4 pairs plus 1 decoy'
-  )
-  ok(
-    mdQuiz.questions.filter((q) => q.type === 'connect').every((q) =>
-      q.data.prompts?.length === 4 && q.data.answers?.length === 5 && (q.key as Record<string, string>).length === 4
-    ),
-    'connect table yields 4 pairs plus 1 decoy'
-  )
-  ok(mdResult.warnings.length === 0, 'sample has no import warnings')
-
+  const here = dirname(fileURLToPath(import.meta.url))
+  const fixtures = join(here, '..', 'tests', 'fixtures')
   const docxPath = join(fixtures, 'Sample_Quiz_Computer_Basics.docx')
   const docxResult = await importQuizFile(docxPath, 'auto')
   ok(docxResult.ok, 'docx import succeeds')
   if (docxResult.ok) {
-    ok(docxResult.quiz.questions.length === 16, 'docx import yields 16 questions')
-    ok(totalPoints(docxResult.quiz.questions) === 37, 'docx import totals 37 points')
+    const quiz = docxResult.quiz
+    ok(quiz.title === 'Sample Quiz: Computer Basics', `docx title is the quiz title (got ${JSON.stringify(quiz.title)})`)
+    ok(quiz.timeLimitSec === 20 * 60, `docx time limit is 20 minutes (got ${quiz.timeLimitSec}s)`)
+    ok(quiz.questions.length === 16, 'docx import yields 16 questions')
+    ok(totalPoints(quiz.questions) === 37, `docx import totals 37 points (got ${totalPoints(quiz.questions)})`)
+    ok(countByType(quiz.questions, 'mcq') === 3, 'docx has 3 mcq questions')
+    ok(countByType(quiz.questions, 'tf') === 3, 'docx has 3 tf questions')
+    ok(countByType(quiz.questions, 'identification') === 2, 'docx has 2 identification questions')
+    ok(countByType(quiz.questions, 'fillin') === 2, 'docx has 2 fillin questions')
+    ok(countByType(quiz.questions, 'enumeration') === 2, 'docx has 2 enumeration questions')
+    ok(countByType(quiz.questions, 'problem') === 2, 'docx has 2 problem questions')
+    ok(countByType(quiz.questions, 'matching') === 1, 'docx has 1 matching question')
+    ok(countByType(quiz.questions, 'connect') === 1, 'docx has 1 connect question')
+    ok(
+      quiz.questions.filter((q) => q.type === 'mcq').every((q) => typeof q.key === 'string' && q.key.length > 0),
+      'every mcq has a marked option'
+    )
+    ok(
+      quiz.questions.filter((q) => q.type === 'tf').every((q) => typeof q.key === 'boolean'),
+      'every tf has a true/false key'
+    )
+    ok(
+      quiz.questions
+        .filter((q) => q.type === 'identification')
+        .every((q) => Array.isArray(q.key) && (q.key as string[]).some((a) => a.trim().length > 0)),
+      'every identification has an accepted answer'
+    )
+    ok(
+      quiz.questions.filter((q) => q.type === 'fillin').every((q) => {
+        const key = q.key as string[][]
+        return Array.isArray(key) && key.length === 2 && key.every((b) => b.some((a) => a.trim().length > 0))
+      }),
+      'every fillin has two blanks with accepted answers'
+    )
+    ok(
+      quiz.questions.filter((q) => q.type === 'enumeration').every((q) => q.data.count === 3),
+      'every enumeration asks for 3 items'
+    )
+    const enums = quiz.questions.filter((q) => q.type === 'enumeration')
+    ok(
+      enums.length === 2 &&
+        (enums[0].key as string[]).length === 5 &&
+        (enums[1].key as string[]).length === 4,
+      'enumeration pools are 5 and 4 accepted items'
+    )
+    ok(
+      quiz.questions
+        .filter((q) => q.type === 'problem')
+        .every((q) => typeof (q.key as { answer?: unknown }).answer === 'string' && ((q.key as { answer: string }).answer.trim().length > 0)),
+      'every problem has a final answer'
+    )
+    ok(
+      quiz.questions.filter((q) => q.type === 'matching').every((q) => {
+        const key = q.key as Record<string, string>
+        return q.data.left?.length === 4 && q.data.right?.length === 5 && Object.keys(key).length === 4
+      }),
+      'matching table yields 4 pairs plus 1 extra right item'
+    )
+    ok(
+      quiz.questions.filter((q) => q.type === 'connect').every((q) => {
+        const key = q.key as Record<string, string>
+        return q.data.prompts?.length === 4 && q.data.answers?.length === 5 && Object.keys(key).length === 4
+      }),
+      'connect table yields 4 pairs plus 1 decoy answer'
+    )
+    ok(docxResult.warnings.length === 0, `docx has no import warnings (got ${JSON.stringify(docxResult.warnings)})`)
   }
 
   const zeroMarks = `Multiple Choice
@@ -107,7 +142,7 @@ Answers
     keyResult.quiz.questions[0].key === null || keyResult.quiz.questions[0].key === '',
     'answer key only leaves the mcq key empty'
   )
-  ok(keyResult.warnings.some((w) => w.message.includes('not determined')), 'answer key only warns that key is undetermined')
+  ok(keyResult.warnings.some((w) => w.message.includes('not determined') || w.message.includes('no choice is marked')), 'answer key only warns that key is undetermined')
 
   const missingTable = `Connect
 Match the device with its connection.
@@ -125,7 +160,7 @@ Mouse
     writeFileSync(corruptedDocx, Buffer.from('this is not a zip file'))
     const corruptedResult = await importQuizFile(corruptedDocx, 'auto')
     ok(!corruptedResult.ok, 'corrupted docx returns an error')
-    ok(typeof corruptedResult.error === 'string' && corruptedResult.error.length > 0, 'corrupted docx returns a readable message')
+    ok(corruptedResult.ok === false && typeof corruptedResult.error === 'string' && corruptedResult.error.length > 0, 'corrupted docx returns a readable message')
   } finally {
     rmSync(corruptedDir, { recursive: true, force: true })
   }

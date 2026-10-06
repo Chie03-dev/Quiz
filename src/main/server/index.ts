@@ -87,6 +87,8 @@ export async function startServer(opts: QuizServerOptions): Promise<QuizServer> 
         if (joined) session.handleFocusGained(sock)
       } else if (msg.t === 'resume_request') {
         if (joined) session.handleResumeRequest(sock)
+      } else if (msg.t === 'finish') {
+        if (joined) session.handleFinish(sock)
       }
       // No other message types are accepted from phones; instructor commands come via IPC only.
     })
