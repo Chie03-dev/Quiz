@@ -169,3 +169,20 @@ Answer keys, accepted answers, and tolerances NEVER appear in any message to pho
 - When the instructor turns lock off, students paused for "focus" are resumed automatically (server sends resumed). Network pauses are not.
 - Events (focus_lost, focus_gained, paused, resumed, resume_request, disconnect, reconnect) are logged in memory per student with a timestamp. Count of focus_lost is shown per student.
 - The server never trusts the phone to enforce anything. Lock is a deterrent plus visibility.
+
+# Finish (step 5)
+
+## Phone -> Server
+- finish  d: {}   (the student submits; no further answers are accepted from them)
+
+## Server -> Phone
+- finished d: {}   (confirmation; also sent after a rejoin if the student already finished)
+- error codes added: FINISHED (an answer arrived after finish)
+
+## Rules
+- finish is valid only while the quiz is running and the student is not paused. While paused the server replies PAUSED and does nothing. Finish is idempotent: a repeated finish gets another finished.
+- After finish, answer messages get FINISHED and are not stored or acked. The student's stored answers stay as they are.
+- A finished student is never paused: focus_lost and heartbeat timeouts are logged but do not pause them.
+- A finished student who rejoins with the same deviceToken during the quiz gets quiz_start, answers_state, then finished.
+- The quiz ends only on the timer or the instructor (quiz_end). When every connected student is finished the instructor sees a banner, but nothing ends automatically.
+- Instructor commands stay IPC-only.

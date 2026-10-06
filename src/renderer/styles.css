@@ -363,6 +363,20 @@ li.paused {
   color: #fcd34d;
 }
 
+.badge.done {
+  border-color: var(--ok);
+  color: var(--ok);
+}
+
+/* Step 5: informational only; the quiz never ends on its own when all finish. */
+.banner {
+  background: #14532d;
+  color: #bbf7d0;
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-weight: 600;
+}
+
 .approve {
   background: #14532d;
   color: #bbf7d0;

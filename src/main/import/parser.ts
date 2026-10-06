@@ -840,6 +840,16 @@ export function parseBlocks(blocks: Block[], options: ParseOptions = {}): ParseR
       continue
     }
 
+    // A direction line right under a section header ("(2 points each)") sets
+    // the per-question default for the section and is otherwise skipped.
+    if (sectionType !== null) {
+      const pm = trimmed.match(POINTS_RE)
+      if (pm) {
+        sectionPoints = Number(pm[1])
+        continue
+      }
+    }
+
     if (sectionType) {
       warnings.push({ questionIndex: null, message: `${SECTION_LABELS[sectionType]}: unrecognized line "${trimmed}"` })
     }
