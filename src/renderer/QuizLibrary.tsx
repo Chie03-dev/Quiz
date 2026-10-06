@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import type { QuizMeta } from '../shared/types'
+import type { ImportQuizReport, QuizMeta } from '../shared/types'
 
 /** Minutes shown for a time limit stored in seconds. */
 const minutes = (sec: number): string => {
@@ -102,10 +102,19 @@ export function QuizLibrary({
     })
   }
 
+  const [importReport, setImportReport] = useState<ImportQuizReport | null>(null)
+
   const importQuiz = (): void => {
     void window.quiz.importQuiz().then((result) => {
       if (result.ok) {
         setError('')
+        setImportReport(null)
+        if ('report' in result && result.report) {
+          setImportReport(result.report)
+          onOpen(result.report.id)
+        } else if ('quiz' in result && result.quiz) {
+          onOpen(result.quiz.id)
+        }
         refresh()
       } else if (!result.cancelled) {
         setError(result.error)
@@ -131,6 +140,30 @@ export function QuizLibrary({
       </header>
 
       {error && <p className="error lib-error">{error}</p>}
+
+      {importReport && (
+        <section className="import-report">
+          <h2>Import complete</h2>
+          <p><strong>Title:</strong> {importReport.title}</p>
+          <p><strong>Questions:</strong> {importReport.questionCount}</p>
+          {importReport.warnings.length > 0 && (
+            <ul>
+              {importReport.warnings.map((w) => (
+                <li key={`${w.questionIndex ?? 'quiz'}-${w.message}`}>{w.message}</li>
+              ))}
+            </ul>
+          )}
+          {importReport.questions.map((q) => (
+            <div key={q.id} className="import-question">
+              <div className="import-question-head">
+                <span className="tag">{q.type}</span>
+                <strong>#{q.id}</strong>
+              </div>
+              <pre className="source-text">{q.sourceText}</pre>
+            </div>
+          ))}
+        </section>
+      )}
 
       {quizzes === null ? (
         <p className="empty">Loading…</p>

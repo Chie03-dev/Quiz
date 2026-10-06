@@ -182,8 +182,20 @@ export type ExportQuizResult =
   | { ok: true; path: string }
   | { ok: false; error: string; cancelled?: boolean }
 
+export interface ImportQuizReport {
+  /** The new quiz the imported file was stored as. */
+  id: string
+  title: string
+  questionCount: number
+  /** Compiler-placement warnings from the importer, in file order. */
+  warnings: { questionIndex: number | null; message: string }[]
+  /** Every imported question with its stored sourceText, for the import report. */
+  questions: { id: string; type: QuestionType; body: string; sourceText: string }[]
+}
+
 export type ImportQuizResult =
   | { ok: true; quiz: StoredQuiz }
+  | { ok: true; report: ImportQuizReport }
   | { ok: false; error: string; cancelled?: boolean }
 
 export type SessionStatus = 'lobby' | 'running' | 'ended'

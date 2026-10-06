@@ -1,6 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { promises as fs } from 'node:fs'
-import { join } from 'path'
+import { extname, join } from 'node:path'
 import type {
   ExportQuizResult,
   ImportQuizResult,
@@ -16,6 +16,7 @@ import { startServer, type QuizServer } from './server'
 import { checkFirewallRules, installFirewallRules } from './firewall'
 import { openQuizLibrary, runtimeQuizForStart, QuizLibrary } from './db'
 import { parseQuizJson, serializeQuiz } from './quizFormat'
+import { describeError, importQuizFile } from './import'
 
 let win: BrowserWindow | null = null
 let server: QuizServer | null = null
@@ -226,17 +227,60 @@ function registerIpc(): void {
       const open = await dialog.showOpenDialog({
         title: 'Import quiz',
         properties: ['openFile'],
-        filters: [{ name: 'Quiz JSON', extensions: ['json'] }]
+        filters: [
+          { name: 'JSON', extensions: ['json'] },
+          { name: 'Markdown', extensions: ['md', 'markdown'] },
+          { name: 'Word', extensions: ['docx'] }
+        ]
       })
       if (open.canceled || !open.filePaths[0]) {
         return { ok: false, error: 'Import was cancelled.', cancelled: true }
       }
-      const text = await fs.readFile(open.filePaths[0], 'utf8')
-      const parsed = parseQuizJson(text)
-      if (!parsed.ok) return { ok: false, error: parsed.error }
-      return { ok: true, quiz: library.importQuiz(parsed.quiz) }
+      const filePath = open.filePaths[0]
+      const ext = extname(filePath).toLowerCase()
+
+      if (ext === '.json') {
+        const text = await fs.readFile(filePath, 'utf8')
+        const parsed = parseQuizJson(text)
+        if (!parsed.ok) return { ok: false, error: parsed.error }
+        return { ok: true, quiz: library.importQuiz(parsed.quiz) }
+      }
+
+      if (ext === '.docx') {
+        const result = await importQuizFile(filePath, 'auto')
+        if (!result.ok) return { ok: false, error: result.error }
+        const imported = library.importQuiz(result.quiz)
+        return {
+          ok: true,
+          report: {
+            id: imported.id,
+            title: imported.title,
+            questionCount: imported.questions.length,
+            warnings: result.warnings.map((w) => ({ questionIndex: w.questionIndex, message: w.message })),
+            questions: imported.questions.map((q) => ({ id: q.id, type: q.type, body: q.body, sourceText: q.sourceText }))
+          }
+        }
+      }
+
+      if (ext === '.md' || ext === '.markdown') {
+        const result = await importQuizFile(filePath, 'auto')
+        if (!result.ok) return { ok: false, error: result.error }
+        const imported = library.importQuiz(result.quiz)
+        return {
+          ok: true,
+          report: {
+            id: imported.id,
+            title: imported.title,
+            questionCount: imported.questions.length,
+            warnings: result.warnings.map((w) => ({ questionIndex: w.questionIndex, message: w.message })),
+            questions: imported.questions.map((q) => ({ id: q.id, type: q.type, body: q.body, sourceText: q.sourceText }))
+          }
+        }
+      }
+
+      return { ok: false, error: `unsupported file type${ext ? ` ${ext}` : ''}; use .docx, .md, .markdown or .json` }
     } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+      return { ok: false, error: describeError(err) }
     }
   })
 

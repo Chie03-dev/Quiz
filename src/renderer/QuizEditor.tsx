@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import type { QuestionType, StoredQuestion, StoredQuiz } from '../shared/types'
+import type { ImportQuizReport, QuestionType, StoredQuestion, StoredQuiz } from '../shared/types'
 import { QUESTION_TYPES } from '../shared/types'
 import { validateQuestion } from '../shared/validation'
 import { QuestionForm, TYPE_LABELS, newQuestion } from './QuestionForms'
@@ -62,10 +62,12 @@ function QuestionCard({
 /** The quiz editor: title, time limit, ordered questions, add by type, save. */
 export function QuizEditor({
   quizId,
-  onBack
+  onBack,
+  importReport = null
 }: {
   quizId: string
   onBack: () => void
+  importReport?: ImportQuizReport | null
 }): React.JSX.Element {
   const [quiz, setQuiz] = useState<StoredQuiz | null>(null)
   const [missing, setMissing] = useState(false)
@@ -81,8 +83,12 @@ export function QuizEditor({
     setError('')
     void window.quiz.getQuiz(quizId).then((loaded) => {
       if (!active) return
-      if (loaded) setQuiz(loaded)
-      else setMissing(true)
+      if (loaded) {
+        setQuiz(loaded)
+        setMissing(false)
+      } else {
+        setMissing(true)
+      }
     })
     return () => {
       active = false
@@ -182,6 +188,30 @@ export function QuizEditor({
           </button>
         </span>
       </header>
+
+      {importReport && (
+        <section className="import-report">
+          <h2>Import complete</h2>
+          <p><strong>Title:</strong> {importReport.title}</p>
+          <p><strong>Questions:</strong> {importReport.questionCount}</p>
+          {importReport.warnings.length > 0 && (
+            <ul>
+              {importReport.warnings.map((w) => (
+                <li key={`${w.questionIndex ?? 'quiz'}-${w.message}`}>{w.message}</li>
+              ))}
+            </ul>
+          )}
+          {importReport.questions.map((q) => (
+            <div key={q.id} className="import-question">
+              <div className="import-question-head">
+                <span className="tag">{q.type}</span>
+                <strong>#{q.id}</strong>
+              </div>
+              <pre className="source-text">{q.sourceText}</pre>
+            </div>
+          ))}
+        </section>
+      )}
 
       {error && <p className="error">{error}</p>}
 

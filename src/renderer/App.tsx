@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react'
-import type { StateSnapshot } from '../shared/types'
+import type { ImportQuizReport, StateSnapshot } from '../shared/types'
 import { Lobby } from './Lobby'
 import { QuizRun } from './QuizRun'
 import { QuizLibrary } from './QuizLibrary'
 import { QuizEditor } from './QuizEditor'
 
 /** Where the instructor is while the session is in the lobby. */
-type View = { name: 'lobby' } | { name: 'library' } | { name: 'editor'; quizId: string }
+type View = { name: 'lobby' } | { name: 'library' } | { name: 'editor'; quizId: string; importReport?: ImportQuizReport | null }
 
 export function App(): React.JSX.Element {
   const [state, setState] = useState<StateSnapshot | null>(null)
@@ -53,7 +53,7 @@ export function App(): React.JSX.Element {
     )
   }
   if (view.name === 'editor') {
-    return <QuizEditor quizId={view.quizId} onBack={() => setView({ name: 'library' })} />
+    return <QuizEditor quizId={view.quizId} onBack={() => setView({ name: 'library' })} importReport={view.importReport} />
   }
   return <Lobby state={state} onOpenLibrary={() => setView({ name: 'library' })} />
 }
