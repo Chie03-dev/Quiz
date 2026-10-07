@@ -57,8 +57,16 @@ function EndQuizButton(): React.JSX.Element {
 function StudentRow({
   student,
   total,
-  answered
+  answered,
+  selected,
+  onToggle
 }: {
+  student: StudentInfo
+  total: number
+  answered: number
+  selected: Set<string>
+  onToggle: (id: string) => void
+}
   student: StudentInfo
   total: number
   answered: number
@@ -72,6 +80,7 @@ function StudentRow({
   return (
     <>
       <li className={`${student.status}${student.paused ? ' paused' : ''}`}>
+        <input type="checkbox" checked={selected.has(student.id)} onChange={() => onToggle(student.id)} style={{marginRight:8}} />
         <span className="name">{student.name}</span>
         <span className="status">{student.status}</span>
         {student.finished && (
@@ -164,6 +173,7 @@ function Ended({ state }: { state: StateSnapshot }): React.JSX.Element {
 
 /** Running and ended views. Counts only; step 2 has no scores. */
 export function QuizRun({ state }: { state: StateSnapshot }): React.JSX.Element {
+  const [selected, setSelected] = useState<Set<string>>(new Set())
   const { students, quiz } = state
   const remaining = useRemaining(quiz.endsAt)
 
@@ -207,6 +217,12 @@ export function QuizRun({ state }: { state: StateSnapshot }): React.JSX.Element 
               student={s}
               total={total}
               answered={quiz.answeredByStudent[s.id] ?? 0}
+              selected={selected}
+              onToggle={(id) => {
+                const next = new Set(selected)
+                if (next.has(id)) next.delete(id) else next.add(id)
+                setSelected(next)
+              }}
             />
           ))}
         </ul>
