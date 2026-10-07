@@ -39,21 +39,25 @@ Source of truth: `src/main/server/mdns.ts`.
   advertisement rather than assuming 8080.
 - TXT records: exactly one, `pin=<PIN>` (for example `pin=5719`). No other TXT
   data is published.
-- Address: a standard A/AAAA record for the host, resolved by the phone.
+- Address: a single A record for the SRV target `quiz-<PIN>.local`, set to the
+  instructor-selected IPv4 (`selectedIp` — the same address as the QR code).
+  Other NICs (VPN, WSL, …) are not advertised. IPv6 is not advertised. Switching
+  the address in the UI re-publishes so PIN discovery stays on the chosen NIC.
 
-Published records for PIN 5719 on port 8080:
+Published records for PIN 5719 on port 8080 at 192.168.0.235:
 
 ```
 PTR  _quiz._tcp.local                      -> quiz-5719._quiz._tcp.local
-SRV  quiz-5719._quiz._tcp.local            -> port 8080
+SRV  quiz-5719._quiz._tcp.local            -> port 8080, target quiz-5719.local
 TXT  quiz-5719._quiz._tcp.local            -> pin=5719
-A/AAAA quiz-5719._quiz._tcp.local          -> host address
+A    quiz-5719.local                       -> 192.168.0.235
 ```
 
 Advertisements are re-published on every New session, with the new PIN in both
-the instance name and the TXT record. The previous advertisement is destroyed
-(not just stopped) first so the instance name is released immediately,
-otherwise rapid new sessions collide with "Service name is already in use".
+the instance name and the TXT record, and whenever the instructor picks another
+LAN address. The previous advertisement is destroyed (not just stopped) first so
+the instance name is released immediately, otherwise rapid new sessions collide
+with "Service name is already in use".
 
 PINs are always 4 characters, zero-padded (`generatePin()` in
 `src/main/server/session.ts`), so an instance may be named `quiz-0423`.

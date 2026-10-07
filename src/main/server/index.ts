@@ -53,6 +53,10 @@ export async function startServer(opts: QuizServerOptions): Promise<QuizServer> 
     selectedIp
   })
   const broadcastInfo = (): void => opts.onServerChanged(info())
+  const publish = (): void => {
+    advertiser?.stop()
+    advertiser = advertiseServer(session.pin, port, selectedIp)
+  }
 
   await app.register(websocket)
 
@@ -116,7 +120,7 @@ export async function startServer(opts: QuizServerOptions): Promise<QuizServer> 
     throw lastError
   }
 
-  advertiser = advertiseServer(session.pin, port)
+  publish()
   broadcastInfo()
 
   return {
@@ -125,13 +129,13 @@ export async function startServer(opts: QuizServerOptions): Promise<QuizServer> 
     selectIp(ip: string) {
       if (!listLanAddresses().some((a) => a.ip === ip)) return false
       selectedIp = ip
+      publish()
       broadcastInfo()
       return true
     },
     newSession() {
       session.reset()
-      advertiser?.stop()
-      advertiser = advertiseServer(session.pin, port)
+      publish()
       broadcastInfo()
       return info()
     },
