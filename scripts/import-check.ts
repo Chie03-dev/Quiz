@@ -154,6 +154,41 @@ Mouse
   const missingResult = parseBlocks(missingBlocks, { markStyle: 'auto' })
   ok(missingResult.warnings.some((w) => w.message.includes('no table') || w.message.includes('unrecognized')), 'missing table warns')
 
+  // --- 2-column plain tables: the common shape real files use ---
+  const twoColMatching = `Matching
+Match each country with its capital.
+
+| France | Paris |
+| ------ | ----- |
+| Italy | Rome |
+`
+  const twoColBlocks = extractMarkdown(twoColMatching)
+  const twoColResult = parseBlocks(twoColBlocks, { markStyle: 'auto' })
+  const twoColQ = twoColResult.quiz.questions.find((q) => q.type === 'matching')
+  ok(!!twoColQ && (twoColQ.data.left?.length ?? 0) === 2, '2-column matching yields 2 left items')
+  ok(!!twoColQ && (twoColQ.data.right?.length ?? 0) === 2, '2-column matching yields 2 right items')
+  ok(
+    !!twoColQ && Object.keys(twoColQ.key as Record<string, string>).length === 2,
+    '2-column matching pairs each row by position'
+  )
+
+  const twoColConnect = `Connect
+Connect the device to its port.
+
+| Keyboard | USB-A |
+| -------- | ----- |
+| Mouse | USB-C |
+`
+  const twoColConnectBlocks = extractMarkdown(twoColConnect)
+  const twoColConnectResult = parseBlocks(twoColConnectBlocks, { markStyle: 'auto' })
+  const twoColConnectQ = twoColConnectResult.quiz.questions.find((q) => q.type === 'connect')
+  ok(!!twoColConnectQ && (twoColConnectQ.data.prompts?.length ?? 0) === 2, '2-column connect yields 2 prompts')
+  ok(!!twoColConnectQ && (twoColConnectQ.data.answers?.length ?? 0) === 2, '2-column connect yields 2 answers')
+  ok(
+    !!twoColConnectQ && Object.keys(twoColConnectQ.key as Record<string, string>).length === 2,
+    '2-column connect pairs each row by position'
+  )
+
   const corruptedDir = mkdtempSync(join(tmpdir(), 'quiz-import-'))
   try {
     const corruptedDocx = join(corruptedDir, 'corrupted.docx')

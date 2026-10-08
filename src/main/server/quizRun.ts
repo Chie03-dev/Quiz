@@ -10,6 +10,9 @@ interface StoredAnswer {
   seq: number
 }
 
+/** Floor for timer adjustments: a change alone can never leave less than this. */
+export const MIN_REMAINING_MS = 10_000
+
 /**
  * The authoritative quiz run: status, the timer, and the latest answer per
  * (student, qid). In memory only, no grading.
@@ -21,6 +24,9 @@ export class QuizRun {
   private timer: NodeJS.Timeout | null = null
   private answers = new Map<string, Map<string, StoredAnswer>>()
   private endReason: 'time' | 'instructor' | null = null
+  // --- timer control: pausing freezes the countdown, storing the remainder ---
+  private paused = false
+  private remainingMs = 0
 
   constructor(private onEnded: () => void, private onChange: (s: QuizState) => void) {}
 
@@ -28,21 +34,26 @@ export class QuizRun {
     return this.status
   }
 
-  /** phone-safe payload for quiz_start. */
+  /** phone-safe payload for quiz_start, including the timer-control paused flag. */
   startPayload(now: number): {
     quizId: string
     title: string
     questions: PublicQuestion[]
     endsAt: number
     serverTime: number
+    paused: boolean
   } {
     const quiz = this.quiz!
     return {
       quizId: quiz.quizId,
       title: quiz.title,
       questions: toPublicQuestions(quiz),
-      endsAt: this.endsAt!,
-      serverTime: now
+      // While paused endsAt is stale by design (it stopped moving), so send
+      // the effective deadline instead: the phone's offset math then yields
+      // the frozen remainder rather than a shrinking clock.
+      endsAt: this.paused ? now + this.remainingMs : this.endsAt!,
+      serverTime: now,
+      paused: this.paused
     }
   }
 
@@ -52,15 +63,83 @@ export class QuizRun {
     this.status = 'running'
     this.answers.clear()
     this.endReason = null
+    this.paused = false
+    this.remainingMs = 0
     this.endsAt = now + quiz.limitMs
-    this.timer = setTimeout(() => this.end('time'), Math.max(0, quiz.limitMs))
+    this.scheduleTimer(quiz.limitMs)
     this.publish()
+  }
+
+  /** Whether the countdown is currently frozen by the instructor. */
+  timerPaused(): boolean {
+    return this.status === 'running' && this.paused
+  }
+
+  /** Remaining time, frozen while paused. */
+  remaining(now: number): number {
+    if (this.status !== 'running' || this.endsAt === null) return 0
+    return this.paused ? this.remainingMs : Math.max(0, this.endsAt - now)
+  }
+
+  /** phone + dashboard payload for a timer change. */
+  timePayload(now: number): { endsAt: number; serverTime: number; paused: boolean } {
+    // Same stale-endsAt guard as startPayload: while paused the phone derives
+    // its countdown from endsAt - serverTime, so send the effective deadline.
+    return { endsAt: this.paused ? now + this.remainingMs : this.endsAt!, serverTime: now, paused: this.paused }
+  }
+
+  private scheduleTimer(ms: number): void {
+    if (this.timer) clearTimeout(this.timer)
+    this.timer = ms <= 0 ? null : setTimeout(() => this.end('time'), ms)
+  }
+
+  /** Freezes the countdown; the stored remainder resumes it later. */
+  pauseTimer(now: number): boolean {
+    if (this.status !== 'running' || this.paused || this.endsAt === null) return false
+    this.remainingMs = Math.max(0, this.endsAt - now)
+    this.paused = true
+    if (this.timer) clearTimeout(this.timer)
+    this.timer = null
+    this.publish()
+    return true
+  }
+
+  /** Resumes the countdown from the stored remainder. */
+  resumeTimer(now: number): boolean {
+    if (this.status !== 'running' || !this.paused) return false
+    this.paused = false
+    this.endsAt = now + this.remainingMs
+    this.scheduleTimer(this.remainingMs)
+    this.remainingMs = 0
+    this.publish()
+    return true
+  }
+
+  /**
+   * Shifts the countdown by deltaMs, clamped so at least 10 s remain and an
+   * adjustment alone can never end the quiz. While paused it edits the
+   * stored remainder instead of endsAt.
+   */
+  adjustTimer(deltaMs: number, now: number): boolean {
+    if (this.status !== 'running' || this.endsAt === null) return false
+    if (!Number.isFinite(deltaMs) || deltaMs === 0) return false
+    if (this.paused) {
+      this.remainingMs = Math.max(MIN_REMAINING_MS, this.remainingMs + deltaMs)
+    } else {
+      const next = Math.max(now + MIN_REMAINING_MS, this.endsAt + deltaMs)
+      this.endsAt = next
+      this.scheduleTimer(next - now)
+    }
+    this.publish()
+    return true
   }
 
   end(reason: 'time' | 'instructor'): boolean {
     if (this.status !== 'running') return false
     this.status = 'ended'
     this.endReason = reason
+    this.paused = false
+    this.remainingMs = 0
     if (this.timer) clearTimeout(this.timer)
     this.timer = null
     this.publish()
@@ -75,6 +154,8 @@ export class QuizRun {
     this.status = 'lobby'
     this.endsAt = null
     this.endReason = null
+    this.paused = false
+    this.remainingMs = 0
     this.answers.clear()
     this.publish()
   }
@@ -129,6 +210,8 @@ export class QuizRun {
       status: this.status,
       title: this.quiz?.title ?? null,
       endsAt: this.endsAt,
+      timerPaused: this.paused,
+      remainingMs: this.paused ? this.remainingMs : null,
       questions,
       answeredByStudent,
       endReason: this.endReason

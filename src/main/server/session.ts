@@ -373,6 +373,30 @@ export class QuizSession {
     return this.run.end('instructor')
   }
 
+  /**
+   * Timer control (IPC-only, while running). Each change broadcasts time_update
+   * to every connected phone; the run publishes the dashboard state itself.
+   */
+  pauseTimer(): boolean {
+    const ok = this.run.pauseTimer(Date.now())
+    if (ok) this.broadcast({ t: 'time_update', d: this.run.timePayload(Date.now()) })
+    return ok
+  }
+
+  /** Resumes the countdown from the stored remainder. */
+  resumeTimer(): boolean {
+    const ok = this.run.resumeTimer(Date.now())
+    if (ok) this.broadcast({ t: 'time_update', d: this.run.timePayload(Date.now()) })
+    return ok
+  }
+
+  /** Shifts the countdown by deltaMs, clamped so ≥10 s remain. */
+  adjustTimer(deltaMs: number): boolean {
+    const ok = this.run.adjustTimer(deltaMs, Date.now())
+    if (ok) this.broadcast({ t: 'time_update', d: this.run.timePayload(Date.now()) })
+    return ok
+  }
+
   kick(studentId: string): boolean {
     const student = this.students.get(studentId)
     if (!student) return false

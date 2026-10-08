@@ -29,6 +29,10 @@ export interface QuizServer {
   setLock(on: boolean): void
   approveResume(studentId: string): boolean
   approveAllResume(): number
+  /** Timer control (IPC-only): pause, resume, or shift the countdown. */
+  pauseTimer(): boolean
+  resumeTimer(): boolean
+  adjustTimer(deltaMs: number): boolean
   /** Last mDNS failure, if any. mDNS is a convenience only, never required. */
   advertisementError(): string | null
   close(): Promise<void>
@@ -155,6 +159,15 @@ export async function startServer(opts: QuizServerOptions): Promise<QuizServer> 
     },
     approveAllResume() {
       return session.approveAllResume()
+    },
+    pauseTimer() {
+      return session.pauseTimer()
+    },
+    resumeTimer() {
+      return session.resumeTimer()
+    },
+    adjustTimer(deltaMs: number) {
+      return session.adjustTimer(deltaMs)
     },
     async close() {
       session.stop()

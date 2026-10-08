@@ -314,12 +314,41 @@ function letterFor(index: number): string {
 }
 
 function isHeaderRow(cells: string[]): boolean {
-  const mid = (cells[1] ?? '').toLowerCase()
-  const first = (cells[0] ?? '').toLowerCase().replace(/[^a-z]/g, '')
-  return mid.includes('answer') || mid.includes('connect') || first === 'columna'
+  const lower = cells.map((c) => c.toLowerCase())
+  if (lower.length >= 3) {
+    const mid = lower[1] ?? ''
+    const first = (lower[0] ?? '').replace(/[^a-z]/g, '')
+    if (mid.includes('answer') || mid.includes('connect') || first === 'columna') return true
+  }
+  const norm = lower.map((c) => c.replace(/[^a-z]/g, ''))
+  const headerWords = new Set(['left', 'right', 'columna', 'columnb', 'prompt', 'prompts', 'answer', 'answers', 'match', 'matches', 'connect', 'item', 'items', 'question', 'response', 'pair', 'pairs'])
+  const nonEmpty = norm.filter((c) => c.length > 0)
+  return nonEmpty.length > 0 && nonEmpty.every((c) => headerWords.has(c))
 }
 
-const RIGHT_LABEL = /^([A-Za-z])\s*[.)]\s+/
+const RIGHT_LABEL = /^\(?([A-Za-z])\)?\s*[.)]\s+/
+
+/**
+ * Strips a choice label ("A.", "1)", "(B)") and returns the letter or digit,
+ * or null when the cell carries no label. Digits count positionally too, so
+ * "1. Rome" in a table whose right column reads 1, 2, 3 can be matched by a
+ * middle-column "2".
+ */
+function rightCellLabel(text: string): string | null {
+  const stripped = text.trim().replace(/^\(([^)]*)\)\s*/, '$1 ').trim()
+  const m = stripped.match(/^([A-Za-z0-9])\s*[.)]\s+/)
+  if (m) return (m[1] ?? '').toUpperCase()
+  // Bare "C" / "2" in the middle column names the item with no trailing mark.
+  const bare = stripped.match(/^([A-Za-z0-9])$/)
+  return bare ? (bare[1] ?? '').toUpperCase() : null
+}
+
+/** Pair-wise binding when the middle column names a right item verbatim. */
+function verbatimIndex(rightTexts: string[], mid: string): number {
+  const want = mid.trim().toLowerCase()
+  if (!want) return -1
+  return rightTexts.findIndex((t) => t.trim().toLowerCase() === want)
+}
 
 interface PairTable {
   left: Choice[]
@@ -329,9 +358,11 @@ interface PairTable {
 }
 
 /**
- * Reads a three-column table: Column A = left items/prompts, Column B = right
- * items/answers (optionally letter-prefixed), and the middle column holds the
- * letter of the matching right item. Rows with an empty Column A are decoys.
+ * Reads a pair table in either shape: three columns (Column A, letter in the
+ * middle, Column B) or two plain columns where each row is already a pair.
+ * Rows with an empty Column A are decoys. The middle column can name the
+ * right item by letter ("B", "b.", "(A)"), by number ("2"), or verbatim
+ * ("Paris"), so imports do not force letter-prefixed right cells.
  */
 function parsePairTable(table: Table, type: QuestionType): PairTable {
   const leftName = type === 'matching' ? 'l' : 'p'
@@ -341,7 +372,33 @@ function parsePairTable(table: Table, type: QuestionType): PairTable {
   if (rows.length === 0) {
     return { left: [], right: [], key: {}, warnings: ['the table has no rows'] }
   }
-  const start = rows.length > 1 && isHeaderRow(rows[0].map(cellText)) ? 1 : 0
+  const first = rows[0].map(cellText)
+  const start = rows.length > 1 && isHeaderRow(first) ? 1 : 0
+  const colCount = Math.max(...rows.slice(start).map((r) => r.length), 0)
+
+  // Two columns: every row is already a pair, no letters needed.
+  if (colCount <= 2) {
+    const left: Choice[] = []
+    const right: Choice[] = []
+    const key: Record<string, string> = {}
+    for (let i = start; i < rows.length; i++) {
+      const cells = rows[i].map(cellText)
+      const a = cells[0] ?? ''
+      const b = cells[1] ?? ''
+      if (!a && !b) continue
+      if (!a || !b) {
+        if (a) left.push({ id: `${leftName}${left.length + 1}`, text: a })
+        warnings.push(`row ${i - start + 1} has a left item but no right item`)
+        continue
+      }
+      left.push({ id: `${leftName}${left.length + 1}`, text: a })
+      right.push({ id: `${rightName}${right.length + 1}`, text: b })
+      key[left[left.length - 1].id] = right[right.length - 1].id
+    }
+    if (left.length === 0 && right.length === 0) warnings.push('the table has no rows')
+    if (right.length === 0 && left.length > 0) warnings.push('the table has no right items')
+    return { left, right, key, warnings }
+  }
 
   const leftRaw: string[] = []
   const rightRaw: string[] = []
@@ -369,14 +426,31 @@ function parsePairTable(table: Table, type: QuestionType): PairTable {
   const labels = rightRaw.map((t, i) =>
     allLabelled ? (t.match(RIGHT_LABEL)?.[1] ?? '').toUpperCase() : letterFor(i)
   )
+  // Digits can also label the right column ("1. Rome"); they count the same
+  // positionally, so a middle-column "2" picks the second right item.
+  const digitLabels = rightRaw.map((t, i) => {
+    const m = t.trim().match(/^\(?([0-9]{1,2})\)?\s*[.)]\s+/)
+    return m ? Number(m[1]) : i + 1
+  })
 
   const left: Choice[] = leftRaw.map((text, i) => ({ id: `${leftName}${i + 1}`, text }))
   const right: Choice[] = rightTexts.map((text, i) => ({ id: `${rightName}${i + 1}`, text }))
   const key: Record<string, string> = {}
   const used = new Set<string>()
   for (const p of pairs) {
-    const want = p.mid.toUpperCase()
-    const target = want ? labels.findIndex((lab, i) => lab === want && !used.has(right[i].id)) : -1
+    // A middle cell can name the right item three ways: letter ("B", "(A)"),
+    // number ("2"), or the verbatim right text ("Paris"). First unused wins.
+    const label = rightCellLabel(`${p.mid} `)
+    const num = /^\d{1,2}$/.test(p.mid.trim()) ? Number(p.mid.trim()) : -1
+    let target = -1
+    if (label) target = labels.findIndex((lab, i) => lab === label && !used.has(right[i].id))
+    if (target < 0 && num > 0) {
+      target = digitLabels.findIndex((n, i) => n === num && !used.has(right[i].id))
+    }
+    if (target < 0 && p.mid) {
+      const vi = verbatimIndex(rightTexts, p.mid)
+      if (vi >= 0 && !used.has(right[vi].id)) target = vi
+    }
     if (target < 0) {
       warnings.push(
         `the left item #${p.leftIndex + 1} has no matching right item (${p.mid || 'the letter is missing'})`

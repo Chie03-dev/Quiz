@@ -27,6 +27,8 @@ let latestQuiz: QuizState = {
   status: 'lobby',
   title: null,
   endsAt: null,
+  timerPaused: false,
+  remainingMs: null,
   questions: [],
   answeredByStudent: {},
   endReason: null
@@ -158,6 +160,33 @@ function registerIpc(): void {
   })
 
   ipcMain.handle('server:approveAllResume', () => server ? server.approveAllResume() : 0)
+
+  // --- timer control. Instructor-only, IPC-only; the server broadcasts
+  // time_update to phones and publishes fresh dashboard state itself. ---
+
+  ipcMain.handle('server:pauseTimer', () => {
+    if (!server) return false
+    const ok = server.pauseTimer()
+    if (ok) latestQuiz = server.session.quizState()
+    if (ok) pushState()
+    return ok
+  })
+
+  ipcMain.handle('server:resumeTimer', () => {
+    if (!server) return false
+    const ok = server.resumeTimer()
+    if (ok) latestQuiz = server.session.quizState()
+    if (ok) pushState()
+    return ok
+  })
+
+  ipcMain.handle('server:adjustTimer', (_event, deltaMs: unknown) => {
+    if (!server || typeof deltaMs !== 'number' || !Number.isFinite(deltaMs)) return false
+    const ok = server.adjustTimer(deltaMs)
+    if (ok) latestQuiz = server.session.quizState()
+    if (ok) pushState()
+    return ok
+  })
 
   // --- step 4: quiz library (SQLite). The renderer reaches it via IPC only. ---
 

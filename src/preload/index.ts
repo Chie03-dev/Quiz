@@ -24,6 +24,10 @@ const api = {
   approveResume: (studentId: string): Promise<boolean> =>
     ipcRenderer.invoke('server:approveResume', studentId),
   approveAllResume: (): Promise<number> => ipcRenderer.invoke('server:approveAllResume'),
+  /** Timer control: freeze, resume, or shift the countdown (ms delta). */
+  pauseTimer: (): Promise<boolean> => ipcRenderer.invoke('server:pauseTimer'),
+  resumeTimer: (): Promise<boolean> => ipcRenderer.invoke('server:resumeTimer'),
+  adjustTimer: (deltaMs: number): Promise<boolean> => ipcRenderer.invoke('server:adjustTimer', deltaMs),
   selectIp: (ip: string): Promise<boolean> => ipcRenderer.invoke('server:selectIp', ip),
   firewallStatus: (): Promise<FirewallStatus> => ipcRenderer.invoke('firewall:status'),
   /** Triggers the UAC prompt. Only ever called from an explicit instructor click. */
