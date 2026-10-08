@@ -7,6 +7,26 @@ session restarted. Everything works offline — no CDNs, no cloud services.
 
 The wire protocol is defined in [docs/protocol.md](docs/protocol.md).
 
+## Related: QuizStudent
+
+This repo (`Quiz`) is the **instructor app** — a Windows Electron app that runs the
+quiz session, hands out the PIN and QR code, and controls the quiz.
+
+[`QuizStudent`](https://github.com/Chie03-dev/QuizStudent) is the companion **student app** —
+the client students open on their phones to join the session, view questions, and submit
+answers. It connects to the instructor app over WebSockets on the local network.
+
+Together they form the full quiz flow:
+
+| Role | Repo | Runs on |
+| --- | --- | --- |
+| Instructor (host) | `Quiz` (this repo) | Windows PC |
+| Student (client) | `QuizStudent` | Phones (browser / PWA) |
+
+Both apps share the same wire protocol (`docs/protocol.md`). The instructor app is
+authoritative: it owns timers, pause state, and scoring, and never sends answer keys to
+students.
+
 ## Requirements
 
 - Windows 10/11
