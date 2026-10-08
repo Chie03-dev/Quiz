@@ -1,12 +1,3 @@
-# Quiz Instructor (step 1)
-
-Windows Electron app for running a LAN quiz. Step 1 is the lobby only: the app
-starts a WebSocket server on the local network, shows a 4-digit session PIN plus a
-QR code, and lists the students who have joined. Students can be kicked and the
-session restarted. Everything works offline — no CDNs, no cloud services.
-
-The wire protocol is defined in [docs/protocol.md](docs/protocol.md).
-
 ## Related: QuizStudent
 
 This repo (`Quiz`) is the **instructor app** — a Windows Electron app that runs the
