@@ -413,9 +413,11 @@ export class QuizSession {
       // A finished student gets finished after answers_state.
       if (student.finished) {
         this.send(socket, { t: 'finished', d: {} })
-      } else if (student.paused && student.pauseReason === 'network') {
-        // A student paused for a network drop stays paused after rejoining.
-        this.send(socket, { t: 'paused', d: { reason: 'network' } })
+      } else if (student.paused && student.pauseReason) {
+        // A paused student stays paused after rejoining. Replay the real reason
+        // (focus or network) so the phone does not look unpaused while the
+        // server still rejects its answers with PAUSED.
+        this.send(socket, { t: 'paused', d: { reason: student.pauseReason } })
       }
     }
     this.notify()
@@ -458,18 +460,22 @@ export class QuizSession {
 
   /**
    * Marks students that stopped sending heartbeats as disconnected, and pauses
-   * them for "network" while the quiz is running. The clock never stops.
+   * them for "network" while the quiz is running. The clock never stops. The
+   * timeout is judged from lastSeen alone, so a clean socket close reaches this
+   * rule too instead of bypassing it.
    */
   private sweep(): void {
     const now = Date.now()
     let changed = false
     for (const student of this.students.values()) {
-      if (student.status !== 'connected' || now - student.lastSeen <= this.heartbeatTimeoutMs) {
-        continue
+      if (now - student.lastSeen <= this.heartbeatTimeoutMs) continue
+      // Only flip (and log) a still-connected student. A clean close already set
+      // status to "disconnected", but the network-pause rule below must still run.
+      if (student.status === 'connected') {
+        student.status = 'disconnected'
+        this.log(student, 'disconnect')
+        changed = true
       }
-      student.status = 'disconnected'
-      this.log(student, 'disconnect')
-      changed = true
       // A finished student is never paused by a heartbeat timeout.
       if (this.run.currentStatus === 'running' && !student.paused && !student.finished) {
         this.pause(student, 'network') // pause() notifies on its own
