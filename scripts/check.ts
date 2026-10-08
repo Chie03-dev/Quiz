@@ -957,10 +957,88 @@ async function checkQuizRun(server: any, port: number, quiz: Quiz = SAMPLE_QUIZ)
   await checkFinish(server, port, quiz)
   await sleep(150)
 
+  // --- timer control: pause/resume/adjust ---
+  console.log('\n--- timer control ---')
+  await checkTimerControl(server, port)
+  await sleep(150)
+
   // --- clean disconnects and paused reconnects ---
   console.log('\n--- disconnect and paused reconnect ---')
   await checkReconnectPause(server, port, quiz)
   await sleep(150)
+  server.newSession()
+}
+
+/** Timer control against the live server: pause, adjust, resume, clamp, rejoin. */
+async function checkTimerControl(server: any, port: number): Promise<void> {
+  server.newSession()
+  const pin = server.session.pin
+  const quiz = { ...SAMPLE_QUIZ, limitMs: 600_000 }
+  const alice = client(port)
+  await alice.open()
+  alice.send('join', { pin, name: 'TimerAlice', deviceToken: 'timer-alice' })
+  await alice.wait('joined')
+  const hb = setInterval(() => alice.send('hb', {}), 400)
+  try {
+    log(server.startQuiz(quiz), 'the timer quiz starts')
+    const start = await alice.wait('quiz_start')
+    log(start.d.paused === false, 'quiz_start carries paused false')
+    const ends0 = start.d.endsAt as number
+
+    log(server.pauseTimer() === true, 'pauseTimer succeeds while running')
+    const upd1 = await alice.wait('time_update')
+    log(upd1.d.paused === true, 'pause broadcasts time_update with paused true')
+    log(server.session.quizState().timerPaused === true, 'dashboard state shows timerPaused')
+    const rem1 = server.session.quizState().remainingMs as number
+    log(typeof rem1 === 'number' && rem1 > 0, 'dashboard state carries the frozen remainder')
+    log(server.pauseTimer() === false, 'a second pause is refused')
+
+    await sleep(500)
+    const rem2 = server.session.quizState().remainingMs as number
+    log(Math.abs(rem2 - rem1) < 1, 'the countdown stays frozen while paused')
+
+    log(server.adjustTimer(60_000) === true, '+1 min while paused succeeds')
+    const upd2 = await alice.wait('time_update')
+    log(upd2.d.paused === true, 'adjust broadcasts time_update still paused')
+    const rem3 = server.session.quizState().remainingMs as number
+    log(rem3 - rem2 >= 59_000 && rem3 - rem2 <= 61_000, '+1 min grows the frozen remainder')
+
+    log(server.resumeTimer() === true, 'resumeTimer succeeds')
+    const upd3 = await alice.wait('time_update')
+    log(upd3.d.paused === false, 'resume broadcasts time_update with paused false')
+    log(server.session.quizState().timerPaused === false, 'dashboard state clears timerPaused')
+    const ends1 = upd3.d.endsAt as number
+    log(ends1 > ends0, 'resume shifts endsAt forward by the paused duration')
+
+    log(server.adjustTimer(-60_000) === true, '-1 min while running succeeds')
+    const upd4 = await alice.wait('time_update')
+    const ends2 = upd4.d.endsAt as number
+    log(ends2 < ends1, '-1 min moves endsAt earlier')
+
+    log(server.adjustTimer(-10_000_000) === true, 'a huge subtraction still returns true')
+    await alice.wait('time_update')
+    const st = server.session.quizState()
+    log(st.endsAt - Date.now() >= 9_000, 'adjust clamps so at least ~10 s remain')
+
+    log(server.pauseTimer() === true, 'pause again for the rejoin test')
+    await alice.wait('time_update')
+    alice.close()
+    await sleep(200)
+    const back = client(port)
+    await back.open()
+    back.send('join', { pin, name: 'TimerAlice', deviceToken: 'timer-alice' })
+    const rs = await back.wait('quiz_start')
+    log(rs.d.paused === true, 'a mid-quiz rejoin quiz_start carries paused true')
+    back.close()
+
+    log(server.endQuiz() === true, 'the timer quiz ends')
+    log(server.pauseTimer() === false, 'pause is refused when not running')
+    log(server.resumeTimer() === false, 'resume is refused when not running')
+    log(server.adjustTimer(60_000) === false, 'adjust is refused when not running')
+  } finally {
+    clearInterval(hb)
+    alice.close()
+  }
   server.newSession()
 }
 

@@ -213,6 +213,10 @@ export interface QuizState {
   status: SessionStatus
   title: string | null
   endsAt: number | null
+  /** Timer control: true while the instructor froze the countdown. */
+  timerPaused: boolean
+  /** Frozen remainder while timerPaused; null otherwise. */
+  remainingMs: number | null
   questions: QuestionProgress[]
   /** Answers per student id. Counters only: no values, no scores. */
   answeredByStudent: Record<string, number>
@@ -360,6 +364,8 @@ export interface QuizStartMessage {
     serverTime: number
     /** Step 3: when true, focus_lost pauses this student. */
     lockMode: boolean
+    /** Timer control: true while the instructor froze the countdown. */
+    paused: boolean
   }
 }
 export interface AnswersStateMessage {
@@ -397,6 +403,11 @@ export interface FinishedMessage {
   id?: string
   d: Record<string, never>
 }
+export interface TimeUpdateMessage {
+  t: 'time_update'
+  id?: string
+  d: { endsAt: number; serverTime: number; paused: boolean }
+}
 export type ServerMessage =
   | JoinedMessage
   | ErrorMessage
@@ -409,3 +420,4 @@ export type ServerMessage =
   | ResumedMessage
   | LockMessage
   | FinishedMessage
+  | TimeUpdateMessage
