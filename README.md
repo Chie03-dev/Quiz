@@ -216,3 +216,45 @@ and asserts the state the UI ends up holding. It exercises the same
 
 Note: it needs the debugging port, so use it for testing only, never for a
 session in front of students.
+
+## Running quiz UI (instructor view)
+
+When a quiz is live, the instructor window shows a top bar with live controls and a
+dashboard of student cards plus per-question progress.
+
+### Top bar
+
+The top bar has two columns:
+
+- **Left** (`topbar-top`): `<h1>` with the quiz title, followed by a subtitle
+  (`{students} in session · {paused} paused · {finished} finished`).
+- **Right** (`topbar-right`, flex wrap): live controls in order —
+  `countdown` (remains `urgent` when under 30 s, `paused` when the timer is paused),
+  the overall answer-completion ring (`progress` + `progress-bar` + `progress-fill` +
+  `progress-label`), `timer-controls` (pause/resume and ±1 min), the `lock-toggle`
+  (check to freeze students' screens; shows ON/OFF state), per-paused-student
+  Approve buttons (one green **Approve** per paused card), **Approve all (n)**,
+  and the `EndQuizButton` (End quiz now → Yes, end it).
+
+### Student cards
+
+Students are grouped under the following headers, rendered only when non-empty:
+
+- **Connected**: cards with a progress bar and a selection checkbox.
+- **Paused**: cards show the reason (`focus` or `network`), a red **PAUSED** tag,
+  and a green **Approve** button to resume that individual student. Paused students
+  do not appear in the Connected group, so a card can never be duplicated.
+- **Finished**: cards with `Finished` + local time.
+
+### Approve flow
+
+1. A student pauses (lock is ON and they lose focus, or they go offline).
+2. The card turns red and gains a **Approve** button.
+3. Instructor clicks **Approve** for that student (or **Approve all (n)** for the
+   batch).
+4. The student's answers are accepted and they are removed from the paused list.
+
+### Timer controls
+
+`+1 min` / `−1 min` adjust the remaining clock; `Pause` / `Resume` freeze the
+countdown. The progress ring and the countdown stay fully in sync with server state.
