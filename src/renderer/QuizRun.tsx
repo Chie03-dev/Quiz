@@ -66,10 +66,6 @@ function StudentRow({
   answered: number
   selected: Set<string>
   onToggle: (id: string) => void
-}
-  student: StudentInfo
-  total: number
-  answered: number
 }): React.JSX.Element {
   const [showEvents, setShowEvents] = useState(false)
   const eventTime = (at: number): string =>
@@ -220,7 +216,8 @@ export function QuizRun({ state }: { state: StateSnapshot }): React.JSX.Element 
               selected={selected}
               onToggle={(id) => {
                 const next = new Set(selected)
-                if (next.has(id)) next.delete(id) else next.add(id)
+                if (next.has(id)) next.delete(id)
+                else next.add(id)
                 setSelected(next)
               }}
             />
