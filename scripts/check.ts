@@ -956,6 +956,11 @@ async function checkQuizRun(server: any, port: number, quiz: Quiz = SAMPLE_QUIZ)
   console.log('\n--- finish ---')
   await checkFinish(server, port, quiz)
   await sleep(150)
+
+  // --- clean disconnects and paused reconnects ---
+  console.log('\n--- disconnect and paused reconnect ---')
+  await checkReconnectPause(server, port, quiz)
+  await sleep(150)
   server.newSession()
 }
 
@@ -1244,6 +1249,184 @@ async function checkFinish(server: any, port: number, quiz: Quiz = SAMPLE_QUIZ):
   clearInterval(bobHb)
   bob.close()
   rejoin.close()
+  await sleep(150)
+  server.session.heartbeatTimeoutMs = 10_000
+  server.newSession()
+}
+
+/**
+ * Clean disconnects and paused reconnects against the live server.
+ *
+ * A clean socket close must still reach the (shortened) heartbeat timeout and
+ * become a network pause, and a rejoin must replay the student's real pause
+ * reason without ever auto-resuming them. Only instructor approval resumes.
+ */
+async function checkReconnectPause(server: any, port: number, quiz: Quiz = SAMPLE_QUIZ): Promise<void> {
+  server.newSession()
+  // A short heartbeat timeout keeps the disconnect tests fast.
+  server.session.heartbeatTimeoutMs = 1500
+  const pin = server.session.pin
+  const info = (id: string): any => server.session.list().find((s: any) => s.id === id)
+
+  const dina = client(port)
+  await dina.open()
+  dina.send('join', { pin, name: 'RcDina', deviceToken: 'rc-dina' })
+  const dinaId = (await dina.wait('joined')).d.studentId
+  const dinaHb = setInterval(() => dina.send('hb', {}), 400)
+
+  const eli = client(port)
+  await eli.open()
+  eli.send('join', { pin, name: 'RcEli', deviceToken: 'rc-eli' })
+  const eliId = (await eli.wait('joined')).d.studentId
+  const eliHb = setInterval(() => eli.send('hb', {}), 400)
+
+  const fay = client(port)
+  await fay.open()
+  fay.send('join', { pin, name: 'RcFay', deviceToken: 'rc-fay' })
+  const fayId = (await fay.wait('joined')).d.studentId
+  const fayHb = setInterval(() => fay.send('hb', {}), 400)
+
+  const gus = client(port)
+  await gus.open()
+  gus.send('join', { pin, name: 'RcGus', deviceToken: 'rc-gus' })
+  const gusId = (await gus.wait('joined')).d.studentId
+  const gusHb = setInterval(() => gus.send('hb', {}), 400)
+
+  log(server.startQuiz(quiz), 'the quiz starts for the reconnect tests')
+  for (const c of [dina, eli, fay, gus]) await c.wait('quiz_start')
+  // --- Test B: a rejoin before the heartbeat timeout must not pause ---
+  eli.send('answer', { qid: 'q1', value: TYPE_ANSWERS.q1, seq: 1 })
+  await eli.wait('ack')
+  clearInterval(eliHb)
+  eli.close()
+  await sleep(200)
+  log(info(eliId).status === 'disconnected', 'B: a clean close marks the student disconnected at once')
+  const eliBack = client(port)
+  await eliBack.open()
+  eliBack.send('join', { pin, name: 'RcEli', deviceToken: 'rc-eli' })
+  await eliBack.wait('joined')
+  await eliBack.wait('quiz_start')
+  const eliState = await eliBack.wait('answers_state')
+  log(eliState.d.answers.q1 === TYPE_ANSWERS.q1, 'B: the rejoin restores the stored answer')
+  log(!eliBack.msgs.some((m) => m.t === 'paused'), 'B: a rejoin before the timeout is not paused')
+  log(info(eliId).paused === false, 'B: the student is not paused after the early rejoin')
+  log(info(eliId).status === 'connected', 'B: the rejoined student is connected again')
+  const eliHb2 = setInterval(() => eliBack.send('hb', {}), 400)
+
+  // --- Test A: a clean close must still reach the network pause ---
+  const answeredBefore = JSON.stringify(server.session.quizState().answeredByStudent)
+  const endsAtBefore = server.session.quizState().endsAt
+  clearInterval(dinaHb)
+  dina.close()
+  await sleep(300)
+  log(info(dinaId).status === 'disconnected', 'A: a clean close marks the student disconnected at once')
+  log(info(dinaId).paused === false, 'A: the close does not pause before the heartbeat timeout')
+  const tA = Date.now()
+  while (!info(dinaId).paused && Date.now() - tA < 6000) await sleep(100)
+  log(info(dinaId).paused === true, 'A: a clean disconnect pauses after the heartbeat timeout')
+  log(info(dinaId).pauseReason === 'network', 'A: the pause reason is network')
+  log(
+    server.session.quizState().status === 'running' && server.session.quizState().endsAt === endsAtBefore,
+    'A: the quiz timer keeps running and is unchanged'
+  )
+  log(
+    JSON.stringify(server.session.quizState().answeredByStudent) === answeredBefore,
+    'A: the pause does not alter answer data'
+  )
+  log(info(eliId).paused === false && info(eliId).status === 'connected', 'A: a heartbeating student is unaffected')
+  // --- Test C: a network-paused rejoin replays the reason and stays paused ---
+  const dinaBack = client(port)
+  await dinaBack.open()
+  dinaBack.send('join', { pin, name: 'RcDina', deviceToken: 'rc-dina' })
+  await dinaBack.wait('joined')
+  await dinaBack.wait('quiz_start')
+  await dinaBack.wait('answers_state')
+  const dinaPaused = await dinaBack.wait('paused')
+  log(
+    dinaPaused.d.reason === 'network',
+    'C: a network-paused rejoin gets quiz_start, answers_state, then paused { reason: "network" }'
+  )
+  const order = ['joined', 'quiz_start', 'answers_state', 'paused'].map((t) =>
+    dinaBack.msgs.findIndex((m) => m.t === t)
+  )
+  log(order.every((i, n) => i >= 0 && (n === 0 || order[n - 1] < i)), 'C: the rejoin messages arrive in order')
+  log(info(dinaId).paused === true, 'C: the rejoin does not clear the pause')
+  log(!dinaBack.msgs.some((m) => m.t === 'resumed'), 'C: the rejoin does not auto-resume')
+  const cErrs = dinaBack.msgs.length
+  dinaBack.send('answer', { qid: 'q2', value: TYPE_ANSWERS.q2, seq: 1 })
+  log(
+    (await waitFresh(dinaBack, 'error', 3000, cErrs)).d.code === 'PAUSED',
+    'C: an answer while still paused gets PAUSED'
+  )
+  log(info(dinaId).paused === true, 'C: the rejected answer leaves the pause in place')
+  const dinaHb2 = setInterval(() => dinaBack.send('hb', {}), 400)
+
+  // --- Test D: a focus-paused rejoin replays the focus reason ---
+  fay.send('focus_lost', { reason: 'background' })
+  await fay.wait('paused')
+  log(info(fayId).pauseReason === 'focus', 'D: focus_lost with the lock on pauses for focus')
+  clearInterval(fayHb)
+  fay.close()
+  await sleep(200)
+  log(info(fayId).paused === true, 'D: the clean close does not clear the focus pause')
+  const fayBack = client(port)
+  await fayBack.open()
+  fayBack.send('join', { pin, name: 'RcFay', deviceToken: 'rc-fay' })
+  await fayBack.wait('joined')
+  await fayBack.wait('quiz_start')
+  await fayBack.wait('answers_state')
+  const fayPaused = await fayBack.wait('paused')
+  log(fayPaused.d.reason === 'focus', 'D: a focus-paused rejoin replays paused { reason: "focus" }')
+  log(info(fayId).paused === true && info(fayId).pauseReason === 'focus', 'D: the student remains focus-paused')
+  log(!fayBack.msgs.some((m) => m.t === 'resumed'), 'D: the rejoin does not auto-resume')
+  const dErrs = fayBack.msgs.length
+  fayBack.send('answer', { qid: 'q1', value: TYPE_ANSWERS.q1, seq: 1 })
+  log(
+    (await waitFresh(fayBack, 'error', 3000, dErrs)).d.code === 'PAUSED',
+    'D: an answer while focus-paused gets PAUSED'
+  )
+  const fayHb2 = setInterval(() => fayBack.send('hb', {}), 400)
+  // --- Test E: only instructor approval resumes, for both pause reasons ---
+  log(server.approveResume('no-such-student') === false, 'E: approving an unknown student does nothing')
+  log(!dinaBack.msgs.some((m) => m.t === 'resumed'), 'E: the network pause was not resumed without approval')
+  log(!fayBack.msgs.some((m) => m.t === 'resumed'), 'E: the focus pause was not resumed without approval')
+  log(server.approveResume(dinaId), 'E: instructor approval resumes the network pause')
+  await dinaBack.wait('resumed')
+  log(info(dinaId).paused === false, 'E: approval clears the network pause')
+  log(server.approveResume(fayId), 'E: instructor approval resumes the focus pause')
+  await fayBack.wait('resumed')
+  log(info(fayId).paused === false, 'E: approval clears the focus pause')
+
+  // --- Test F: a finished student is never paused by a clean disconnect ---
+  gus.send('answer', { qid: 'q3', value: TYPE_ANSWERS.q3, seq: 1 })
+  await gus.wait('ack')
+  gus.send('finish', {})
+  await gus.wait('finished')
+  log(info(gusId).finished === true, 'F: the student finishes before disconnecting')
+  clearInterval(gusHb)
+  gus.close()
+  await sleep(300)
+  log(info(gusId).status === 'disconnected', 'F: the finished student is marked disconnected')
+  await sleep(2600) // well past the 1500 ms heartbeat timeout, so the sweep has run
+  log(info(gusId).paused === false, 'F: a finished student is never paused after a clean disconnect')
+  log(info(gusId).finished === true, 'F: the finished flag is unchanged')
+  const gusBack = client(port)
+  await gusBack.open()
+  gusBack.send('join', { pin, name: 'RcGus', deviceToken: 'rc-gus' })
+  await gusBack.wait('joined')
+  await gusBack.wait('quiz_start')
+  await gusBack.wait('answers_state')
+  await gusBack.wait('finished')
+  log(!gusBack.msgs.some((m) => m.t === 'paused'), 'F: a finished rejoin is not replayed as paused')
+  log(info(gusId).paused === false, 'F: the finished student stays unpaused after rejoining')
+
+  clearInterval(eliHb2)
+  clearInterval(dinaHb2)
+  clearInterval(fayHb2)
+  eliBack.close()
+  dinaBack.close()
+  fayBack.close()
+  gusBack.close()
   await sleep(150)
   server.session.heartbeatTimeoutMs = 10_000
   server.newSession()
