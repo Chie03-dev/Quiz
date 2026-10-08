@@ -1,11 +1,35 @@
+# Dependencies
 node_modules/
+
+# Build output
 out/
 dist/
 .vite/
+
+# Logs
 *.log
 *.err
+
+# Screenshots
 screen*.png
 *.png
+
+# Server / runtime secrets
 server-info.json
 .fake-student-token.json
+
+# TypeScript build info
 tsconfig.*.tsbuildinfo
+
+# Documentation (requested)
+docs/
+
+# Cline / AI tool configuration (requested)
+.clinerules
+.clineignore
+.continue/
+
+# IDE / OS metadata (for future files)
+.vscode/
+.idea/
+.DS_Store
