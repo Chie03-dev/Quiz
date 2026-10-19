@@ -6,6 +6,8 @@ import {
   asStringArray,
   countBlanks
 } from '../shared/validation'
+import { Button, IconButton } from './components/Button'
+import { Icon } from './components/Icon'
 
 /** Human names of the eight types, shared by the card tag and the add buttons. */
 export const TYPE_LABELS: Record<QuestionType, string> = {
@@ -58,23 +60,27 @@ function StringList({
   addLabel: string
 }): React.JSX.Element {
   return (
-    <div className="string-list">
+    <div className="qform__list">
       {values.map((value, i) => (
-        <div className="choice-row" key={i}>
+        <div className="qform__item" key={i}>
           <input
+            className="ui-input"
             type="text"
             value={value}
             placeholder={placeholder}
             onChange={(e) => set(values.map((v, j) => (j === i ? e.target.value : v)))}
           />
-          <button className="mini" title="Remove" onClick={() => set(values.filter((_, j) => j !== i))}>
-            ✕
-          </button>
+          <IconButton
+            label={`Remove ${placeholder.toLowerCase()} ${i + 1}`}
+            icon={<Icon name="close" />}
+            size="sm"
+            onClick={() => set(values.filter((_, j) => j !== i))}
+          />
         </div>
       ))}
-      <button className="secondary" onClick={() => set([...values, ''])}>
+      <Button variant="secondary" size="sm" icon={<Icon name="plus" />} onClick={() => set([...values, ''])}>
         {addLabel}
-      </button>
+      </Button>
     </div>
   )
 }
@@ -92,23 +98,32 @@ function ChoiceList({
   addLabel: string
 }): React.JSX.Element {
   return (
-    <div className="string-list">
+    <div className="qform__list">
       {items.map((item, i) => (
-        <div className="choice-row" key={item.id}>
+        <div className="qform__item" key={item.id}>
           <input
+            className="ui-input"
             type="text"
             value={item.text}
             placeholder={`${placeholder} ${i + 1}`}
             onChange={(e) => set(items.map((c, j) => (j === i ? { ...c, text: e.target.value } : c)))}
           />
-          <button className="mini" title="Remove" onClick={() => set(items.filter((_, j) => j !== i))}>
-            ✕
-          </button>
+          <IconButton
+            label={`Remove ${placeholder.toLowerCase()} ${i + 1}`}
+            icon={<Icon name="close" />}
+            size="sm"
+            onClick={() => set(items.filter((_, j) => j !== i))}
+          />
         </div>
       ))}
-      <button className="secondary" onClick={() => set([...items, { id: uid('c'), text: '' }])}>
+      <Button
+        variant="secondary"
+        size="sm"
+        icon={<Icon name="plus" />}
+        onClick={() => set([...items, { id: uid('c'), text: '' }])}
+      >
         {addLabel}
-      </button>
+      </Button>
     </div>
   )
 }
@@ -137,20 +152,22 @@ export function QuestionForm({
   }
 
   return (
-    <div className="q-form">
-      <div className="q-form-head">
-        <label className="field grow">
-          <span>Question</span>
+    <div className="qform">
+      <div className="qform__row">
+        <label className="ui-field">
+          <span className="ui-field__label">Question</span>
           <textarea
+            className="ui-textarea"
             rows={2}
             value={question.body}
             placeholder="Type the question…"
             onChange={(e) => changeBody(e.target.value)}
           />
         </label>
-        <label className="field points">
-          <span>Points</span>
+        <label className="ui-field">
+          <span className="ui-field__label">Points</span>
           <input
+            className="ui-input"
             type="number"
             min={1}
             step={1}
@@ -202,15 +219,16 @@ function McqForm({
 }): React.JSX.Element {
   const options = q.data.options ?? []
   const correct = typeof q.key === 'string' ? q.key : null
-  const setOptions = (next: Choice[], key: StoredKey = q.key): void =>
+  const setOptions = (next: Choice[], key: StoredKey = q.key): void => {
     change({ ...q, data: { ...q.data, options: next }, key })
+  }
 
   return (
-    <div className="type-form">
-      <span className="field-label">Options — mark the correct one</span>
-      <div className="string-list">
+    <div className="qform">
+      <span className="ui-field__label">Options — mark the correct one</span>
+      <div className="qform__list">
         {options.map((option, i) => (
-          <div className="choice-row" key={option.id}>
+          <div className="qform__item" key={option.id}>
             <input
               type="radio"
               name={`correct-${q.id}`}
@@ -219,6 +237,7 @@ function McqForm({
               onChange={() => change({ ...q, key: option.id })}
             />
             <input
+              className="ui-input"
               type="text"
               value={option.text}
               placeholder={`Option ${i + 1}`}
@@ -226,23 +245,27 @@ function McqForm({
                 setOptions(options.map((o, j) => (j === i ? { ...o, text: e.target.value } : o)))
               }
             />
-            <button
-              className="mini"
-              title="Remove"
+            <IconButton
+              label={`Remove option ${i + 1}`}
+              icon={<Icon name="close" />}
+              size="sm"
               onClick={() =>
                 setOptions(
                   options.filter((_, j) => j !== i),
                   correct === option.id ? null : q.key
                 )
               }
-            >
-              ✕
-            </button>
+            />
           </div>
         ))}
-        <button className="secondary" onClick={() => setOptions([...options, { id: uid('o'), text: '' }])}>
+        <Button
+          variant="secondary"
+          size="sm"
+          icon={<Icon name="plus" />}
+          onClick={() => setOptions([...options, { id: uid('o'), text: '' }])}
+        >
           Add option
-        </button>
+        </Button>
       </div>
     </div>
   )
@@ -257,14 +280,16 @@ function TfForm({
   change: (next: StoredQuestion) => void
 }): React.JSX.Element {
   return (
-    <div className="type-form">
-      <span className="field-label">Correct answer</span>
-      <label className="tf-choice">
-        <input type="radio" checked={q.key === true} onChange={() => change({ ...q, key: true })} /> True
-      </label>
-      <label className="tf-choice">
-        <input type="radio" checked={q.key === false} onChange={() => change({ ...q, key: false })} /> False
-      </label>
+    <div className="qform">
+      <span className="ui-field__label">Correct answer</span>
+      <div className="qform__list">
+        <label className="qform__item">
+          <input type="radio" checked={q.key === true} onChange={() => change({ ...q, key: true })} /> True
+        </label>
+        <label className="qform__item">
+          <input type="radio" checked={q.key === false} onChange={() => change({ ...q, key: false })} /> False
+        </label>
+      </div>
     </div>
   )
 }
@@ -279,8 +304,8 @@ function IdentificationForm({
 }): React.JSX.Element {
   const accepted = asStringArray(q.key)
   return (
-    <div className="type-form">
-      <span className="field-label">Accepted answers (case and spacing are ignored)</span>
+    <div className="qform">
+      <span className="ui-field__label">Accepted answers (case and spacing are ignored)</span>
       <StringList
         values={accepted}
         set={(next) => change({ ...q, key: next })}
@@ -308,14 +333,14 @@ function FillinForm({
   }
 
   return (
-    <div className="type-form">
-      <span className="field-label">
+    <div className="qform">
+      <span className="ui-field__label">
         Accepted answers per blank — the question text needs a ___ for each blank
       </span>
-      {blanks === 0 && <p className="muted">No blanks yet.</p>}
+      {blanks === 0 && <p className="ui-muted">No blanks yet.</p>}
       {Array.from({ length: blanks }, (_, i) => (
-        <div className="blank-group" key={i}>
-          <span className="blank-label">Blank {i + 1}</span>
+        <div className="qform__pair" key={i}>
+          <span className="ui-field__label">Blank {i + 1}</span>
           <StringList
             values={perBlank[i] ?? []}
             set={(answers) => setBlank(i, answers)}
@@ -343,14 +368,19 @@ function EnumerationForm({
   }
 
   return (
-    <div className="type-form">
-      <div className="inline-fields">
-        <label className="field narrow">
-          <span>How many items</span>
-          <input type="number" min={1} step={1} value={q.data.count ?? ''} onChange={(e) => setCount(e.target.value)} />
-        </label>
-      </div>
-      <span className="field-label">Accepted items (the order does not matter)</span>
+    <div className="qform">
+      <label className="ui-field">
+        <span className="ui-field__label">How many items</span>
+        <input
+          className="ui-input"
+          type="number"
+          min={1}
+          step={1}
+          value={q.data.count ?? ''}
+          onChange={(e) => setCount(e.target.value)}
+        />
+      </label>
+      <span className="ui-field__label">Accepted items (the order does not matter)</span>
       <StringList
         values={accepted}
         set={(next) => change({ ...q, key: next })}
@@ -371,20 +401,22 @@ function ProblemForm({
 }): React.JSX.Element {
   const key = asProblemKey(q.key)
   return (
-    <div className="type-form">
-      <div className="inline-fields">
-        <label className="field grow">
-          <span>Final answer</span>
+    <div className="qform">
+      <div className="qform__row">
+        <label className="ui-field">
+          <span className="ui-field__label">Final answer</span>
           <input
+            className="ui-input"
             type="text"
             value={key.answer}
             placeholder="e.g. 15 €"
             onChange={(e) => change({ ...q, key: { ...key, answer: e.target.value } })}
           />
         </label>
-        <label className="field narrow">
-          <span>Tolerance (optional)</span>
+        <label className="ui-field">
+          <span className="ui-field__label">Tolerance (optional)</span>
           <input
+            className="ui-input"
             type="number"
             min={0}
             step="any"
@@ -450,23 +482,27 @@ function PairEditor({
   }
 
   return (
-    <div className="type-form">
-      <div className="pair-grid">
-        <div className="pair-col">
-          <span className="field-label">{fromLabel}</span>
+    <div className="qform">
+      <div className="qform__pairs">
+        <div className="qform__pair">
+          <span className="ui-field__label">{fromLabel}</span>
           <ChoiceList items={fromItems} set={setFromItems} placeholder="Item" addLabel={`Add ${from === 'left' ? 'left item' : 'prompt'}`} />
         </div>
-        <div className="pair-col">
-          <span className="field-label">{toLabel}</span>
+        <div className="qform__pair">
+          <span className="ui-field__label">{toLabel}</span>
           <ChoiceList items={toItems} set={setToItems} placeholder="Item" addLabel={`Add ${to === 'right' ? 'right item' : 'answer'}`} />
         </div>
       </div>
-      <span className="field-label">Pairs</span>
-      {fromItems.length === 0 && <p className="muted">Add items first.</p>}
+      <span className="ui-field__label">Pairs</span>
+      {fromItems.length === 0 && <p className="ui-muted">Add items first.</p>}
       {fromItems.map((item, i) => (
-        <div className="pair-row" key={item.id}>
-          <span className="pair-name">{item.text || `#${i + 1}`}</span>
-          <select value={map[item.id] ?? ''} onChange={(e) => setPair(item.id, e.target.value)}>
+        <div className="qform__pair-row" key={item.id}>
+          <span className="qform__pair-name">{item.text || `#${i + 1}`}</span>
+          <select
+            className="ui-select"
+            value={map[item.id] ?? ''}
+            onChange={(e) => setPair(item.id, e.target.value)}
+          >
             <option value="">— not paired —</option>
             {toItems.map((target, j) => (
               <option key={target.id} value={target.id}>
@@ -479,3 +515,4 @@ function PairEditor({
     </div>
   )
 }
+
