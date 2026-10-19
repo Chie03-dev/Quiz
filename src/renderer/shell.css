@@ -1,0 +1,200 @@
+/*
+ * App shell layout: a persistent sidebar plus a scrolling content area.
+ * Screens render inside .shell__content and never replace the shell.
+ */
+
+.shell {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* --- sidebar -------------------------------------------------------- */
+
+.shell__nav {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-6);
+  padding: var(--sp-5) var(--sp-4);
+  background: var(--ui-surface);
+  border-right: 1px solid var(--ui-border);
+  overflow-y: auto;
+}
+
+.shell__brand {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: 0 var(--sp-2);
+}
+
+.shell__brand-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--r-md);
+  background: var(--ui-accent);
+  color: #ffffff;
+  font-weight: var(--fw-bold);
+  font-size: var(--fs-md);
+  flex: 0 0 auto;
+}
+
+.shell__brand-name {
+  font-size: var(--fs-md);
+  font-weight: var(--fw-bold);
+  letter-spacing: -0.01em;
+}
+
+.shell__brand-sub {
+  display: block;
+  color: var(--ui-text-dim);
+  font-size: var(--fs-xs);
+  font-weight: 400;
+  letter-spacing: 0;
+}
+
+.shell__nav-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+
+.shell__nav-label {
+  padding: 0 var(--sp-2);
+  color: var(--ui-text-dim);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-bold);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.shell__nav-item {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  width: 100%;
+  padding: var(--sp-2) var(--sp-3);
+  border: 0;
+  border-radius: var(--r-md);
+  background: transparent;
+  color: var(--ui-text-muted);
+  font-family: inherit;
+  font-size: var(--fs-base);
+  font-weight: var(--fw-medium);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    color 120ms ease;
+}
+
+.shell__nav-item:hover {
+  background: var(--ui-surface-2);
+  color: var(--ui-text);
+}
+
+.shell__nav-item.is-active {
+  background: var(--ui-accent-soft);
+  color: var(--ui-text);
+}
+
+.shell__nav-item:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.shell__nav-icon {
+  display: inline-flex;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+}
+
+.shell__nav-text {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+}
+
+.shell__nav-badge {
+  flex: 0 0 auto;
+}
+
+.shell__foot {
+  margin-top: auto;
+  padding: var(--sp-3) var(--sp-2) 0;
+  border-top: 1px solid var(--ui-border);
+  color: var(--ui-text-dim);
+  font-size: var(--fs-xs);
+}
+
+/* --- content -------------------------------------------------------- */
+
+.shell__main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.shell__topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-4);
+  padding: var(--sp-4) var(--sp-6);
+  border-bottom: 1px solid var(--ui-border);
+  background: var(--ui-surface);
+}
+
+.shell__heading {
+  min-width: 0;
+}
+
+.shell__title {
+  font-size: var(--fs-lg);
+}
+
+.shell__subtitle {
+  color: var(--ui-text-muted);
+  font-size: var(--fs-sm);
+}
+
+.shell__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex: 0 0 auto;
+}
+
+.shell__content {
+  flex: 1;
+  min-height: 0;
+  padding: var(--sp-6);
+  overflow-y: auto;
+}
+
+.shell__content--flush {
+  padding: 0;
+}
+
+/* A banner that sits between the top bar and the content. */
+.shell__banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-6);
+  background: var(--ui-amber-soft);
+  border-bottom: 1px solid var(--ui-border);
+  color: var(--ui-text);
+  font-size: var(--fs-sm);
+}
+
+.shell__banner--accent {
+  background: var(--ui-accent-soft);
+}
