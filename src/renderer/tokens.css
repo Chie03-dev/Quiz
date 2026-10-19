@@ -1,0 +1,71 @@
+/*
+ * Design tokens for the instructor app. One source of truth for colour,
+ * spacing, radius, elevation and type. Component CSS must use these and
+ * never a raw hex value or an ad-hoc pixel size.
+ */
+
+:root {
+  /* --- surfaces --- */
+  --ui-bg: #0b1020;
+  --ui-surface: #141a2e;
+  --ui-surface-2: #1b2340;
+  --ui-surface-3: #232c4d;
+  --ui-border: #2b3557;
+  --ui-border-strong: #3c4a76;
+
+  /* --- text --- */
+  --ui-text: #eef1f8;
+  --ui-text-muted: #9aa5c4;
+  --ui-text-dim: #6d789a;
+
+  /* --- accents (indigo / teal / amber, matching the student app theme) --- */
+  --ui-accent: #6366f1;
+  --ui-accent-hover: #7c7ff5;
+  --ui-accent-soft: rgba(99, 102, 241, 0.16);
+  --ui-teal: #2dd4bf;
+  --ui-teal-soft: rgba(45, 212, 191, 0.14);
+  --ui-amber: #f5b544;
+  --ui-amber-soft: rgba(245, 181, 68, 0.14);
+  --ui-danger: #f26d6d;
+  --ui-danger-hover: #f58a8a;
+  --ui-danger-soft: rgba(242, 109, 109, 0.14);
+  --ui-ok: #4ade80;
+  --ui-ok-soft: rgba(74, 222, 128, 0.14);
+
+  /* --- spacing scale --- */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-8: 32px;
+  --sp-10: 40px;
+  --sp-12: 48px;
+
+  /* --- radius --- */
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 14px;
+  --r-xl: 20px;
+  --r-full: 999px;
+
+  /* --- elevation --- */
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-2: 0 8px 24px rgba(0, 0, 0, 0.35);
+  --focus-ring: 0 0 0 2px var(--ui-bg), 0 0 0 4px var(--ui-accent);
+
+  /* --- type scale --- */
+  --fs-xs: 12px;
+  --fs-sm: 13px;
+  --fs-base: 14px;
+  --fs-md: 16px;
+  --fs-lg: 20px;
+  --fs-xl: 26px;
+  --fs-display: 34px;
+  --fw-medium: 600;
+  --fw-bold: 700;
+
+  --font-ui: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --font-mono: Consolas, 'Courier New', monospace;
+}

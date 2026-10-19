@@ -1,0 +1,353 @@
+/*
+ * Element defaults. Loaded once the legacy stylesheet is gone, so it never
+ * fights with the old rules while both are present.
+ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--ui-bg);
+  color: var(--ui-text);
+  font-family: var(--font-ui);
+  font-size: var(--fs-base);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3 {
+  margin: 0;
+  font-weight: var(--fw-bold);
+  letter-spacing: -0.01em;
+}
+
+h1 {
+  font-size: var(--fs-xl);
+}
+
+h2 {
+  font-size: var(--fs-lg);
+}
+
+h3 {
+  font-size: var(--fs-md);
+}
+
+p {
+  margin: 0;
+}
+
+ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Every interactive element gets the same visible focus ring. */
+:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-radius: var(--r-sm);
+}
+
+::selection {
+  background: var(--ui-accent-soft);
+}
+
+/* --- buttons ------------------------------------------------------- */
+
+.ui-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  padding: 0 var(--sp-4);
+  height: 36px;
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  background: var(--ui-surface-3);
+  color: var(--ui-text);
+  font-family: inherit;
+  font-size: var(--fs-base);
+  font-weight: var(--fw-medium);
+  cursor: pointer;
+  white-space: nowrap;
+  user-select: none;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease;
+}
+
+.ui-btn:hover:not(:disabled) {
+  background: var(--ui-border);
+}
+
+.ui-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.ui-btn--primary {
+  background: var(--ui-accent);
+  color: #ffffff;
+}
+
+.ui-btn--primary:hover:not(:disabled) {
+  background: var(--ui-accent-hover);
+}
+
+.ui-btn--secondary {
+  background: var(--ui-surface-3);
+  border-color: var(--ui-border);
+}
+
+.ui-btn--secondary:hover:not(:disabled) {
+  border-color: var(--ui-border-strong);
+}
+
+.ui-btn--danger {
+  background: var(--ui-danger-soft);
+  color: var(--ui-danger);
+  border-color: var(--ui-danger);
+}
+
+.ui-btn--danger:hover:not(:disabled) {
+  background: var(--ui-danger);
+  color: #ffffff;
+}
+
+.ui-btn--ghost {
+  background: transparent;
+  color: var(--ui-text-muted);
+}
+
+.ui-btn--ghost:hover:not(:disabled) {
+  background: var(--ui-surface-2);
+  color: var(--ui-text);
+}
+
+/* Square button holding a single icon. Needs an aria-label. */
+.ui-btn--icon {
+  width: 36px;
+  padding: 0;
+  flex: 0 0 auto;
+}
+
+.ui-btn--sm {
+  height: 30px;
+  padding: 0 var(--sp-3);
+  font-size: var(--fs-sm);
+}
+
+.ui-btn--icon.ui-btn--sm {
+  width: 30px;
+}
+
+.ui-btn__icon {
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+}
+
+/* --- panels -------------------------------------------------------- */
+
+.ui-panel {
+  background: var(--ui-surface);
+  border: 1px solid var(--ui-border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-1);
+}
+
+.ui-panel__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  padding: var(--sp-4) var(--sp-5);
+  border-bottom: 1px solid var(--ui-border);
+}
+
+.ui-panel__title {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+}
+
+.ui-panel__body {
+  padding: var(--sp-5);
+}
+
+/* --- badges -------------------------------------------------------- */
+
+.ui-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  padding: 2px var(--sp-2);
+  border-radius: var(--r-full);
+  background: var(--ui-surface-3);
+  color: var(--ui-text-muted);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.ui-badge--ok {
+  background: var(--ui-ok-soft);
+  color: var(--ui-ok);
+}
+
+.ui-badge--warn {
+  background: var(--ui-amber-soft);
+  color: var(--ui-amber);
+}
+
+.ui-badge--danger {
+  background: var(--ui-danger-soft);
+  color: var(--ui-danger);
+}
+
+.ui-badge--accent {
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent-hover);
+}
+
+.ui-badge--teal {
+  background: var(--ui-teal-soft);
+  color: var(--ui-teal);
+}
+
+/* --- fields -------------------------------------------------------- */
+
+.ui-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+
+.ui-field__label {
+  color: var(--ui-text-muted);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+}
+
+.ui-input,
+.ui-select,
+.ui-textarea {
+  width: 100%;
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--ui-surface-2);
+  border: 1px solid var(--ui-border);
+  border-radius: var(--r-md);
+  color: var(--ui-text);
+  font-family: inherit;
+  font-size: var(--fs-base);
+}
+
+.ui-input:focus-visible,
+.ui-select:focus-visible,
+.ui-textarea:focus-visible {
+  border-color: var(--ui-accent);
+  box-shadow: var(--focus-ring);
+}
+
+.ui-textarea {
+  min-height: 88px;
+  resize: vertical;
+  font-family: inherit;
+}
+
+.ui-select {
+  cursor: pointer;
+}
+
+/* --- empty state --------------------------------------------------- */
+
+.ui-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-8) var(--sp-4);
+  text-align: center;
+  color: var(--ui-text-muted);
+}
+
+.ui-empty__title {
+  color: var(--ui-text);
+  font-size: var(--fs-md);
+  font-weight: var(--fw-medium);
+}
+
+.ui-empty__body {
+  max-width: 42ch;
+  font-size: var(--fs-sm);
+}
+
+/* --- misc ---------------------------------------------------------- */
+
+.ui-muted {
+  color: var(--ui-text-muted);
+}
+
+.ui-error {
+  color: var(--ui-danger);
+  font-size: var(--fs-sm);
+}
+
+/* Visible to screen readers only. */
+.ui-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* --- confirmation row ----------------------------------------------- */
+
+.ui-confirm {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.ui-confirm__hint {
+  color: var(--ui-text-muted);
+  font-size: var(--fs-sm);
+  white-space: nowrap;
+}
+
+.ui-panel__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex: 0 0 auto;
+}
+
+.ui-empty__icon {
+  display: inline-flex;
+  width: 32px;
+  height: 32px;
+  color: var(--ui-text-dim);
+}
