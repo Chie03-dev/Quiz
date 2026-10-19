@@ -1,6 +1,12 @@
 import { useEffect, useState } from 'react'
-import type { StateSnapshot, StudentInfo } from '../shared/types'
-import { LockToggle } from './Lobby'
+import type { StateSnapshot, StudentInfo } from '../../shared/types'
+import { Badge } from '../components/Badge'
+import { Button } from '../components/Button'
+import { ConfirmButton } from '../components/ConfirmButton'
+import { EmptyState } from '../components/EmptyState'
+import { Icon } from '../components/Icon'
+import { LockToggle } from '../components/LockToggle'
+import { Panel } from '../components/Panel'
 
 /** Ticks once a second so the countdown moves without any server round trip. */
 function useRemaining(endsAt: number | null, timerPaused: boolean, remainingMs: number | null): number {
@@ -30,57 +36,62 @@ function TimerControls({ timerPaused }: { timerPaused: boolean }): React.JSX.Ele
     void fn().finally(() => setBusy(false))
   }
   return (
-    <span className="timer-controls">
+    <span className="live__controls">
       {timerPaused ? (
-        <button className="secondary" disabled={busy} onClick={() => run(() => window.quiz.resumeTimer())}>
+        <Button
+          variant="secondary"
+          size="sm"
+          icon={<Icon name="play" />}
+          disabled={busy}
+          testId="resume-timer"
+          onClick={() => run(() => window.quiz.resumeTimer())}
+        >
           Resume timer
-        </button>
+        </Button>
       ) : (
-        <button className="secondary" disabled={busy} onClick={() => run(() => window.quiz.pauseTimer())}>
+        <Button
+          variant="secondary"
+          size="sm"
+          icon={<Icon name="pause" />}
+          disabled={busy}
+          testId="pause-timer"
+          onClick={() => run(() => window.quiz.pauseTimer())}
+        >
           Pause timer
-        </button>
+        </Button>
       )}
-      <button className="secondary" disabled={busy} onClick={() => run(() => window.quiz.adjustTimer(60_000))}>
+      <Button
+        variant="secondary"
+        size="sm"
+        disabled={busy}
+        testId="timer-plus"
+        onClick={() => run(() => window.quiz.adjustTimer(60_000))}
+      >
         +1 min
-      </button>
-      <button className="secondary" disabled={busy} onClick={() => run(() => window.quiz.adjustTimer(-60_000))}>
+      </Button>
+      <Button
+        variant="secondary"
+        size="sm"
+        disabled={busy}
+        testId="timer-minus"
+        onClick={() => run(() => window.quiz.adjustTimer(-60_000))}
+      >
         −1 min
-      </button>
+      </Button>
     </span>
   )
 }
 
 function EndQuizButton(): React.JSX.Element {
-  const [confirming, setConfirming] = useState(false)
-  // Back to the plain button if the instructor hesitates.
-  useEffect(() => {
-    if (!confirming) return
-    const t = setTimeout(() => setConfirming(false), 5000)
-    return () => clearTimeout(t)
-  }, [confirming])
-
-  if (!confirming) {
-    return (
-      <button className="danger" onClick={() => setConfirming(true)}>
-        End quiz now
-      </button>
-    )
-  }
   return (
-    <span className="confirm">
-      <button
-        className="danger"
-        onClick={() => {
-          setConfirming(false)
-          void window.quiz.endQuiz()
-        }}
-      >
-        Yes, end it
-      </button>
-      <button className="secondary" onClick={() => setConfirming(false)}>
-        Cancel
-      </button>
-    </span>
+    <ConfirmButton
+      label="End quiz now"
+      confirmLabel="Yes, end it"
+      icon={<Icon name="stop" />}
+      testId="end-quiz"
+      confirmTestId="end-quiz-confirm"
+      onConfirm={() => void window.quiz.endQuiz()}
+    />
   )
 }
 
@@ -88,15 +99,11 @@ function EndQuizButton(): React.JSX.Element {
 function StudentCard({
   student,
   total,
-  answered,
-  selected,
-  onToggle
+  answered
 }: {
   student: StudentInfo
   total: number
   answered: number
-  selected: Set<string>
-  onToggle: (id: string) => void
 }): React.JSX.Element {
   const avatar = student.name.trim()
     .split(' ')
@@ -109,38 +116,61 @@ function StudentCard({
   const finished = student.finished
 
   return (
-    <li className={`student-card${paused ? ' card-paused' : ''}${finished ? ' card-finished' : ''}`}>
-      <div className="student-head">
-        <span className="student-avatar" aria-hidden="true">
+    <li
+      className={`live__card${paused ? ' live__card--paused' : ''}${finished ? ' live__card--finished' : ''}`}
+    >
+      <div className="live__card-head">
+        <span className="roster__avatar" aria-hidden="true">
           {initials}
         </span>
-        <div className="student-main">
-          <span className="student-name">{student.name}</span>
-          <span className="student-meta">
-            answered {answered} of {total} ({pct}%)
-          </span>
-        </div>
-        <button className="secondary mini" disabled={!selected.has(student.id)} onClick={() => onToggle(student.id)} aria-label={`Select ${student.name}`}>
-          {selected.has(student.id) ? '✓' : ''}
-        </button>
+        <span className="live__card-name">{student.name}</span>
+        {paused && <Badge tone="warn">Paused</Badge>}
+        {finished && <Badge tone="ok">Finished</Badge>}
+        <Badge tone={student.status === 'connected' ? 'ok' : 'danger'}>{student.status}</Badge>
       </div>
-      <div className="student-progress">
-        <div className="student-progress-bar">
-          <div className={"student-progress-fill" + (paused ? ' paused' : '') + (finished ? ' finished' : '')} style={{ width: `${pct}%` }} />
-        </div>
+      <div className="live__card-meta">
+        answered {answered} of {total} ({pct}%)
+      </div>
+      <div className="live__bar live__bar--sm">
+        <div
+          className={`live__bar-fill${paused ? ' live__bar-fill--ok' : ''}${finished ? ' live__bar-fill--ok' : ''}`}
+          style={{ width: `${pct}%` }}
+        />
       </div>
       {paused && (
-        <button className="approve" onClick={() => void window.quiz.approveResume(student.id)}>
-          Approve
-        </button>
+        <Button
+          variant="secondary"
+          size="sm"
+          testId={`approve-${student.name}`}
+          onClick={() => void window.quiz.approveResume(student.id)}
+        >
+          Approve resume
+        </Button>
       )}
-      <div className="student-tags">
-        {paused && <span className="tag pause">PAUSED {student.pauseReason === 'network' ? '· network' : '· focus'}</span>}
-        {finished && <span className="tag done">Finished{student.finishedAt !== null ? ` · ${new Date(student.finishedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : ''}</span>}
-        <span className={"tag status" + (student.status === 'connected' ? ' ok' : ' bad')}>{student.status}</span>
-      </div>
     </li>
   )
+}
+
+/** Human wording for a student event. */
+const describe = (type: StudentInfo['events'][number]['type']): string => {
+  switch (type) {
+    case 'paused':
+      return 'paused'
+    case 'resumed':
+      return 'resumed'
+    case 'focus_lost':
+      return 'lost focus'
+    case 'focus_gained':
+      return 'regained focus'
+    case 'finished':
+      return 'finished'
+    case 'resume_request':
+      return 'asked to resume'
+    case 'disconnect':
+      return 'disconnected'
+    case 'reconnect':
+      return 'reconnected'
+  }
 }
 
 /** Collapsible event log for a student. */
@@ -149,24 +179,17 @@ function EventLog({ events, open, onToggle }: { events: StudentInfo['events']; o
   const eventTime = (at: number): string =>
     new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
   return (
-    <div className="events">
-      <button className="events-toggle" onClick={onToggle}>
-        Events ({events.length}){events.length > 0 ? (open ? ' ▾' : ' ▴') : ''}
-      </button>
+    <div className="live__events">
+      <Button variant="ghost" size="sm" onClick={onToggle}>
+        Events ({events.length})
+      </Button>
       {open && (
-        <ul className="events-list">
+        <ul>
           {events.map((e, i) => (
-            <li key={`${e.at}-${i}`} className={e.type}>
-              <span className="events-time">{eventTime(e.at)}</span>
-              <span className="events-tag">{e.type}</span>
-              <span className="events-detail">
-                {e.type === 'paused' && 'paused'}
-                {e.type === 'resumed' && 'resumed'}
-                {e.type === 'focus_lost' && 'lost focus'}
-                {e.type === 'focus_gained' && 'regained focus'}
-                {e.type === 'finished' && 'finished'}
-                {e.type === 'resume_request' && '· asked to resume'}
-              </span>
+            <li key={`${e.at}-${i}`} className="live__event">
+              <span className="live__event-time">{eventTime(e.at)}</span>
+              <Badge>{e.type}</Badge>
+              <span>{describe(e.type)}</span>
             </li>
           ))}
         </ul>
@@ -183,57 +206,72 @@ function Ended({ state }: { state: StateSnapshot }): React.JSX.Element {
     ? Math.round((students.reduce((acc, s) => acc + (quiz.answeredByStudent[s.id] ?? 0), 0) / (total * students.length)) * 100)
     : 0
   return (
-    <div className="lobby">
-      <header className="topbar">
-        <h1>Quiz ended</h1>
-        <span className="topbar-right">
-          <span className="countdown">{clock(0)}</span>
-          <button className="secondary" onClick={() => void window.quiz.newSession()}>
-            New session
-          </button>
-        </span>
-      </header>
-      <div className="summary">
-        <p className="muted">{reason}</p>
-        <div className="progress">
-          <div className="progress-bar">
-            <div className="progress-fill" style={{ width: `${overall}%` }} />
+    <div className="live">
+      <div className="live__hero">
+        <div>
+          <div className="live__clock-label">Session over</div>
+          <div className="live__clock" data-testid="countdown">
+            {clock(0)}
           </div>
-          <span className="progress-label">{overall}% answered</span>
         </div>
-        <p className="count">{total} question{total === 1 ? '' : 's'} · {students.length} student{students.length === 1 ? '' : 's'}</p>
+        <div className="live__progress">
+          <div className="live__bar">
+            <div className="live__bar-fill live__bar-fill--ok" style={{ width: `${overall}%` }} />
+          </div>
+          <span className="live__bar-label">{overall}% answered</span>
+        </div>
+        <Button
+          variant="primary"
+          testId="new-session"
+          onClick={() => void window.quiz.newSession()}
+        >
+          New session
+        </Button>
       </div>
-      <section className="students">
-        <div className="student-grid">
-          {students.map((s) => (
-            <div key={s.id} className={`student-card${s.status === 'disconnected' ? ' card-disconnected' : ''}`}>
-              <div className="student-head">
-                <span className="student-avatar" aria-hidden="true">
-                  {s.name.trim().split(' ').map((w) => w[0]).join('') || '?'}
-                </span>
-                <div className="student-main">
-                  <span className="student-name">{s.name}</span>
-                  <span className="student-meta">
-                    answered {state.quiz.answeredByStudent[s.id] ?? 0} of {total}
-                  </span>
-                </div>
-              </div>
-              <div className="student-progress">
-                <div className="student-progress-bar">
-                  <div className={"student-progress-fill" + (s.finished ? ' finished' : '')} style={{ width: Math.round((state.quiz.answeredByStudent[s.id] ?? 0) / total * 100) + '%' }} />
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      </section>
+
+      <Panel title="Summary" actions={<Badge tone="neutral">{reason}</Badge>}>
+        <p className="ui-muted">
+          {total} question{total === 1 ? '' : 's'} · {students.length} student
+          {students.length === 1 ? '' : 's'}
+        </p>
+      </Panel>
+
+      <Panel title="Students" actions={<Badge tone="neutral">{students.length}</Badge>}>
+        {students.length === 0 ? (
+          <EmptyState title="Nobody joined this session" icon={<Icon name="users" />} />
+        ) : (
+          <ul className="live__cards">
+            {students.map((s) => {
+              const answered = state.quiz.answeredByStudent[s.id] ?? 0
+              const pct = total > 0 ? Math.round((answered / total) * 100) : 0
+              return (
+                <li key={s.id} className="live__card">
+                  <div className="live__card-head">
+                    <span className="roster__avatar" aria-hidden="true">
+                      {s.name.trim().split(' ').map((w) => w[0]).join('') || '?'}
+                    </span>
+                    <span className="live__card-name">{s.name}</span>
+                    {s.finished && <Badge tone="ok">Finished</Badge>}
+                    <Badge tone={s.status === 'connected' ? 'ok' : 'danger'}>{s.status}</Badge>
+                  </div>
+                  <div className="live__card-meta">
+                    answered {answered} of {total} ({pct}%)
+                  </div>
+                  <div className="live__bar live__bar--sm">
+                    <div className="live__bar-fill" style={{ width: `${pct}%` }} />
+                  </div>
+                </li>
+              )
+            })}
+          </ul>
+        )}
+      </Panel>
     </div>
   )
 }
 
 /** Running and ended views. Counts only; step 2 has no scores. */
-export function QuizRun({ state }: { state: StateSnapshot }): React.JSX.Element {
-  const [selected, setSelected] = useState<Set<string>>(new Set())
+export function LiveSession({ state }: { state: StateSnapshot }): React.JSX.Element {
   const [eventsOpen, setEventsOpen] = useState(true)
   const { students, quiz } = state
   const remaining = useRemaining(quiz.endsAt, quiz.timerPaused, quiz.remainingMs)
@@ -248,172 +286,147 @@ export function QuizRun({ state }: { state: StateSnapshot }): React.JSX.Element 
   // Nothing ends automatically: the banner is informational only.
   const connected = students.filter((s) => s.status === 'connected' && !s.paused)
   const allFinished = connected.length > 0 && connected.every((s) => s.finished)
-  const overall = Math.min(100, Math.round((students.reduce((acc, s) => acc + (quiz.answeredByStudent[s.id] ?? 0), 0) / (total * students.length)) * 100))
+  const overall = Math.min(
+    100,
+    Math.round(
+      (students.reduce((acc, s) => acc + (quiz.answeredByStudent[s.id] ?? 0), 0) /
+        (total * students.length)) *
+        100
+    )
+  )
+
+  const groups: { title: string; list: StudentInfo[]; tone: 'accent' | 'warn' | 'ok' | 'neutral' }[] = [
+    { title: 'Connected', list: connected, tone: 'accent' },
+    { title: 'Paused', list: paused, tone: 'warn' },
+    { title: 'Finished', list: finished, tone: 'ok' },
+    { title: 'Disconnected', list: disconnected, tone: 'neutral' }
+  ]
 
   return (
-    <div className="lobby">
-      <header className="topbar">
-        <div className="topbar-top">
-          <h1>Running: {quiz.title}</h1>
-          <p className="topbar-sub">
-            {students.length} student{students.length === 1 ? '' : 's'} in session · {paused.length} paused · {finished.length} finished
-          </p>
-        </div>
-        <div className="topbar-right">
-          <span className={`countdown${remaining < 30_000 ? ' urgent' : ''}${timerPaused ? ' paused' : ''}`}>
-            {clock(remaining)}{timerPaused ? ' · paused' : ''}
-          </span>
-          <div className="progress">
-            <div className="progress-bar">
-              <div className="progress-fill" style={{ width: `${overall}%` }} />
-            </div>
-            <span className="progress-label">{overall}% answered</span>
+    <div className="live">
+      <div className="live__hero">
+        <div>
+          <div className="live__clock-label">Time left</div>
+          <div
+            className={`live__clock${remaining < 30_000 ? ' live__clock--urgent' : ''}${
+              timerPaused ? ' live__clock--paused' : ''
+            }`}
+            data-testid="countdown"
+          >
+            {clock(remaining)}
           </div>
+        </div>
+        <div className="live__progress">
+          <div className="live__bar">
+            <div className="live__bar-fill" style={{ width: `${overall}%` }} />
+          </div>
+          <span className="live__bar-label">{overall}% answered</span>
+        </div>
+        <div className="live__controls">
           <TimerControls timerPaused={timerPaused} />
           <LockToggle lockMode={state.lockMode} />
           {paused.length > 0 && (
-            <button className="secondary" onClick={() => void window.quiz.approveAllResume()}>
+            <Button
+              variant="secondary"
+              size="sm"
+              testId="approve-all"
+              onClick={() => void window.quiz.approveAllResume()}
+            >
               Approve all ({paused.length})
-            </button>
+            </Button>
           )}
           <EndQuizButton />
         </div>
-      </header>
+      </div>
 
-      <div className="dashboard">
-        <section className="column students-column">
-          <div className="panel-head">
-            <h2>Students</h2>
-            <span className="count">
+      {allFinished && (
+        <div className="shell__banner shell__banner--accent" data-testid="all-finished">
+          All connected students have finished
+        </div>
+      )}
+
+      <div className="live__columns">
+        <Panel
+          title="Students"
+          actions={
+            <Badge tone="neutral">
               {students.length} in session · {paused.length} paused · {finished.length} finished
-            </span>
-          </div>
-
-          {connected.length > 0 && (
-            <div className="group">
-              <h3 className="group-title">Connected</h3>
-              <div className="student-grid">
-                {connected.map((s) => (
-                  <StudentCard
-                    key={s.id}
-                    student={s}
-                    total={total}
-                    answered={quiz.answeredByStudent[s.id] ?? 0}
-                    selected={selected}
-                    onToggle={(id) => {
-                      const next = new Set(selected)
-                      if (next.has(id)) next.delete(id)
-                      else next.add(id)
-                      setSelected(next)
-                    }}
-                  />
-                ))}
-              </div>
-            </div>
-          )}
-
-          {paused.length > 0 && (
-            <div className="group group-paused">
-              <h3 className="group-title">Paused</h3>
-              <div className="student-grid">
-                {paused.map((s) => (
-                  <StudentCard
-                    key={s.id}
-                    student={s}
-                    total={total}
-                    answered={quiz.answeredByStudent[s.id] ?? 0}
-                    selected={selected}
-                    onToggle={(id) => {
-                      const next = new Set(selected)
-                      if (next.has(id)) next.delete(id)
-                      else next.add(id)
-                      setSelected(next)
-                    }}
-                  />
-                ))}
-              </div>
-            </div>
-          )}
-
-          {finished.length > 0 && (
-            <div className="group">
-              <h3 className="group-title">Finished</h3>
-              <div className="student-grid">
-                {finished.map((s) => (
-                  <StudentCard
-                    key={s.id}
-                    student={s}
-                    total={total}
-                    answered={quiz.answeredByStudent[s.id] ?? 0}
-                    selected={selected}
-                    onToggle={(id) => {
-                      const next = new Set(selected)
-                      if (next.has(id)) next.delete(id)
-                      else next.add(id)
-                      setSelected(next)
-                    }}
-                  />
-                ))}
-              </div>
-            </div>
-          )}
-
-          {disconnected.length > 0 && (
-            <div className="group">
-              <h3 className="group-title">Disconnected</h3>
-              <div className="student-grid">
-                {disconnected.map((s) => (
-                  <StudentCard
-                    key={s.id}
-                    student={s}
-                    total={total}
-                    answered={quiz.answeredByStudent[s.id] ?? 0}
-                    selected={selected}
-                    onToggle={(id) => {
-                      const next = new Set(selected)
-                      if (next.has(id)) next.delete(id)
-                      else next.add(id)
-                      setSelected(next)
-                    }}
-                  />
-                ))}
-              </div>
-            </div>
-          )}
-
-          {allFinished && <p className="banner">All connected students have finished</p>}
-
-          <EventLog events={students.flatMap((s) => s.events)} open={eventsOpen} onToggle={() => setEventsOpen((v) => !v)} />
-        </section>
-
-        <section className="column questions-column">
-          <div className="panel-head">
-            <h2>Per question</h2>
-            <span className="count">{total} question{total === 1 ? '' : 's'} · {quiz.questions.reduce((acc, q) => acc + q.answered, 0)} answered</span>
-          </div>
-          {quiz.questions.length === 0 ? (
-            <p className="muted">No questions in this quiz.</p>
+            </Badge>
+          }
+        >
+          {students.length === 0 ? (
+            <EmptyState title="No students in this session" icon={<Icon name="users" />} />
           ) : (
-            <div className="question-grid">
+            <>
+              {groups
+                .filter((g) => g.list.length > 0)
+                .map((g) => (
+                  <div key={g.title} className="live__group">
+                    <div className="live__group-title">
+                      <span>{g.title}</span>
+                      <Badge tone={g.tone}>{g.list.length}</Badge>
+                    </div>
+                    <ul className="live__cards">
+                      {g.list.map((s) => (
+                        <StudentCard
+                          key={s.id}
+                          student={s}
+                          total={total}
+                          answered={quiz.answeredByStudent[s.id] ?? 0}
+                        />
+                      ))}
+                    </ul>
+                  </div>
+                ))}
+              <EventLog
+                events={students.flatMap((s) => s.events)}
+                open={eventsOpen}
+                onToggle={() => setEventsOpen((v) => !v)}
+              />
+            </>
+          )}
+        </Panel>
+
+        <Panel
+          title="Per question"
+          actions={
+            <Badge tone="neutral">
+              {total} question{total === 1 ? '' : 's'} ·{' '}
+              {quiz.questions.reduce((acc, q) => acc + q.answered, 0)} answered
+            </Badge>
+          }
+        >
+          {quiz.questions.length === 0 ? (
+            <EmptyState title="No questions in this quiz" icon={<Icon name="quizzes" />} />
+          ) : (
+            <div className="qgrid">
               {quiz.questions.map((q, qi) => (
-                <div className="question-cell" key={q.qid}>
-                  <div className="question-cell-head">
-                    <span className="question-cell-qid">Q{qi + 1}</span>
-                    <span className="question-cell-type">{q.type}</span>
+                <div className="qgrid__cell" key={q.qid}>
+                  <span className="qgrid__num">Q{qi + 1}</span>
+                  <div className="qgrid__body">
+                    <div className="qgrid__text" title={q.body}>
+                      {q.body.slice(0, 60)}
+                      {q.body.length > 60 ? '…' : ''}
+                    </div>
+                    <div className="live__bar live__bar--sm">
+                      <div
+                        className="live__bar-fill"
+                        style={{
+                          width: `${total > 0 ? Math.round((q.answered / students.length) * 100) : 0}%`
+                        }}
+                      />
+                    </div>
                   </div>
-                  <div className="question-cell-body" title={q.body}>
-                    {q.body.slice(0, 60)}{q.body.length > 60 ? '…' : ''}
-                  </div>
-                  <div className="question-cell-bar">
-                    <div className={"question-cell-fill" + (q.answered > 0 ? ' answered' : '')} style={{ width: `${total > 0 ? Math.round((q.answered / students.length) * 100) : 0}%` }} />
-                  </div>
-                  <span className="question-cell-count">{q.answered}/{students.length}</span>
+                  <span className="qgrid__count">
+                    {q.answered}/{students.length}
+                  </span>
                 </div>
               ))}
             </div>
           )}
-        </section>
+        </Panel>
       </div>
     </div>
   )
 }
+
