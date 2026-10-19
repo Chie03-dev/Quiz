@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useState } from 'react'
-import type { ImportQuizReport, QuizMeta } from '../shared/types'
+import type { ImportQuizReport, QuizMeta } from '../../shared/types'
+import { Badge } from '../components/Badge'
+import { Button } from '../components/Button'
+import { ConfirmButton } from '../components/ConfirmButton'
+import { EmptyState } from '../components/EmptyState'
+import { Icon } from '../components/Icon'
+import { Panel } from '../components/Panel'
 
 /** Minutes shown for a time limit stored in seconds. */
 const minutes = (sec: number): string => {
@@ -17,15 +23,7 @@ function QuizRow({
   onOpen: (id: string) => void
   onChanged: () => void
 }): React.JSX.Element {
-  const [confirming, setConfirming] = useState(false)
   const [notice, setNotice] = useState('')
-
-  // Back to the plain button if the instructor hesitates.
-  useEffect(() => {
-    if (!confirming) return
-    const t = setTimeout(() => setConfirming(false), 5000)
-    return () => clearTimeout(t)
-  }, [confirming])
 
   const duplicate = (): void => {
     void window.quiz.duplicateQuiz(quiz.id).then((copy) => {
@@ -44,37 +42,40 @@ function QuizRow({
   }
 
   return (
-    <li className="lib-row">
-      <span className="name">{quiz.title}</span>
-      <span className="tag">
-        {quiz.questionCount} question{quiz.questionCount === 1 ? '' : 's'}
+    <li className="lib__row" data-testid={`quiz-${quiz.id}`}>
+      <span className="lib__title">{quiz.title}</span>
+      <span className="lib__meta">
+        <Badge>
+          {quiz.questionCount} question{quiz.questionCount === 1 ? '' : 's'}
+        </Badge>
+        <Badge tone="teal">{minutes(quiz.timeLimitSec)}</Badge>
       </span>
-      <span className="tag">{minutes(quiz.timeLimitSec)}</span>
-      {notice && <span className="lib-notice">{notice}</span>}
-      <span className="row-actions">
-        <button className="primary" onClick={() => onOpen(quiz.id)}>
+      {notice && <span className="lib__notice">{notice}</span>}
+      <span className="lib__actions">
+        <Button
+          variant="primary"
+          size="sm"
+          testId={`open-${quiz.id}`}
+          onClick={() => onOpen(quiz.id)}
+        >
           Open
-        </button>
-        <button className="secondary" onClick={duplicate}>
+        </Button>
+        <Button variant="secondary" size="sm" onClick={duplicate}>
           Duplicate
-        </button>
-        <button className="secondary" onClick={exportQuiz}>
+        </Button>
+        <Button variant="secondary" size="sm" onClick={exportQuiz}>
           Export
-        </button>
-        {confirming ? (
-          <span className="confirm">
-            <button className="danger" onClick={remove}>
-              Yes, delete
-            </button>
-            <button className="secondary" onClick={() => setConfirming(false)}>
-              Cancel
-            </button>
-          </span>
-        ) : (
-          <button className="danger" onClick={() => setConfirming(true)}>
-            Delete
-          </button>
-        )}
+        </Button>
+        <ConfirmButton
+          label="Delete"
+          confirmLabel="Yes, delete"
+          variant="ghost"
+          confirmVariant="danger"
+          size="sm"
+          testId={`delete-${quiz.id}`}
+          confirmTestId={`delete-confirm-${quiz.id}`}
+          onConfirm={remove}
+        />
       </span>
     </li>
   )
@@ -123,59 +124,86 @@ export function QuizLibrary({
   }
 
   return (
-    <div className="lobby">
-      <header className="topbar">
-        <h1>Quiz library</h1>
-        <span className="topbar-actions">
-          <button className="secondary" onClick={importQuiz}>
-            Import…
-          </button>
-          <button className="primary" onClick={create}>
-            New quiz
-          </button>
-          <button className="secondary" onClick={onBack}>
-            Back to lobby
-          </button>
-        </span>
-      </header>
-
-      {error && <p className="error lib-error">{error}</p>}
+    <div className="lib">
+      {error && <p className="ui-error">{error}</p>}
 
       {importReport && (
-        <section className="import-report">
-          <h2>Import complete</h2>
-          <p><strong>Title:</strong> {importReport.title}</p>
-          <p><strong>Questions:</strong> {importReport.questionCount}</p>
-          {importReport.warnings.length > 0 && (
-            <ul>
-              {importReport.warnings.map((w) => (
-                <li key={`${w.questionIndex ?? 'quiz'}-${w.message}`}>{w.message}</li>
+        <Panel title="Import complete" actions={<Badge tone="ok">Added to library</Badge>}>
+          <div className="import">
+            <p>
+              <strong>Title:</strong> {importReport.title}
+            </p>
+            <p>
+              <strong>Questions:</strong> {importReport.questionCount}
+            </p>
+            {importReport.warnings.length > 0 && (
+              <ul className="ed__problems">
+                {importReport.warnings.map((w) => (
+                  <li key={`${w.questionIndex ?? 'quiz'}-${w.message}`}>{w.message}</li>
+                ))}
+              </ul>
+            )}
+            <div className="import__list">
+              {importReport.questions.map((q) => (
+                <div key={q.id} className="import__item">
+                  <div className="import__item-head">
+                    <Badge tone="accent">{q.type}</Badge>
+                    <strong>#{q.id}</strong>
+                  </div>
+                  <pre className="import__source">{q.sourceText}</pre>
+                </div>
               ))}
-            </ul>
-          )}
-          {importReport.questions.map((q) => (
-            <div key={q.id} className="import-question">
-              <div className="import-question-head">
-                <span className="tag">{q.type}</span>
-                <strong>#{q.id}</strong>
-              </div>
-              <pre className="source-text">{q.sourceText}</pre>
             </div>
-          ))}
-        </section>
+          </div>
+        </Panel>
       )}
 
-      {quizzes === null ? (
-        <p className="empty">Loading…</p>
-      ) : quizzes.length === 0 ? (
-        <p className="empty">No quizzes yet. Create one or import a quiz file.</p>
-      ) : (
-        <ul className="lib-list">
-          {quizzes.map((q) => (
-            <QuizRow key={q.id} quiz={q} onOpen={onOpen} onChanged={refresh} />
-          ))}
-        </ul>
-      )}
+      <Panel
+        title="Your quizzes"
+        actions={
+          <>
+            <Button variant="secondary" icon={<Icon name="upload" />} onClick={importQuiz}>
+              Import…
+            </Button>
+            <Button variant="primary" icon={<Icon name="plus" />} onClick={create}>
+              New quiz
+            </Button>
+          </>
+        }
+      >
+        {quizzes === null ? (
+          <EmptyState title="Loading…" />
+        ) : quizzes.length === 0 ? (
+          <EmptyState
+            title="No quizzes yet"
+            body="Create a quiz from scratch, or import a quiz file you already have."
+            icon={<Icon name="quizzes" />}
+            action={
+              <div className="live__controls">
+                <Button variant="primary" icon={<Icon name="plus" />} onClick={create}>
+                  New quiz
+                </Button>
+                <Button variant="secondary" icon={<Icon name="upload" />} onClick={importQuiz}>
+                  Import…
+                </Button>
+              </div>
+            }
+          />
+        ) : (
+          <ul className="lib__list">
+            {quizzes.map((q) => (
+              <QuizRow key={q.id} quiz={q} onOpen={onOpen} onChanged={refresh} />
+            ))}
+          </ul>
+        )}
+      </Panel>
+
+      <div className="live__controls">
+        <Button variant="ghost" onClick={onBack}>
+          Back to dashboard
+        </Button>
+      </div>
+
     </div>
   )
 }
