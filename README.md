@@ -205,56 +205,83 @@ drive the actual window, start the app with remote debugging enabled and run
 `ui-check` in a second terminal:
 
 ```bash
-npx electron --remote-debugging-port=9222 .
+npx electron . --remote-debugging-port=9222
 npm run ui-check
 ```
 
 `ui-check` attaches to the renderer over the DevTools protocol, joins two fake
-students, then clicks the real buttons (Kick, an alternate address, New session)
-and asserts the state the UI ends up holding. It exercises the same
-`contextBridge` -> `ipcRenderer` -> `ipcMain` path a human click does.
+students, then clicks the real controls by their stable `data-testid` (Kick, an
+alternate address, New session, Start quiz, End quiz) and asserts the state the
+UI ends up holding. It exercises the same `contextBridge` -> `ipcRenderer` ->
+`ipcMain` path a human click does.
+
+For a visual review, `npx tsx scripts/shots.ts` (same debugging port) writes
+screenshots of each screen to `shots/`.
 
 Note: it needs the debugging port, so use it for testing only, never for a
 session in front of students.
 
-## Running quiz UI (instructor view)
+## Instructor UI (design system + shell)
 
-When a quiz is live, the instructor window shows a top bar with live controls and a
-dashboard of student cards plus per-question progress.
+The instructor window is a desktop dashboard: one persistent app shell with a
+left sidebar, and screens rendered inside it. A screen never replaces the shell.
 
-### Top bar
+### Layout
 
-The top bar has two columns:
+- **Sidebar** (`src/renderer/components/AppShell.tsx`): brand mark plus three
+  nav entries - **Dashboard**, **Quizzes**, **Live session** - with a badge on
+  Live session showing the live/ended state or the connected-student count. A
+  footer note reminds you it runs on your local network.
+- **Top bar**: screen title and subtitle on the left, screen-specific actions
+  on the right.
+- **Content**: a scrolling area the active screen renders into.
 
-- **Left** (`topbar-top`): `<h1>` with the quiz title, followed by a subtitle
-  (`{students} in session · {paused} paused · {finished} finished`).
-- **Right** (`topbar-right`, flex wrap): live controls in order —
-  `countdown` (remains `urgent` when under 30 s, `paused` when the timer is paused),
-  the overall answer-completion ring (`progress` + `progress-bar` + `progress-fill` +
-  `progress-label`), `timer-controls` (pause/resume and ±1 min), the `lock-toggle`
-  (check to freeze students' screens; shows ON/OFF state), per-paused-student
-  Approve buttons (one green **Approve** per paused card), **Approve all (n)**,
-  and the `EndQuizButton` (End quiz now → Yes, end it).
+### Screens (`src/renderer/screens/`)
 
-### Student cards
+- **`Dashboard.tsx`** - the landing screen. Stat cards (connected count,
+  session PIN, quiz count); a "Join this session" panel with the PIN, QR code,
+  endpoint and other-address buttons; a "Ready to start" panel with the quiz
+  picker and Start quiz (confirmation-gated); and a Students panel with a
+  roster (avatars, status badges, Kick).
+- **`QuizLibrary.tsx`** - your quizzes: create, import, duplicate, export,
+  delete (confirmation-gated), and open in the editor.
+- **`QuizEditor.tsx`** - title, time limit, per-question cards with a status
+  badge (draft/ready), live validation problems, reorder/delete, and the
+  type-specific question forms.
+- **`LiveSession.tsx`** - the running and ended views.
 
-Students are grouped under the following headers, rendered only when non-empty:
+### Live session
 
-- **Connected**: cards with a progress bar and a selection checkbox.
-- **Paused**: cards show the reason (`focus` or `network`), a red **PAUSED** tag,
-  and a green **Approve** button to resume that individual student. Paused students
-  do not appear in the Connected group, so a card can never be duplicated.
-- **Finished**: cards with `Finished` + local time.
+While a quiz runs, the live session takes over the content area:
+
+- **Hero bar**: the countdown clock (`urgent` under 30 s, `paused` when the
+  timer is frozen), the overall answered-% progress bar, timer controls
+  (Pause/Resume and +1/-1 min), the lock toggle, Approve all (n), and
+  **End quiz now** (confirmation-gated).
+- **Students**: grouped under Connected / Paused / Finished / Disconnected
+  (rendered only when non-empty). Each card has a progress bar; paused cards
+  show an **Approve resume** button.
+- **Per question**: each question with an answered-count bar.
 
 ### Approve flow
 
 1. A student pauses (lock is ON and they lose focus, or they go offline).
-2. The card turns red and gains a **Approve** button.
-3. Instructor clicks **Approve** for that student (or **Approve all (n)** for the
-   batch).
-4. The student's answers are accepted and they are removed from the paused list.
+2. Their card moves to the **Paused** group and gains an **Approve resume** button.
+3. The instructor clicks **Approve resume** for that student (or **Approve all (n)**
+   for the batch).
+4. The student's answers are accepted and they return to the connected group.
 
-### Timer controls
+### Design system
 
-`+1 min` / `−1 min` adjust the remaining clock; `Pause` / `Resume` freeze the
-countdown. The progress ring and the countdown stay fully in sync with server state.
+Tokens and shared primitives keep the UI consistent:
+
+- `src/renderer/tokens.css` - one source of truth for colour, spacing, radius,
+  elevation and type. Components never use raw hex or ad-hoc pixel values.
+- `src/renderer/ui.css` - shared primitives: `ui-btn`, `ui-panel`, `ui-badge`,
+  `ui-field`, `ui-empty`, and the visible focus ring.
+- `src/renderer/components/` - shared React components: `Button`/`IconButton`,
+  `Icon` (inline SVG, no icon pack), `Panel`, `Badge`, `EmptyState`,
+  `ConfirmButton`, `Field`, `LockToggle`, `AppShell`.
+
+The UI never shows scores - counts and progress only. The server owns the clock
+and the timers; the UI just renders `endsAt` / `remainingMs` / `timerPaused`.
