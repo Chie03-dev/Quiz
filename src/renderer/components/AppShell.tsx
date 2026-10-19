@@ -81,8 +81,6 @@ export function AppShell({
             </button>
           ))}
         </div>
-
-        <div className="shell__foot">Runs on your local network. No internet needed.</div>
       </nav>
 
       <div className="shell__main">
