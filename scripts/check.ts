@@ -985,8 +985,10 @@ async function checkTimerControl(server: any, port: number): Promise<void> {
     log(start.d.paused === false, 'quiz_start carries paused false')
     const ends0 = start.d.endsAt as number
 
+    // waitFresh, not wait: the same message type arrives several times here and
+    // wait() would hand back the first (stale) one.
     log(server.pauseTimer() === true, 'pauseTimer succeeds while running')
-    const upd1 = await alice.wait('time_update')
+    const upd1 = await waitFresh(alice, 'time_update')
     log(upd1.d.paused === true, 'pause broadcasts time_update with paused true')
     log(server.session.quizState().timerPaused === true, 'dashboard state shows timerPaused')
     const rem1 = server.session.quizState().remainingMs as number
@@ -998,30 +1000,30 @@ async function checkTimerControl(server: any, port: number): Promise<void> {
     log(Math.abs(rem2 - rem1) < 1, 'the countdown stays frozen while paused')
 
     log(server.adjustTimer(60_000) === true, '+1 min while paused succeeds')
-    const upd2 = await alice.wait('time_update')
+    const upd2 = await waitFresh(alice, 'time_update')
     log(upd2.d.paused === true, 'adjust broadcasts time_update still paused')
     const rem3 = server.session.quizState().remainingMs as number
     log(rem3 - rem2 >= 59_000 && rem3 - rem2 <= 61_000, '+1 min grows the frozen remainder')
 
     log(server.resumeTimer() === true, 'resumeTimer succeeds')
-    const upd3 = await alice.wait('time_update')
+    const upd3 = await waitFresh(alice, 'time_update')
     log(upd3.d.paused === false, 'resume broadcasts time_update with paused false')
     log(server.session.quizState().timerPaused === false, 'dashboard state clears timerPaused')
     const ends1 = upd3.d.endsAt as number
     log(ends1 > ends0, 'resume shifts endsAt forward by the paused duration')
 
     log(server.adjustTimer(-60_000) === true, '-1 min while running succeeds')
-    const upd4 = await alice.wait('time_update')
+    const upd4 = await waitFresh(alice, 'time_update')
     const ends2 = upd4.d.endsAt as number
     log(ends2 < ends1, '-1 min moves endsAt earlier')
 
     log(server.adjustTimer(-10_000_000) === true, 'a huge subtraction still returns true')
-    await alice.wait('time_update')
+    await waitFresh(alice, 'time_update')
     const st = server.session.quizState()
     log(st.endsAt - Date.now() >= 9_000, 'adjust clamps so at least ~10 s remain')
 
     log(server.pauseTimer() === true, 'pause again for the rejoin test')
-    await alice.wait('time_update')
+    await waitFresh(alice, 'time_update')
     alice.close()
     await sleep(200)
     const back = client(port)
