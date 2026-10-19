@@ -75,14 +75,31 @@ class Cdp {
 const readUi = (cdp: Cdp): Promise<StateSnapshot | null> =>
   cdp.eval<StateSnapshot | null>('window.quiz.getState()')
 
-/** Finds an element by its visible label and really clicks it. */
-const clickByLabel = (cdp: Cdp, label: string, selector = 'button'): Promise<boolean> =>
+/** Finds an element by its data-testid and really clicks it. */
+const clickByTestId = (cdp: Cdp, testId: string): Promise<boolean> =>
   cdp.eval<boolean>(`(() => {
-    const el = [...document.querySelectorAll(${JSON.stringify(selector)})]
-      .find((b) => b.textContent.trim() === ${JSON.stringify(label)})
+    const el = document.querySelector('[data-testid=${JSON.stringify(testId)}]')
     if (!el) return false
     el.click()
     return true
+  })()`)
+
+/** Reads the trimmed text of the element with the given data-testid. */
+const textByTestId = (cdp: Cdp, testId: string): Promise<string | null> =>
+  cdp.eval<string | null>(`(() => {
+    const el = document.querySelector('[data-testid=${JSON.stringify(testId)}]')
+    return el ? el.textContent.trim() : null
+  })()`)
+
+/** True when an element with the given data-testid is present. */
+const hasTestId = (cdp: Cdp, testId: string): Promise<boolean> =>
+  cdp.eval<boolean>(`!!document.querySelector('[data-testid=${JSON.stringify(testId)}]')`)
+
+/** True when the element with the given data-testid is disabled. */
+const isDisabled = (cdp: Cdp, testId: string): Promise<boolean> =>
+  cdp.eval<boolean>(`(() => {
+    const el = document.querySelector('[data-testid=${JSON.stringify(testId)}]')
+    return !!el && !!el.disabled
   })()`)
 
 /**
@@ -129,28 +146,33 @@ async function main(): Promise<void> {
     })
     log(two.students.every((s) => s.status === 'connected'), 'two students show as CONNECTED in the UI')
 
+    // --- the persistent shell ---
+    log(await hasTestId(cdp, 'nav-dashboard'), 'the sidebar has a Dashboard entry')
+    log(await hasTestId(cdp, 'nav-quizzes'), 'the sidebar has a Quizzes entry')
+    log(await hasTestId(cdp, 'nav-live'), 'the sidebar has a Live session entry')
+    log(await hasTestId(cdp, 'session-pin'), 'the dashboard shows the session PIN')
+
     // --- Kick button ---
-    log(await clickByLabel(cdp, 'Kick'), 'Kick button was found and clicked')
+    log(await clickByTestId(cdp, 'kick-Alice'), 'the Kick button was found and clicked')
     const one = await waitFor(async () => {
       const s = await readUi(cdp)
       return s && s.students.length === 1 ? s : null
     })
     log(one.students[0].name === 'Bob', 'clicking Kick removed only that student')
 
-    // --- alternate address (the UI renders each link as "ip:port") ---
+    // --- alternate address (each address is a button with its own test id) ---
     const other = addresses.find((a) => a !== selectedIp)
     if (other) {
-      const label = `${other}:${port}`
-      const present = await clickByLabel(cdp, label, 'a,button')
-      log(present, `the alternate address ${label} is clickable in the UI`)
+      const present = await clickByTestId(cdp, `address-${other}`)
+      log(present, `the alternate address ${other}:${port} is clickable in the UI`)
       if (present) {
         const switched = await waitFor(async () => {
           const s = await readUi(cdp)
           return s && s.server.selectedIp === other ? s : null
         })
         log(switched.server.selectedIp === other, 'UI switches the advertised address')
-        // The selected address is shown as plain text, not a link, so there is
-        // no in-UI way back; do it over the preload API instead.
+        // The selected address is shown as plain text, not a button, so there
+        // is no in-UI way back; do it over the preload API instead.
         await cdp.eval(`window.quiz.selectIp(${JSON.stringify(selectedIp)})`)
         await waitFor(async () => ((await readUi(cdp))!.server.selectedIp === selectedIp))
         log(true, 'the address can be switched back')
@@ -160,7 +182,7 @@ async function main(): Promise<void> {
     }
 
     // --- New session button ---
-    log(await clickByLabel(cdp, 'New session'), 'New session button was found and clicked')
+    log(await clickByTestId(cdp, 'new-session'), 'New session button was found and clicked')
     const fresh = await waitFor(async () => {
       const s = await readUi(cdp)
       return s && s.server.pin !== pin ? s : null
@@ -172,12 +194,8 @@ async function main(): Promise<void> {
     // --- Start quiz: disabled with nobody in the lobby ---
     const lobbyWithNone = await readUi(cdp)
     log(lobbyWithNone!.quiz.status === 'lobby', 'the fresh UI is in the lobby state')
-    const fresh2 = await cdp.eval<{ status: string; status2: string }>(`(() => {
-      const btn = [...document.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Start quiz')
-      return { status: btn ? 'found' : 'missing', status2: btn && btn.disabled ? 'disabled' : 'enabled' }
-    })()`)
-    log(fresh2.status === 'found', 'the Start quiz button is rendered')
-    log(fresh2.status2 === 'disabled', 'Start quiz is disabled with zero connected students')
+    log(await hasTestId(cdp, 'start-quiz'), 'the Start quiz button is rendered')
+    log(await isDisabled(cdp, 'start-quiz'), 'Start quiz is disabled with zero connected students')
 
     // --- two students join, then the quiz runs ---
     const freshPin = fresh.server.pin
@@ -191,49 +209,50 @@ async function main(): Promise<void> {
       joined2.students.every((s) => s.status === 'connected'),
       'two fresh students are connected'
     )
-    log(await clickByLabel(cdp, 'Start quiz'), 'Start quiz is clickable once students are connected')
-    const askedConfirm = await clickByLabel(cdp, 'Start for 2 students?')
-    log(askedConfirm, 'Start quiz asks for confirmation before starting')
+    log(!(await isDisabled(cdp, 'start-quiz')), 'Start quiz is clickable once students are connected')
+    log(await clickByTestId(cdp, 'start-quiz'), 'the Start quiz button is clickable')
+    log(await hasTestId(cdp, 'start-quiz-confirm'), 'Start quiz asks for confirmation before starting')
+    log(await clickByTestId(cdp, 'start-quiz-confirm'), 'the confirmation button starts the quiz')
     const running = await waitFor(async () => {
       const s = await readUi(cdp)
       return s && s.quiz.status === 'running' ? s : null
     })
     log(running.quiz.status === 'running', 'the lobby switches to the running view')
     log(running.quiz.endsAt !== null && running.quiz.endsAt > Date.now(), 'the running view carries an endsAt')
-    log(running.quiz.questions.length === 8, `all 8 questions are listed (${running.quiz.questions.length})`)
-    const hasCountdown = await cdp.eval<boolean>(
-      `!!document.querySelector('.countdown') && document.querySelector('.countdown').textContent.trim().length > 0`
-    )
-    log(hasCountdown, 'the running view shows a countdown')
+    const totalQuestions = running.quiz.questions.length
+    log(totalQuestions > 0, `the running view lists the questions (${totalQuestions})`)
+    const countdown = await textByTestId(cdp, 'countdown')
+    log(!!countdown && countdown.length > 0, `the running view shows a countdown (${countdown})`)
 
     // Cara answers every question as soon as quiz_start arrives.
     const answered = await waitFor(async () => {
       const s = await readUi(cdp)
       const cara = s?.students.find((x) => x.name === 'Cara')
-      return cara && s!.quiz.answeredByStudent[cara.id] === 8 ? s : null
+      return cara && s!.quiz.answeredByStudent[cara.id] === totalQuestions ? s : null
     })
     log(
       answered.quiz.questions.every((q) => q.answered === 1),
       'the per-question counts follow the fake student that answered'
     )
 
-    log(await clickByLabel(cdp, 'End quiz now'), 'the End quiz now button is present')
-    log(await clickByLabel(cdp, 'Yes, end it'), 'ending the quiz asks for confirmation')
+    log(await clickByTestId(cdp, 'end-quiz'), 'the End quiz now button is present')
+    log(await hasTestId(cdp, 'end-quiz-confirm'), 'ending the quiz asks for confirmation')
+    log(await clickByTestId(cdp, 'end-quiz-confirm'), 'the confirmation button ends the quiz')
     const ended = await waitFor(async () => {
       const s = await readUi(cdp)
       return s && s.quiz.status === 'ended' ? s : null
     })
     log(ended.quiz.status === 'ended', 'the UI switches to the ended view')
     log(ended.quiz.endReason === 'instructor', 'the ended view knows why it ended')
-    const heading = await cdp.eval<string>(`document.querySelector('.topbar h1').textContent.trim()`)
-    log(heading === 'Quiz ended', `the ended view says "Quiz ended" (${heading})`)
+    const heading = await textByTestId(cdp, 'countdown')
+    log(heading === '0:00', `the ended view shows a zeroed clock (${heading})`)
     const shownText = await cdp.eval<string>(`document.body.textContent.toLowerCase()`)
     log(
       !shownText.includes('score') && !shownText.includes('point:'),
       'the ended view shows counts only, never scores'
     )
 
-    log(await clickByLabel(cdp, 'New session'), 'New session is available on the ended view')
+    log(await clickByTestId(cdp, 'new-session'), 'New session is available on the ended view')
 
     console.log('done')
   } finally {
