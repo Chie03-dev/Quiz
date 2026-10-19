@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import QRCode from 'qrcode'
-import type { FirewallInstallResult, QuizMeta, StateSnapshot } from '../shared/types'
+import type { FirewallInstallResult, QuizMeta, StateSnapshot } from '../../shared/types'
+import { Badge } from '../components/Badge'
+import { Button } from '../components/Button'
+import { ConfirmButton } from '../components/ConfirmButton'
+import { EmptyState } from '../components/EmptyState'
+import { Icon } from '../components/Icon'
+import { Panel } from '../components/Panel'
 
 /** Payload a phone scans to find this server. */
 export function joinPayload(ip: string, port: number, pin: string): string {
@@ -35,7 +41,7 @@ function FirewallNotice(): React.JSX.Element | null {
       .catch(() => setSupported(false))
   }, [])
 
-  // Checked when the Lobby opens.
+  // Checked when the dashboard opens.
   useEffect(refresh, [refresh])
 
   // Clear the green message after a few seconds.
@@ -52,11 +58,9 @@ function FirewallNotice(): React.JSX.Element | null {
   // install something they already have.
   if (unknown.length > 0) {
     return (
-      <div className="fw-notice" role="status">
-        <div className="fw-text">
-          Could not read the Windows firewall rules, so their state is unknown.
-        </div>
-        <div className="fw-detail">
+      <div className="fw fw--unknown" role="status">
+        <div className="fw__title">Could not read the Windows firewall rules, so their state is unknown.</div>
+        <div className="fw__detail">
           Check them with <code>netsh advfirewall firewall show rule name=&quot;Quiz LAN Server&quot;</code>{' '}
           in a Command Prompt — see the README.
         </div>
@@ -66,13 +70,13 @@ function FirewallNotice(): React.JSX.Element | null {
 
   if (result === 'installed') {
     return (
-      <div className="fw-ok" role="status">
-        Phones can connect.
+      <div className="fw fw--ok" role="status">
+        <div className="fw__title">Phones can connect.</div>
       </div>
     )
   }
 
-  if (supported !== true || missing.length === 0) return null
+  if (missing.length === 0) return null
 
   const install = (): void => {
     setBusy(true)
@@ -92,23 +96,21 @@ function FirewallNotice(): React.JSX.Element | null {
   }
 
   return (
-    <div className="fw-notice" role="alert">
-      <div className="fw-text">
-        Phones may not be able to connect until you allow this app through the
-        Windows firewall.
+    <div className="fw" role="alert">
+      <div className="fw__title">
+        Phones may not be able to connect until you allow this app through the Windows firewall.
       </div>
       {result === 'cancelled' && (
-        <div className="fw-detail">Permission was not granted. Phones may not be able to connect.</div>
+        <div className="fw__detail">Permission was not granted. Phones may not be able to connect.</div>
       )}
       {result === 'failed' && (
-        <div className="fw-detail">
-          That did not work. Run <code>setup-firewall.bat</code> as administrator instead — see the
-          README.
+        <div className="fw__detail">
+          That did not work. Run <code>setup-firewall.bat</code> as administrator instead — see the README.
         </div>
       )}
-      <button className="fw-button" onClick={install} disabled={busy}>
+      <Button variant="secondary" onClick={install} disabled={busy}>
         {busy ? 'Waiting for Windows permission…' : 'Allow phones to connect'}
-      </button>
+      </Button>
     </div>
   )
 }
@@ -124,9 +126,14 @@ function QuizPicker({
   onChange: (id: string) => void
 }): React.JSX.Element {
   return (
-    <label className="picker">
-      <span className="picker-label">Quiz</span>
-      <select value={selectedId} onChange={(e) => onChange(e.target.value)}>
+    <label className="ui-field">
+      <span className="ui-field__label">Quiz to run</span>
+      <select
+        className="ui-select"
+        data-testid="quiz-picker"
+        value={selectedId}
+        onChange={(e) => onChange(e.target.value)}
+      >
         {quizzes.map((q) => (
           <option key={q.id} value={q.id}>
             {q.title} · {q.questionCount} question{q.questionCount === 1 ? '' : 's'}
@@ -151,63 +158,65 @@ function StartQuizButton({
   quizId: string
   onError: (message: string) => void
 }): React.JSX.Element {
-  const [confirming, setConfirming] = useState(false)
-  useEffect(() => {
-    if (!confirming) return
-    const t = setTimeout(() => setConfirming(false), 5000)
-    return () => clearTimeout(t)
-  }, [confirming])
-
   const none = connectedCount === 0 || !quizId
-  if (!confirming) {
-    return (
-      <button className="primary" disabled={none} onClick={() => setConfirming(true)}>
-        Start quiz
-      </button>
-    )
-  }
   return (
-    <span className="confirm">
-      <button
-        className="primary"
-        onClick={() => {
-          setConfirming(false)
-          void window.quiz.startQuiz(quizId).then((result) => {
-            if (!result.ok) onError(result.message)
-          })
-        }}
-      >
-        Start for {connectedCount} student{connectedCount === 1 ? '' : 's'}?
-      </button>
-      <button className="secondary" onClick={() => setConfirming(false)}>
-        Cancel
-      </button>
-    </span>
+    <ConfirmButton
+      label="Start quiz"
+      confirmLabel={`Start for ${connectedCount} student${connectedCount === 1 ? '' : 's'}?`}
+      confirmVariant="primary"
+      variant="primary"
+      icon={<Icon name="play" />}
+      testId="start-quiz"
+      confirmTestId="start-quiz-confirm"
+      disabled={none}
+      onConfirm={() => {
+        void window.quiz.startQuiz(quizId).then((result) => {
+          if (!result.ok) onError(result.message)
+        })
+      }}
+    />
   )
 }
 
-/** Step 3: the lock toggle, shared by the lobby and the running view. */
-export function LockToggle({
-  lockMode,
-  label = 'Lock student phones'
+/** One connected student in the roster. */
+function RosterRow({
+  student
 }: {
-  lockMode: boolean
-  label?: string
+  student: StateSnapshot['students'][number]
 }): React.JSX.Element {
+  const initials =
+    student.name
+      .trim()
+      .split(' ')
+      .map((w) => w[0])
+      .join('')
+      .slice(0, 2)
+      .toUpperCase() || '?'
+  const connected = student.status === 'connected'
   return (
-    <label className={`lock-toggle${lockMode ? ' on' : ''}`}>
-      <input
-        type="checkbox"
-        checked={lockMode}
-        onChange={(e) => void window.quiz.setLock(e.target.checked)}
-      />
-      <span className="lock-label">{label}</span>
-      <span className="lock-state">{lockMode ? 'ON' : 'OFF'}</span>
-    </label>
+    <li className="roster__row">
+      <span className="roster__avatar" aria-hidden="true">
+        {initials}
+      </span>
+      <span className="roster__name">{student.name}</span>
+      <Badge tone={connected ? 'ok' : 'danger'}>{student.status}</Badge>
+      <Button
+        variant="ghost"
+        size="sm"
+        testId={`kick-${student.name}`}
+        onClick={() => void window.quiz.kick(student.id)}
+      >
+        Kick
+      </Button>
+    </li>
   )
 }
 
-export function Lobby({
+/**
+ * The dashboard: the landing screen. It shows the join code, the student
+ * roster and the controls for starting a session.
+ */
+export function Dashboard({
   state,
   onOpenLibrary
 }: {
@@ -257,89 +266,137 @@ export function Lobby({
   }
 
   const connected = students.filter((s) => s.status === 'connected').length
+  const others = addresses.filter((ip) => ip !== selectedIp)
 
   return (
-    <div className="lobby">
-      <header className="topbar">
-        <h1>Lobby</h1>
-        <span className="topbar-actions">
-          <LockToggle lockMode={state.lockMode} />
-          <button className="secondary" onClick={onOpenLibrary}>
-            Quiz library
-          </button>
-          <button className="secondary" onClick={() => void window.quiz.newSession()}>
-            New session
-          </button>
-        </span>
-      </header>
-
-      <div className="startbar">
-        {quizzes.length > 0 ? (
-          <QuizPicker quizzes={quizzes} selectedId={selectedQuiz} onChange={selectQuiz} />
-        ) : (
-          <span className="empty">No quizzes yet — create one in the Quiz library.</span>
-        )}
-        <StartQuizButton
-          connectedCount={connected}
-          quizId={selectedQuiz}
-          onError={setStartError}
-        />
-        {startError && <p className="error start-error">{startError}</p>}
+    <div className="dash">
+      <div className="dash__stats">
+        <div className="stat">
+          <span className="stat__label">Connected</span>
+          <span className="stat__value" data-testid="stat-connected">
+            {connected}
+          </span>
+          <span className="stat__hint">of {students.length} joined</span>
+        </div>
+        <div className="stat">
+          <span className="stat__label">Session PIN</span>
+          <span className="stat__value" style={{ fontFamily: 'var(--font-mono)' }}>
+            {pin}
+          </span>
+          <span className="stat__hint">phones type this to join</span>
+        </div>
+        <div className="stat">
+          <span className="stat__label">Quiz</span>
+          <span className="stat__value" style={{ fontSize: 'var(--fs-lg)' }}>
+            {quizzes.length}
+          </span>
+          <span className="stat__hint">in the library</span>
+        </div>
       </div>
 
-      <div className="grid">
-        <section className="join">
-          <FirewallNotice />
-          <div className="pin-label">Session PIN</div>
-          <div className="pin" title={pin}>
-            {pin}
-          </div>
-          <div className="qr" dangerouslySetInnerHTML={{ __html: qr }} />
-          {error && <p className="error">QR failed: {error}</p>}
-          <div className="endpoint">
-            {selectedIp}:{port}
-          </div>
-          {addresses.length > 1 && (
-            <div className="alt">
-              <span>Other addresses:</span>
-              {addresses
-                .filter((ip) => ip !== selectedIp)
-                .map((ip) => (
+      <div className="dash__columns">
+        <Panel title="Join this session" actions={<Badge tone="accent">PIN {pin}</Badge>}>
+          <div className="ed" style={{ gap: 'var(--sp-4)' }}>
+            <FirewallNotice />
+
+            <div className="join__pin">
+              <span className="join__pin-value" data-testid="session-pin">
+                {pin}
+              </span>
+            </div>
+
+            {error ? (
+              <p className="ui-error">QR failed: {error}</p>
+            ) : (
+              <div className="join__qr" data-testid="qr-code" dangerouslySetInnerHTML={{ __html: qr }} />
+            )}
+
+            <div className="join__endpoint" data-testid="endpoint">
+              {selectedIp}:{port}
+            </div>
+
+            {others.length > 0 && (
+              <div className="join__addresses">
+                <span className="ui-field__label">Other addresses</span>
+                {others.map((ip) => (
                   <button
                     key={ip}
-                    className="link"
+                    type="button"
+                    className="join__address"
+                    data-testid={`address-${ip}`}
                     onClick={() => void window.quiz.selectIp(ip)}
                   >
-                    {ip}:{port}
+                    <span>{ip}:{port}</span>
+                    <span>Use</span>
                   </button>
                 ))}
-            </div>
-          )}
-        </section>
-
-        <section className="students">
-          <div className="students-head">
-            <h2>Students</h2>
-            <span className="count">
-              {connected} / {students.length} connected
-            </span>
+              </div>
+            )}
           </div>
-          {students.length === 0 ? (
-            <p className="empty">No students yet. Scan the QR code to join.</p>
-          ) : (
-            <ul>
-              {students.map((s) => (
-                <li key={s.id} className={s.status}>
-                  <span className="name">{s.name}</span>
-                  <span className="status">{s.status}</span>
-                  <button className="kick" onClick={() => void window.quiz.kick(s.id)}>
-                    Kick
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
+        </Panel>
+
+        <div className="ed">
+          <Panel
+            title="Ready to start"
+            actions={<Badge tone={connected > 0 ? 'ok' : 'neutral'}>{connected} connected</Badge>}
+          >
+            <div className="ed">
+              {quizzes.length > 0 ? (
+                <QuizPicker quizzes={quizzes} selectedId={selectedQuiz} onChange={selectQuiz} />
+              ) : (
+                <EmptyState
+                  title="No quizzes yet"
+                  body="Create a quiz in the library, then come back to run it."
+                  icon={<Icon name="quizzes" />}
+                  action={
+                    <Button variant="secondary" onClick={onOpenLibrary}>
+                      Open library
+                    </Button>
+                  }
+                />
+              )}
+
+              <div className="live__controls">
+                <StartQuizButton connectedCount={connected} quizId={selectedQuiz} onError={setStartError} />
+                <Button variant="secondary" icon={<Icon name="quizzes" />} onClick={onOpenLibrary}>
+                  Quiz library
+                </Button>
+                <Button
+                  variant="secondary"
+                  testId="new-session"
+                  onClick={() => void window.quiz.newSession()}
+                >
+                  New session
+                </Button>
+              </div>
+
+              {startError && <p className="ui-error">{startError}</p>}
+            </div>
+          </Panel>
+
+          <Panel
+            title="Students"
+            actions={
+              <Badge tone={connected > 0 ? 'ok' : 'neutral'}>
+                {connected} / {students.length} connected
+              </Badge>
+            }
+          >
+            {students.length === 0 ? (
+              <EmptyState
+                title="No students yet"
+                body="Scan the QR code or type the PIN on a phone to join."
+                icon={<Icon name="users" />}
+              />
+            ) : (
+              <ul className="roster">
+                {students.map((s) => (
+                  <RosterRow key={s.id} student={s} />
+                ))}
+              </ul>
+            )}
+          </Panel>
+        </div>
       </div>
     </div>
   )
