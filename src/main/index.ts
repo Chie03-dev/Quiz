@@ -416,7 +416,8 @@ function registerIpc(): void {
         filters: [
           { name: 'JSON', extensions: ['json'] },
           { name: 'Markdown', extensions: ['md', 'markdown'] },
-          { name: 'Word', extensions: ['docx'] }
+          { name: 'Word', extensions: ['docx'] },
+          { name: 'PDF', extensions: ['pdf'] }
         ]
       })
       if (open.canceled || !open.filePaths[0]) {
@@ -432,7 +433,9 @@ function registerIpc(): void {
         return { ok: true, quiz: library.importQuiz(parsed.quiz) }
       }
 
-      if (ext === '.docx') {
+      // Word, PDF and Markdown all go through the same reader and give the
+      // same report back: the questions that came out, and what to look at.
+      if (ext === '.docx' || ext === '.pdf' || ext === '.md' || ext === '.markdown') {
         const result = await importQuizFile(filePath, 'auto')
         if (!result.ok) return { ok: false, error: result.error }
         const imported = library.importQuiz(result.quiz)
@@ -448,23 +451,7 @@ function registerIpc(): void {
         }
       }
 
-      if (ext === '.md' || ext === '.markdown') {
-        const result = await importQuizFile(filePath, 'auto')
-        if (!result.ok) return { ok: false, error: result.error }
-        const imported = library.importQuiz(result.quiz)
-        return {
-          ok: true,
-          report: {
-            id: imported.id,
-            title: imported.title,
-            questionCount: imported.questions.length,
-            warnings: result.warnings.map((w) => ({ questionIndex: w.questionIndex, message: w.message })),
-            questions: imported.questions.map((q) => ({ id: q.id, type: q.type, body: q.body, sourceText: q.sourceText }))
-          }
-        }
-      }
-
-      return { ok: false, error: `unsupported file type${ext ? ` ${ext}` : ''}; use .docx, .md, .markdown or .json` }
+      return { ok: false, error: `unsupported file type${ext ? ` ${ext}` : ''}; use .docx, .pdf, .md, .markdown or .json` }
     } catch (err) {
       return { ok: false, error: describeError(err) }
     }

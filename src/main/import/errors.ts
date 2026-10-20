@@ -8,6 +8,8 @@ export const MAX_ZIP_ENTRIES = 512
 export const MAX_TOTAL_UNCOMPRESSED = 200 * 1024 * 1024
 /** Parsed document.xml must stay below this many characters. */
 export const MAX_DOC_XML_CHARS = MAX_TOTAL_UNCOMPRESSED
+/** Most pages a .pdf may have before the importer gives up on it. */
+export const MAX_PDF_PAGES = 200
 
 /**
  * A readable import failure. The main process turns it into the message the

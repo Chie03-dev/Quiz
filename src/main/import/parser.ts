@@ -46,7 +46,35 @@ const COUNT_RE = /\(\s*(\d+)\s*\)/
 const KEY_LINE = /^\s*(\d+)\s*[.:\-]\s*(.+)$/
 
 const TIME_LIMIT_RE = /^time\s+limit\b\s*[:\-]?\s*(\d+)\s*(minutes?|mins?|seconds?|secs?)/i
-const META_RE = /^(?:time\s+limit|name|section|date|instructions?|directions?|general\b)/i
+
+/**
+ * The form fields a paper carries: "Name:", "Date:", "Instructions:".
+ *
+ * The keyword has to be the whole word and be followed by a colon, or the
+ * line is a sentence: "Names are always numbers" is a choice in a question
+ * about databases, not a form field.
+ */
+const META_RE =
+  /^(?:time\s+limit|general\s+instructions?|name|section|date|score|instructions?|directions?|general)\b\s*(?:[:\-]|$)/i
+
+/**
+ * A stem in a printed exam: no number and no letter, but it asks something.
+ *
+ * Printed exam papers often leave the numbering out and print the question on
+ * a line of its own with the choices under it, so the shape has to be found
+ * rather than a marker. A question mark at the end of the line is the signal
+ * that works: choices rarely end with one.
+ */
+const PLAIN_STEM = /\?\s*$/u
+
+/**
+ * A stem that ends with a colon: "These listed system needs are examples of:".
+ *
+ * It has to be a sentence, not a label, so that "Date:" or "Name:" - which the
+ * paper uses for its own form fields - are not mistaken for a question.
+ */
+const PLAIN_STEM_COLON = /:\s*$/u
+const PLAIN_STEM_MIN_LEN = 25
 
 export const SECTION_LABELS: Record<QuestionType, string> = {
   mcq: 'Multiple Choice',
@@ -59,17 +87,28 @@ export const SECTION_LABELS: Record<QuestionType, string> = {
   connect: 'Connect'
 }
 
+/**
+ * Section names, matched at the start of the line.
+ *
+ * They are anchored on purpose. An unanchored "connect" matched "A connection
+ * between two tables", which is a choice in an exam, and turned the rest of
+ * the paper into a connect section.
+ */
 const SECTION_TYPES: { re: RegExp; type: QuestionType }[] = [
-  { re: /multiple\s+choice/i, type: 'mcq' },
-  { re: /true\s+or\s+false/i, type: 'tf' },
-  { re: /identification/i, type: 'identification' },
-  { re: /fill\s+in\s+the\s+blank/i, type: 'fillin' },
-  { re: /enumeration/i, type: 'enumeration' },
-  { re: /problem\s+solving/i, type: 'problem' },
-  { re: /matching/i, type: 'matching' },
-  { re: /connect/i, type: 'connect' },
-  { re: /activity/i, type: 'connect' }
+  { re: /^multiple\s*choice\b/i, type: 'mcq' },
+  // "or", never "/": a question prints "True / False" as its own answer line.
+  { re: /^true\s+or\s+false\b/i, type: 'tf' },
+  { re: /^identification\b/i, type: 'identification' },
+  { re: /^fill\s*in\s*the\s*blanks?\b/i, type: 'fillin' },
+  { re: /^enumeration\b/i, type: 'enumeration' },
+  { re: /^problem\s*solving\b/i, type: 'problem' },
+  { re: /^matching\b/i, type: 'matching' },
+  { re: /^connect\b/i, type: 'connect' },
+  { re: /^activity\b/i, type: 'connect' }
 ]
+
+/** A section header is short. A long line is a sentence, not a header. */
+const SECTION_MAX_LEN = 40
 
 interface SectionHit {
   type: QuestionType
@@ -77,8 +116,9 @@ interface SectionHit {
 }
 
 /** Recognises a section header ("I. Multiple Choice (2 points each)"). */
-function matchSection(raw: string): SectionHit | null {
+function matchSection(raw: string, isHeading = false): SectionHit | null {
   if (QUESTION_START.test(raw)) return null // "1. ..." is a question, not a header
+  if (PLAIN_STEM.test(raw)) return null // a question is not a header either
   let t = raw.trim().replace(/[:\s]+$/, '')
   t = t.replace(/^[IVXivx]{1,6}\s*[.)]\s*/, '') // optional roman prefix
   t = t.replace(/^[A-Za-z]\s*[.)]\s*/, '') // optional letter prefix
@@ -86,9 +126,19 @@ function matchSection(raw: string): SectionHit | null {
   const name = t.replace(/\([^)]*\)/g, ' ').replace(/\s+/g, ' ').trim()
   if (!name) return null
   for (const s of SECTION_TYPES) {
-    if (s.re.test(name)) return { type: s.type, points: points ? Number(points[1]) : null }
+    if (!s.re.test(name)) continue
+    // A header is short. A long line that starts with a section word is a
+    // sentence, not a header.
+    if (!isHeading && name.length > SECTION_MAX_LEN) continue
+    return { type: s.type, points: points ? Number(points[1]) : null }
   }
   return null
+}
+
+/** True when the line is written in capitals, the way a header is. */
+function isAllCaps(text: string): boolean {
+  const letters = text.replace(/[^A-Za-z]/g, '')
+  return letters.length > 0 && letters === letters.toUpperCase()
 }
 
 /** "Answer Key" / "Answers" (exact) starts the trailing key section. */
@@ -248,6 +298,20 @@ function stripForDetection(runs: Run[]): Run[] {
 
 function isCandidateLine(text: string): boolean {
   return CHOICE_START.test(text) || ANSWER_LINE.test(text) || ENUM_ANSWERS.test(text) || TF_INLINE.test(text)
+}
+
+/**
+ * Whether a line is the stem of a question in a printed exam.
+ *
+ * It must not carry a number or a choice letter - those are handled
+ * elsewhere - and it has to end with a question mark, which is what
+ * separates a question from the choices under it.
+ */
+function isPlainStem(text: string): boolean {
+  if (QUESTION_START.test(text) || CHOICE_START.test(text)) return false
+  if (ANSWER_LINE.test(text)) return false
+  if (PLAIN_STEM.test(text)) return true
+  return PLAIN_STEM_COLON.test(text) && text.length >= PLAIN_STEM_MIN_LEN
 }
 
 /**
@@ -481,6 +545,12 @@ interface Builder {
   number: number
   lines: Line[]
   tables: Table[]
+  /**
+   * True when the question was found by its shape (a printed exam with no
+   * numbering) instead of by a number. Such a question takes the lines under
+   * it as its choices, letters or not.
+   */
+  plain: boolean
 }
 
 interface DraftItem {
@@ -495,12 +565,51 @@ interface DraftItem {
   immediate: string[]
   /** Answer-not-determined problems, reported only if the key stays empty. */
   deferred: string[]
+  /**
+   * The key could not be read. Reported per question, unless the whole file
+   * has no keys at all - then one summary says so instead.
+   */
+  missingKey: string[]
+}
+
+/** The first letter not used yet, so choices keep their order without letters. */
+function nextChoiceId(options: Choice[]): string {
+  const used = new Set(options.map((o) => o.id))
+  for (let i = 0; i < 26; i++) {
+    const id = String.fromCharCode(97 + i)
+    if (!used.has(id)) return id
+  }
+  return `o${options.length}`
+}
+
+/**
+ * The correct choice named on an "Answer:" line under the question.
+ *
+ * The value is normally the letter of the choice ("Answer: B"), but the text
+ * of the choice is accepted too ("Answer: To store, organize, access...").
+ */
+function findExplicitChoice(lines: Line[], options: Choice[]): string | null {
+  for (const line of lines) {
+    const fa = findAnswer(line.text)
+    if (!fa) continue
+    const value = line.text.slice(fa.valueStart).trim().replace(/[.;,]\s*$/u, '')
+    if (!value) continue
+    const letter = value.toLowerCase()
+    const byLetter = options.find((o) => o.id === letter)
+    if (byLetter) return byLetter.id
+    const byText = options.find(
+      (o) => o.text.trim().toLowerCase() === value.toLowerCase()
+    )
+    if (byText) return byText.id
+  }
+  return null
 }
 
 /** Turns one finished question (its lines + optional table) into a draft item. */
 function finalize(b: Builder, mark: ResolvedMark): DraftItem {
   const immediate: string[] = []
   const deferred: string[] = []
+  const missingKey: string[] = []
   const stem = b.lines[0] ?? { runs: [], text: '' }
   const stemRuns = stripPrefixRuns(stem.runs, QUESTION_START)
   const stemText = runsText(stemRuns).trim()
@@ -526,13 +635,17 @@ function finalize(b: Builder, mark: ResolvedMark): DraftItem {
       const options: Choice[] = []
       const marked: number[] = []
       for (const line of others) {
+        // "Answer: B" is the key, never a choice.
+        if (ANSWER_LINE.test(line.text)) continue
         const cm = line.text.match(CHOICE_START)
-        if (!cm) continue
-        const runs = stripPrefixRuns(line.runs, CHOICE_START)
+        if (!cm && !b.plain) continue
+        const runs = cm ? stripPrefixRuns(line.runs, CHOICE_START) : line.runs
         const text = runsText(runs).trim()
         if (!text) continue
-        let id = (cm[1] ?? '').toLowerCase() || `o${options.length}`
-        if (options.some((o) => o.id === id)) id = `${id}${options.length}`
+        // A printed exam leaves the letters out; the ones that are printed
+        // still win, so a paper that mixes both reads right.
+        let id = cm ? (cm[1] ?? '').toLowerCase() : ''
+        if (!id || options.some((o) => o.id === id)) id = nextChoiceId(options)
         options.push({ id, text })
         if (markedRange(charsOf(runs, mark))) marked.push(options.length - 1)
       }
@@ -541,7 +654,15 @@ function finalize(b: Builder, mark: ResolvedMark): DraftItem {
       if (marked.length === 1) markKey = options[marked[0]].id
       else if (marked.length >= 2)
         deferred.push('two or more choices are marked, so the correct answer was left blank')
-      else deferred.push('no choice is marked as the correct answer')
+      else {
+        // "Answer: B" under the question names the correct choice.
+        const answer = findExplicitChoice(b.lines, options)
+        if (answer) {
+          explicitKey = answer
+        } else {
+          missingKey.push('no choice is marked as the correct answer')
+        }
+      }
       break
     }
     case 'tf': {
@@ -576,11 +697,11 @@ function finalize(b: Builder, mark: ResolvedMark): DraftItem {
         }
       }
       if (markKey === null) {
-        deferred.push(
-          bothMarked
-            ? 'both True and False are marked, so the answer was left blank'
-            : 'the correct answer (True or False) was not determined'
-        )
+        if (bothMarked) {
+          deferred.push('both True and False are marked, so the answer was left blank')
+        } else {
+          missingKey.push('the correct answer (True or False) was not determined')
+        }
       }
       break
     }
@@ -604,7 +725,7 @@ function finalize(b: Builder, mark: ResolvedMark): DraftItem {
         }
         break
       }
-      if (markKey === null) deferred.push('the accepted answer for this item was not determined')
+      if (markKey === null) missingKey.push('the accepted answer for this item was not determined')
       break
     }
     case 'fillin': {
@@ -651,7 +772,7 @@ function finalize(b: Builder, mark: ResolvedMark): DraftItem {
           }
           break
         }
-        if (markKey === null) deferred.push('the answers for the blanks were not determined')
+        if (markKey === null) missingKey.push('the answers for the blanks were not determined')
       }
       data = { blanks: countBlanks(body) }
       break
@@ -687,7 +808,7 @@ function finalize(b: Builder, mark: ResolvedMark): DraftItem {
         }
         break
       }
-      if (markKey === null) deferred.push('the accepted items for this enumeration were not determined')
+      if (markKey === null) missingKey.push('the accepted items for this enumeration were not determined')
       break
     }
     case 'problem': {
@@ -711,7 +832,7 @@ function finalize(b: Builder, mark: ResolvedMark): DraftItem {
         }
         break
       }
-      if (markKey === null) deferred.push('the final answer for this problem was not determined')
+      if (markKey === null) missingKey.push('the final answer for this problem was not determined')
       break
     }
     case 'matching':
@@ -748,7 +869,8 @@ function finalize(b: Builder, mark: ResolvedMark): DraftItem {
     explicitKey,
     tableKey,
     immediate,
-    deferred
+    deferred,
+    missingKey
   }
 }
 
@@ -844,7 +966,7 @@ export function parseBlocks(blocks: Block[], options: ParseOptions = {}): ParseR
       if (mode === 'body' && (sectionType === 'matching' || sectionType === 'connect')) {
         if (!current) {
           lastNumberInSection += 1
-          current = { section: sectionType, sectionPoints, number: lastNumberInSection, lines: [], tables: [] }
+          current = { section: sectionType, sectionPoints, number: lastNumberInSection, lines: [], tables: [], plain: false }
         }
         current.tables.push(block)
       }
@@ -883,7 +1005,14 @@ export function parseBlocks(blocks: Block[], options: ParseOptions = {}): ParseR
 
     // A section header may be a heading or a plain line; a line that looks like
     // a choice ("A. ...") inside a question is a choice, never a section header.
-    const sec: SectionHit | null = isHeading || current === null || !CHOICE_START.test(trimmed) ? matchSection(trimmed) : null
+    // Inside a printed question the choices have no letters, so only a real
+    // header - a heading, or a line in capitals - can end the question.
+    const insidePlain: boolean = current !== null && current.plain
+    const headerish = isHeading || (isAllCaps(trimmed) && trimmed.length <= SECTION_MAX_LEN)
+    const sec: SectionHit | null =
+      (!insidePlain || headerish) && (isHeading || current === null || !CHOICE_START.test(trimmed))
+        ? matchSection(trimmed, headerish)
+        : null
     if (sec) {
       finalizeCurrent()
       sectionType = sec.type
@@ -905,7 +1034,35 @@ export function parseBlocks(blocks: Block[], options: ParseOptions = {}): ParseR
         continue
       }
       lastNumberInSection = num
-      current = { section: sectionType, sectionPoints, number: num, lines: [{ runs: block.runs, text }], tables: [] }
+      current = {
+        section: sectionType,
+        sectionPoints,
+        number: num,
+        lines: [{ runs: block.runs, text }],
+        tables: [],
+        plain: false
+      }
+      continue
+    }
+
+    // A printed exam may leave the numbering out: the question is the line
+    // that asks something and the choices are the lines under it. Only a
+    // question that was itself found this way can be followed by another one,
+    // so a choice is never mistaken for the next question.
+    if (isPlainStem(trimmed) && (current === null || current.plain)) {
+      finalizeCurrent()
+      // Without a section header a stem with choices under it is a multiple
+      // choice question, which is what a printed exam is.
+      const section = sectionType ?? 'mcq'
+      lastNumberInSection += 1
+      current = {
+        section,
+        sectionPoints,
+        number: lastNumberInSection,
+        lines: [{ runs: block.runs, text }],
+        tables: [],
+        plain: true
+      }
       continue
     }
 
@@ -931,14 +1088,17 @@ export function parseBlocks(blocks: Block[], options: ParseOptions = {}): ParseR
   finalizeCurrent()
 
   const questions: StoredQuestionInput[] = items.map((item) => ({ ...item.question }))
+  const keyed: boolean[] = items.map(() => false)
   items.forEach((item, index) => {
     const q = questions[index]
     if (item.section === 'matching' || item.section === 'connect') {
       q.key = item.tableKey ?? {}
+      keyed[index] = Object.keys(item.tableKey ?? {}).length > 0
       return
     }
     if (item.markKey !== null) {
       q.key = item.markKey
+      keyed[index] = true
       return
     }
     if (!item.hasMarks) {
@@ -946,17 +1106,44 @@ export function parseBlocks(blocks: Block[], options: ParseOptions = {}): ParseR
       const applied = entry === null ? null : applyKeyEntry(item, entry)
       if (applied !== null) {
         q.key = applied
+        keyed[index] = true
         return
       }
       if (item.explicitKey !== null) {
         q.key = item.explicitKey
+        keyed[index] = true
         return
       }
     }
+    q.key = null
+  })
+
+  // A file with no answer key at all is a printed exam waiting for its keys.
+  // Saying that once is enough; repeating it per question would bury the
+  // questions that did come out right.
+  const noKeysAnywhere = items.length > 0 && !keyed.some(Boolean)
+  items.forEach((item, index) => {
     for (const msg of item.deferred) {
       warnings.push({ questionIndex: index, message: `${SECTION_LABELS[item.section]} ${item.number}: ${msg}` })
     }
   })
+  if (noKeysAnywhere) {
+    const anyMarks = items.some((item) => item.hasMarks)
+    warnings.push({
+      questionIndex: null,
+      message: anyMarks
+        ? `The correct answer was not determined for any of the ${items.length} questions, so they were imported without a key. ` +
+          'Set the correct answer in the editor before running the quiz.'
+        : `This file holds no answer keys, so the correct answer was not determined for any of the ${items.length} questions. ` +
+          'They were imported without one - set the correct answer in the editor before running the quiz.'
+    })
+  } else {
+    items.forEach((item, index) => {
+      for (const msg of item.missingKey) {
+        warnings.push({ questionIndex: index, message: `${SECTION_LABELS[item.section]} ${item.number}: ${msg}` })
+      }
+    })
+  }
 
   const quiz: QuizImport = {
     title: title ?? firstNonEmpty ?? 'Untitled quiz',

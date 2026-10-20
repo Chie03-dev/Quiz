@@ -6,6 +6,7 @@ import type { QuestionType } from '../src/shared/types'
 import { parseBlocks } from '../src/main/import/parser'
 import { extractMarkdown } from '../src/main/import/markdown'
 import { importQuizFile } from '../src/main/import'
+import JSZip from 'jszip'
 
 let passed = 0
 let failed = 0
@@ -22,6 +23,75 @@ function ok(cond: boolean, msg: string): void {
 
 function countByType(questions: { type: QuestionType }[], type: QuestionType): number {
   return questions.filter((q) => q.type === type).length
+}
+
+/**
+ * A minimal .docx with the given paragraphs, built here so the file the
+ * importer reads is the file the test describes.
+ */
+async function buildDocx(paragraphs: string[], headings: number[] = []): Promise<Buffer> {
+  const esc = (t: string): string =>
+    t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  const body = paragraphs
+    .map((text, i) => {
+      const style = headings.includes(i) ? '<w:pPr><w:pStyle w:val="Heading1"/></w:pPr>' : ''
+      return `<w:p>${style}<w:r><w:t xml:space="preserve">${esc(text)}</w:t></w:r></w:p>`
+    })
+    .join('')
+  const zip = new JSZip()
+  zip.file(
+    '[Content_Types].xml',
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+      '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
+      '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
+      '<Default Extension="xml" ContentType="application/xml"/>' +
+      '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>' +
+      '</Types>'
+  )
+  zip.folder('_rels')!.file(
+    '.rels',
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+      '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+      '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>' +
+      '</Relationships>'
+  )
+  zip.folder('word')!.file(
+    'document.xml',
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+      '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">' +
+      `<w:body>${body}</w:body></w:document>`
+  )
+  return zip.generateAsync({ type: 'nodebuffer' })
+}
+
+/** A minimal PDF with the given lines of text. */
+function buildPdf(lines: string[]): Buffer {
+  const esc = (t: string): string => t.replace(/\\/g, '\\\\').replace(/\(/g, '\\(').replace(/\)/g, '\\)')
+  const content = [
+    'BT',
+    '/F1 12 Tf',
+    '72 720 Td',
+    ...lines.flatMap((line, i) => [i === 0 ? `(${esc(line)}) Tj` : `0 -18 Td (${esc(line)}) Tj`]),
+    'ET'
+  ].join('\n')
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>',
+    `<< /Length ${Buffer.byteLength(content, 'latin1')} >>\nstream\n${content}\nendstream`,
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'
+  ]
+  let pdf = '%PDF-1.4\n'
+  const offsets: number[] = []
+  objects.forEach((body, i) => {
+    offsets.push(Buffer.byteLength(pdf, 'latin1'))
+    pdf += `${i + 1} 0 obj\n${body}\nendobj\n`
+  })
+  const xrefAt = Buffer.byteLength(pdf, 'latin1')
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`
+  for (const offset of offsets) pdf += `${String(offset).padStart(10, '0')} 00000 n \n`
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefAt}\n%%EOF\n`
+  return Buffer.from(pdf, 'latin1')
 }
 
 function totalPoints(questions: { points: number }[]): number {
@@ -188,6 +258,98 @@ Connect the device to its port.
     !!twoColConnectQ && Object.keys(twoColConnectQ.key as Record<string, string>).length === 2,
     '2-column connect pairs each row by position'
   )
+
+  // --- a printed exam: no question numbers, no letters on the choices ---
+  const printedDir = mkdtempSync(join(tmpdir(), 'quiz-printed-'))
+  try {
+    const printedDocx = join(printedDir, 'printed.docx')
+    writeFileSync(
+      printedDocx,
+      await buildDocx(
+        [
+          'ADVANCED DATABASE',
+          'Name: ____________    Date: ____________',
+          'MULTIPLE CHOICE',
+          'Which statement best describes data?',
+          'Processed results that already have meaning',
+          'Raw facts that have not yet been processed',
+          'A visual representation of a database',
+          'A connection between two tables',
+          'What is the main purpose of a database?',
+          'To design the appearance of an application',
+          'To store, organize and manage related data',
+          'To replace every application program'
+        ],
+        [2]
+      )
+    )
+    const printedResult = await importQuizFile(printedDocx, 'auto')
+    ok(printedResult.ok, 'a printed exam imports')
+    if (printedResult.ok) {
+      const printed = printedResult.quiz
+      ok(printed.questions.length === 2, `a printed exam yields 2 questions (got ${printed.questions.length})`)
+      const first = printed.questions[0]
+      ok(first.type === 'mcq', 'a printed exam yields multiple choice questions')
+      ok(
+        (first.data.options ?? []).length === 4,
+        `a printed exam yields the 4 choices under the question (got ${(first.data.options ?? []).length})`
+      )
+      ok(
+        (first.data.options ?? []).every((o) => o.text.length > 0),
+        'the choices of a printed exam carry their text'
+      )
+      ok(first.key === null, 'a printed exam comes in without a key')
+      ok(
+        printedResult.warnings.length === 1 &&
+          printedResult.warnings[0]?.message.includes('no answer keys'),
+        'a printed exam says once that the keys are missing'
+      )
+    }
+
+    // The same exam as a PDF.
+    const printedPdf = join(printedDir, 'printed.pdf')
+    writeFileSync(
+      printedPdf,
+      buildPdf([
+        'Database exam',
+        'What is a primary key?',
+        'It identifies a record uniquely',
+        'It is a column of text',
+        'It links two tables',
+        'It stores the file name',
+        'What is a foreign key?',
+        'It links a row to a key in another table',
+        'It is a column of text',
+        'It identifies a record uniquely',
+        'It stores the file name'
+      ])
+    )
+    const pdfResult = await importQuizFile(printedPdf, 'auto')
+    ok(pdfResult.ok, 'a PDF exam imports')
+    if (pdfResult.ok) {
+      ok(
+        pdfResult.quiz.questions.length === 2,
+        `a PDF exam yields 2 questions (got ${pdfResult.quiz.questions.length})`
+      )
+      ok(
+        (pdfResult.quiz.questions[0]?.data.options ?? []).length === 4,
+        'a PDF exam yields the 4 choices under the question'
+      )
+      const lastPdfOptions = pdfResult.quiz.questions[pdfResult.quiz.questions.length - 1]?.data.options ?? []
+      ok(
+        lastPdfOptions.length === 4,
+        `the page marker of the PDF is not read as a choice (got ${lastPdfOptions.length} choices)`
+      )
+    }
+
+    // A PDF that is not a PDF at all.
+    const brokenPdf = join(printedDir, 'broken.pdf')
+    writeFileSync(brokenPdf, 'this is not a pdf')
+    const brokenResult = await importQuizFile(brokenPdf, 'auto')
+    ok(!brokenResult.ok, 'a broken PDF returns an error')
+  } finally {
+    rmSync(printedDir, { recursive: true, force: true })
+  }
 
   const corruptedDir = mkdtempSync(join(tmpdir(), 'quiz-import-'))
   try {
