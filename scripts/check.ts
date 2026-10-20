@@ -1024,7 +1024,7 @@ async function checkMemes(
   const sampleDir = mkdtempSync(join(tmpdir(), 'quiz-sample-meme-'))
   const sampleData = openAppData(join(sampleDir, 'sample.db'))
   const sampleAssets = new MemeAssets(sampleData.memes, join(sampleDir, 'files'))
-  const sample = seedSampleMeme(sampleAssets, projectRoot())
+  const sample = seedSampleMeme(sampleAssets, [projectRoot()])
   log(sample !== null, 'the bundled sample meme is seeded on a fresh profile')
   log(
     sample !== null && MEME_FILE_PATTERN.test(sample.fileName),

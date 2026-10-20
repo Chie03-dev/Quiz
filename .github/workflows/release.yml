@@ -1,0 +1,60 @@
+name: Release (portable exe)
+
+# Tag a version (v0.1.0) to publish a downloadable portable .exe on the
+# Releases page, the same way the Android app publishes an .apk.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  portable:
+    name: Build the portable Windows exe
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        # The postinstall step fetches the Electron build of better-sqlite3.
+        run: npm ci
+
+      - name: Typecheck, build and package the portable exe
+        run: npm run dist
+        env:
+          # No code signing certificate: skip the auto-discovery so the build
+          # does not stall looking for one.
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+      - name: Upload the exe to the workflow run
+        uses: actions/upload-artifact@v4
+        with:
+          name: quiz-instructor-portable
+          path: release/*.exe
+          if-no-files-found: error
+
+      - name: Publish the GitHub release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*.exe
+          draft: true
+          generate_release_notes: true
+          body: |
+            Download the portable `.exe`, run it, and the instructor console
+            starts. There is no installer and no admin rights needed.
+
+            **Windows may warn you about an unknown publisher.** The build is
+            not code-signed, so SmartScreen shows "Windows protected your PC".
+            Click **More info** -> **Run anyway**.
+
+            The app runs a quiz server on your LAN (ports 8080-8089) and shows
+            a QR code the students scan. The "Allow phones to connect" button
+            in the app opens the firewall for you.

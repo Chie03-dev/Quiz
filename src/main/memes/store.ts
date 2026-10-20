@@ -143,12 +143,29 @@ export function pngSize(bytes: Buffer): { width: number; height: number } | null
 }
 
 /**
+ * Finds the bundled sample meme. In development it sits in the project
+ * folder; in a packaged app it is an extra resource next to the asar.
+ */
+export function findSampleMeme(dirs: string[]): string | null {
+  for (const dir of dirs) {
+    if (!dir) continue
+    for (const candidate of [
+      join(dir, 'resources', SAMPLE_MEME_FILE),
+      join(dir, SAMPLE_MEME_FILE)
+    ]) {
+      if (existsSync(candidate)) return candidate
+    }
+  }
+  return null
+}
+
+/**
  * Copies the bundled sample meme into the tray. Only ever called on a
  * brand-new profile, so deleting every meme never resurrects it.
  */
-export function seedSampleMeme(assets: MemeAssets, appPath: string): StoredMeme | null {
-  const source = join(appPath, 'resources', SAMPLE_MEME_FILE)
-  if (!existsSync(source)) return null
+export function seedSampleMeme(assets: MemeAssets, dirs: string[]): StoredMeme | null {
+  const source = findSampleMeme(dirs)
+  if (!source) return null
   assets.ensure()
   let bytes: Buffer
   try {

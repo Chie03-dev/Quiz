@@ -33,6 +33,7 @@ npm install
 npm run dev        # development, with hot reload
 npm run build      # typecheck + production bundle into out/
 npm start          # run the production build
+npm run dist       # package a portable Windows .exe into release/
 npm run typecheck  # types only
 npm run check      # end-to-end protocol checks against a real server
 npm run ui-check   # clicks the real UI; needs the app started with
@@ -43,6 +44,41 @@ The port shown in the app is the one actually bound. The server tries 8080 first
 and falls back to the next free port, up to 8089. That range is defined once in
 `src/shared/types.ts` (`FIRST_PORT` / `MAX_PORT`) and reused by the firewall
 rules, so the two cannot drift apart.
+
+## Download a portable build (no install)
+
+Prebuilt portable executables are published on the
+[Releases page](https://github.com/Chie03-dev/Quiz/releases). Download
+`QuizInstructor-<version>-portable.exe`, double-click it, and the instructor
+console starts - no installer, no admin rights, nothing written to Program
+Files.
+
+- The app runs from a temporary folder; your quizzes and memes stay in
+  `%APPDATA%\quiz-instructor`, exactly like the development build.
+- **Windows may warn about an unknown publisher.** The build is not code-signed,
+  so SmartScreen shows *"Windows protected your PC"*: click **More info** ->
+  **Run anyway**. Same for a possible antivirus warning.
+- The firewall notice still applies: the app checks for the firewall rules on
+  startup and the **Allow phones to connect** button installs them (that one
+  does need admin rights, as any firewall change does).
+- The portable build is unsigned, so keep the app up to date by downloading the
+  newest release; there is no auto-updater.
+
+To build it yourself:
+
+```bash
+npm run dist
+# -> release/QuizInstructor-<version>-portable.exe
+```
+
+Pushing a `v*` tag builds it on GitHub Actions and attaches the `.exe` to a
+draft release (`.github/workflows/release.yml`).
+
+> **Troubleshooting:** if `npm run dist` fails with
+> `EBUSY: resource busy or locked ... app.asar`, something is holding the
+> output folder - usually the editor's file watcher. Reload the editor window
+> (or exclude `release/` from its watcher) and build again. `.vscode/settings.json`
+> already excludes it.
 
 ## Joining from a phone
 
