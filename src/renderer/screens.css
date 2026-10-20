@@ -925,6 +925,15 @@
   gap: var(--sp-4);
 }
 
+/*
+ * While the editor is open it covers the bottom of the window, so the page
+ * keeps some room under the last row of the sheet - otherwise the last
+ * student cannot be reached without closing the editor.
+ */
+.res--editing {
+  padding-bottom: 190px;
+}
+
 .res__list {
   display: flex;
   flex-direction: column;
@@ -1313,11 +1322,90 @@
 
 /* --- the answer editor ------------------------------------------------- */
 
-.res__editor {
+/*
+ * The editor sits in a drawer at the bottom of the screen. It sticks to the
+ * bottom of the window, so clicking a cell puts the mark right under your
+ * hand instead of at the end of a long page.
+ */
+.drawer {
+  position: sticky;
+  bottom: 0;
+  z-index: 20;
   display: flex;
   flex-direction: column;
+  gap: var(--sp-2);
+  margin-top: var(--sp-4);
+  padding: var(--sp-3) var(--sp-4) var(--sp-4);
+  border: 1px solid var(--ui-border-strong);
+  border-radius: var(--r-md);
+  background: var(--ui-surface);
+  box-shadow: 0 -8px 24px rgb(0 0 0 / 18%);
+}
+
+.drawer__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   gap: var(--sp-3);
 }
+
+.drawer__title {
+  color: var(--ui-text);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-bold);
+}
+
+.drawer__body {
+  min-width: 0;
+}
+
+.res__hint {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin: var(--sp-4) 0 0;
+  color: var(--ui-text-muted);
+  font-size: var(--fs-sm);
+}
+
+/* The editor reads across: what was asked on the left, the mark on the right. */
+.res__editor {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(380px, 520px);
+  gap: var(--sp-4);
+  align-items: start;
+}
+
+.res__editor-info {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+
+/* The three fields side by side, so the drawer stays short. */
+.res__editor-side {
+  display: grid;
+  grid-template-columns: 120px 160px minmax(0, 1fr);
+  gap: var(--sp-2);
+  align-items: end;
+}
+
+.res__editor-side .live__controls {
+  grid-column: 1 / -1;
+  justify-content: flex-end;
+}
+
+@media (max-width: 1100px) {
+  .res__editor {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .res__editor-side {
+    grid-template-columns: 120px 160px minmax(0, 1fr);
+  }
+}
+
 
 .res__editor-body {
   color: var(--ui-text);

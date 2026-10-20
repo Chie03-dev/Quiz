@@ -9,6 +9,7 @@ import { adviseAnswer, answerText, keyText, type AnswerAdvice } from '../../shar
 import { Badge } from '../components/Badge'
 import { Button } from '../components/Button'
 import { ConfirmButton } from '../components/ConfirmButton'
+import { Drawer } from '../components/Drawer'
 import { EmptyState } from '../components/EmptyState'
 import { Icon } from '../components/Icon'
 import { Panel } from '../components/Panel'
@@ -238,89 +239,93 @@ function AnswerEditor({
 
   return (
     <div className="res__editor">
-      {question && (
-        <>
-          <div className="res__editor-body">{question.body}</div>
-          <div className="res__editor-row">
-            <span className="res__editor-label">Student answered</span>
-            <span className="res__editor-value">{answerText(question, answer.value)}</span>
-          </div>
-          <div className="res__editor-row">
-            <span className="res__editor-label">Right answer</span>
-            <span className="res__editor-value">{keyText(question)}</span>
-          </div>
-          {advice.match === 'loose' && (
-            <div className="res__editor-row res__editor-hint" data-testid="answer-loose">
-              <span className="res__editor-label">How it matched</span>
-              <span className="res__editor-value">
-                Right, but the case, the spacing or the dashes were different.
-              </span>
+      <div className="res__editor-info">
+        {question && (
+          <>
+            <div className="res__editor-body">{question.body}</div>
+            <div className="res__editor-row">
+              <span className="res__editor-label">Student answered</span>
+              <span className="res__editor-value">{answerText(question, answer.value)}</span>
             </div>
-          )}
-          {advice.suggestion && (
-            <div className="res__editor-row res__editor-hint" data-testid="answer-suggestion">
-              <span className="res__editor-label">Closest answer</span>
-              <span className="res__editor-value">{advice.suggestion}</span>
+            <div className="res__editor-row">
+              <span className="res__editor-label">Right answer</span>
+              <span className="res__editor-value">{keyText(question)}</span>
             </div>
-          )}
-        </>
-      )}
+            {advice.match === 'loose' && (
+              <div className="res__editor-row res__editor-hint" data-testid="answer-loose">
+                <span className="res__editor-label">How it matched</span>
+                <span className="res__editor-value">
+                  Right, but the case, the spacing or the dashes were different.
+                </span>
+              </div>
+            )}
+            {advice.suggestion && (
+              <div className="res__editor-row res__editor-hint" data-testid="answer-suggestion">
+                <span className="res__editor-label">Closest answer</span>
+                <span className="res__editor-value">{advice.suggestion}</span>
+              </div>
+            )}
+          </>
+        )}
+      </div>
 
-      <label className="ui-field">
-        <span className="ui-field__label">Points awarded (of {answer.pointsPossible})</span>
-        <input
-          className="ui-input"
-          type="number"
-          min={0}
-          max={answer.pointsPossible}
-          step={0.5}
-          value={points}
-          data-testid="answer-points"
-          onChange={(e) => setPoints(e.target.value)}
-        />
-      </label>
+      <div className="res__editor-side">
+        <label className="ui-field">
+          <span className="ui-field__label">Points awarded (of {answer.pointsPossible})</span>
+          <input
+            className="ui-input"
+            type="number"
+            min={0}
+            max={answer.pointsPossible}
+            step={0.5}
+            value={points}
+            data-testid="answer-points"
+            onChange={(e) => setPoints(e.target.value)}
+          />
+        </label>
 
-      <label className="ui-field">
-        <span className="ui-field__label">Mark</span>
-        <select
-          className="ui-select"
-          value={mark}
-          data-testid="answer-mark"
-          onChange={(e) => setMark(e.target.value)}
-        >
-          <option value="yes">Correct</option>
-          <option value="no">Wrong</option>
-          <option value="none">Not graded</option>
-        </select>
-      </label>
+        <label className="ui-field">
+          <span className="ui-field__label">Mark</span>
+          <select
+            className="ui-select"
+            value={mark}
+            data-testid="answer-mark"
+            onChange={(e) => setMark(e.target.value)}
+          >
+            <option value="yes">Correct</option>
+            <option value="no">Wrong</option>
+            <option value="none">Not graded</option>
+          </select>
+        </label>
 
-      <label className="ui-field">
-        <span className="ui-field__label">Note</span>
-        <input
-          className="ui-input"
-          type="text"
-          value={notes}
-          placeholder="Why this mark?"
-          data-testid="answer-notes"
-          onChange={(e) => setNotes(e.target.value)}
-        />
-      </label>
+        <label className="ui-field">
+          <span className="ui-field__label">Note</span>
+          <input
+            className="ui-input"
+            type="text"
+            value={notes}
+            placeholder="Why this mark?"
+            data-testid="answer-notes"
+            onChange={(e) => setNotes(e.target.value)}
+          />
+        </label>
 
-      {error && <p className="ui-error">{error}</p>}
+        {error && <p className="ui-error">{error}</p>}
 
-      <div className="live__controls">
-        <Button
-          variant="primary"
-          size="sm"
-          testId="answer-save"
-          disabled={busy}
-          onClick={submit}
-        >
-          Save mark
-        </Button>
-        <Button variant="ghost" size="sm" onClick={onCancel}>
-          Cancel
-        </Button>
+        <div className="live__controls">
+          <Button
+            variant="primary"
+            size="sm"
+            testId="answer-save"
+            disabled={busy}
+            onClick={submit}
+          >
+            Save mark
+          </Button>
+          <Button variant="ghost" size="sm" onClick={onCancel}>
+            Cancel
+          </Button>
+        </div>
       </div>
     </div>
   )
@@ -412,6 +417,16 @@ export function ResultDetail({
     return detail.questions.find((q) => q.id === selectedAnswer.questionId)
   }, [detail, selectedAnswer])
 
+  /** What the drawer says at the top: who, and which question. */
+  const selectedTitle = useMemo(() => {
+    if (!detail || !selectedAnswer) return 'Mark an answer'
+    const student = detail.students.find((s) => s.id === selectedAnswer.studentId)
+    const question = detail.questions.find((q) => q.id === selectedAnswer.questionId)
+    // The position is counted from zero; the sheet counts from one.
+    const number = question ? `Q${question.position + 1}` : ''
+    return `${student?.studentName ?? 'Student'} · ${number}`.trim()
+  }, [detail, selectedAnswer])
+
   const save = useCallback(
     (points: number, correct: boolean | null, notes: string) => {
       if (!selectedAnswer) return
@@ -475,7 +490,7 @@ export function ResultDetail({
   const { meta, students } = detail
 
   return (
-    <div className="res">
+    <div className={`res${selectedAnswer ? ' res--editing' : ''}`}>
       <Panel
         title={meta.quizTitle}
         actions={
@@ -646,26 +661,28 @@ export function ResultDetail({
         </div>
       </div>
 
-      <div className="ed">
-        <Panel title="Mark an answer" actions={<Badge tone="neutral">instructor</Badge>}>
-          {selectedAnswer ? (
-            <AnswerEditor
-              answer={selectedAnswer}
-              question={selectedQuestion}
-              onSave={save}
-              onCancel={() => setSelected(null)}
-              busy={busy}
-              error={error}
-            />
-          ) : (
-            <EmptyState
-              title="Pick an answer"
-              body="Click any cell of the score sheet to change the mark."
-              icon={<Icon name="edit" />}
-            />
-          )}
-        </Panel>
-      </div>
+      {/*
+        The editor is a drawer at the bottom of the screen, not a panel at the
+        end of the page: you click a cell and the mark is right there, with no
+        scrolling to find it.
+      */}
+      {selectedAnswer ? (
+        <Drawer title={selectedTitle} onClose={() => setSelected(null)}>
+          <AnswerEditor
+            answer={selectedAnswer}
+            question={selectedQuestion}
+            onSave={save}
+            onCancel={() => setSelected(null)}
+            busy={busy}
+            error={error}
+          />
+        </Drawer>
+      ) : (
+        <p className="res__hint">
+          <Icon name="edit" />
+          Click any cell of the score sheet to mark it. The editor opens here, at the bottom.
+        </p>
+      )}
 
       <div className="live__controls">
         <Button variant="ghost" onClick={onBack}>

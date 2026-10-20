@@ -479,6 +479,25 @@ async function main(): Promise<void> {
     // --- marking an answer by hand ---
     log(await clickByTestIdPrefix(cdp, 'cell-'), 'a cell of the score sheet was clicked')
     log(await hasTestId(cdp, 'answer-points'), 'the editor of the answer opened')
+    // The editor is a drawer at the bottom of the window: it has to be on
+    // screen without scrolling, or it is exactly the panel you had to go and
+    // find.
+    const drawer = await cdp.eval<{ visible: boolean; bottom: number; windowHeight: number } | null>(
+      `(() => {
+         const el = document.querySelector('.drawer')
+         if (!el) return null
+         const box = el.getBoundingClientRect()
+         return {
+           visible: box.top >= 0 && box.bottom <= window.innerHeight + 1,
+           bottom: Math.round(box.bottom),
+           windowHeight: window.innerHeight
+         }
+       })()`
+    )
+    log(
+      drawer?.visible === true,
+      `the editor is on screen without scrolling (${drawer?.bottom} of ${drawer?.windowHeight})`
+    )
     const studentId = await cdp.eval<string | null>(
       `(() => {
          const el = document.querySelector('[data-testid^="student-"]')
