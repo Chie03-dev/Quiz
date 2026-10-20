@@ -17,6 +17,9 @@ screen*.png
 server-info.json
 .fake-student-token.json
 
+# The scratch profile the UI check runs against.
+.tmp/
+
 
 tsconfig.*.tsbuildinfo
 

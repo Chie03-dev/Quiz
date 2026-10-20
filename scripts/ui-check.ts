@@ -279,10 +279,21 @@ async function main(): Promise<void> {
     log(await clickByTestId(cdp, 'start-quiz'), 'the Start quiz button is clickable')
     log(await hasTestId(cdp, 'start-quiz-confirm'), 'Start quiz asks for confirmation before starting')
     log(await clickByTestId(cdp, 'start-quiz-confirm'), 'the confirmation button starts the quiz')
-    const running = await waitFor(async () => {
-      const s = await readUi(cdp)
-      return s && s.quiz.status === 'running' ? s : null
-    })
+    let running: StateSnapshot | null = null
+    try {
+      running = await waitFor(async () => {
+        const s = await readUi(cdp)
+        return s && s.quiz.status === 'running' ? s : null
+      })
+    } catch {
+      // The dashboard says why a quiz cannot start: a draft question, for
+      // instance. Say that, instead of a bare timeout.
+      const why = await cdp.eval<string | null>(
+        `(() => { const el = document.querySelector('.ui-error'); return el ? el.textContent.trim() : null })()`
+      )
+      log(false, `the lobby switches to the running view${why ? `: ${why}` : ''}`)
+      throw new Error('the quiz did not start')
+    }
     log(running.quiz.status === 'running', 'the lobby switches to the running view')
     log(running.quiz.endsAt !== null && running.quiz.endsAt > Date.now(), 'the running view carries an endsAt')
     const totalQuestions = running.quiz.questions.length
@@ -416,9 +427,15 @@ async function main(): Promise<void> {
       const n = await cdp.eval<number>(`document.querySelectorAll('[data-testid^="cell-"]').length`)
       return n > 0 ? n : null
     })
+    // The sheet shows the questions a page at a time, so the cell count
+    // follows the page; what has to hold is a cell for every student and
+    // every question that is on the page.
+    const columns = await cdp.eval<number>(
+      `document.querySelectorAll('.res__sheet thead th').length - 2`
+    )
     log(
-      cells === ended.students.length * totalQuestions,
-      `the score sheet has a cell for every student and question (${cells})`
+      columns > 0 && cells === ended.students.length * columns,
+      `the score sheet has a cell for every student and question on the page (${cells} cells, ${columns} columns)`
     )
     const listedQuestions = await cdp.eval<number>(`document.querySelectorAll('.res__question').length`)
     log(listedQuestions === totalQuestions, `the question list shows every question (${listedQuestions})`)
@@ -482,9 +499,54 @@ async function main(): Promise<void> {
       `the student total follows the changed mark (${totalBefore} -> ${totalAfter})`
     )
 
+    // --- the sheet is shown a page of questions at a time ---
+    const pages = await cdp.eval<number>(`document.querySelectorAll('.res__page').length`)
+    log(pages >= 1, `the score sheet is in ${pages} page(s) of questions`)
+    if (pages > 1) {
+      const firstBefore = await cdp.eval<string | null>(
+        `(() => { const el = document.querySelector('.res__sheet-q'); return el ? el.textContent.trim() : null })()`
+      )
+      log(await clickByTestId(cdp, 'sheet-page-1'), 'the next page button was clicked')
+      const firstAfter = await waitFor(async () => {
+        const now = await cdp.eval<string | null>(
+          `(() => { const el = document.querySelector('.res__sheet-q'); return el ? el.textContent.trim() : null })()`
+        )
+        return now && now !== firstBefore ? now : null
+      })
+      log(!!firstAfter, `the page button shows the next questions (${firstBefore} -> ${firstAfter})`)
+      // Back to the first page, so the rest of the run sees the same sheet.
+      log(await clickByTestId(cdp, 'sheet-page-0'), 'the first page button brings the first questions back')
+    }
+
+    // --- the compact cells fit more questions on a page ---
+    log(await clickByTestId(cdp, 'sheet-compact'), 'the compact switch was clicked')
+    const compactColumns = await waitFor(async () => {
+      const n = await cdp.eval<number>(`document.querySelectorAll('.res__sheet thead th').length - 2`)
+      return n > 0 ? n : null
+    })
+    log(
+      compactColumns >= columns,
+      `the compact cells show more questions on a page (${columns} -> ${compactColumns})`
+    )
+    const stillFits = await cdp.eval<boolean>(
+      `(() => {
+         const box = document.querySelector('.res__sheet-scroll')
+         const table = document.querySelector('.res__sheet')
+         return !!box && !!table && table.scrollWidth <= box.clientWidth + 1
+       })()`
+    )
+    log(stillFits, 'the sheet does not scroll sideways')
+    log(await clickByTestId(cdp, 'sheet-compact'), 'the compact switch was clicked back')
+
     // --- deleting the session ---
     log(await clickByTestId(cdp, 'nav-results'), 'the results list is reachable from the sidebar')
+    // The list comes over IPC, so the button is not on screen the instant
+    // the screen opens.
+    await waitFor(async () => ((await hasTestId(cdp, `delete-result-${sessionId}`)) ? true : null))
     log(await clickByTestId(cdp, `delete-result-${sessionId}`), 'the delete button was found and clicked')
+    await waitFor(async () =>
+      ((await hasTestId(cdp, `delete-result-confirm-${sessionId}`)) ? true : null)
+    )
     log(
       await clickByTestId(cdp, `delete-result-confirm-${sessionId}`),
       'the delete confirmation was clicked'

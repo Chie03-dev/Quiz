@@ -56,7 +56,7 @@ published for every version:
 | `QuizInstructor-<version>-setup.exe` | An installer. It puts the app in `%LOCALAPPDATA%\Programs\Quiz Instructor` and leaves a shortcut on the desktop. No admin rights, no Program Files. **Use this one.** |
 | `QuizInstructor-<version>-portable.exe` | The app in a single file, unpacked to a temporary folder on every start. Nothing is installed. |
 
-**Latest release: [v0.2.3](https://github.com/Chie03-dev/Quiz/releases/tag/v0.2.3)**.
+**Latest release: [v0.2.4](https://github.com/Chie03-dev/Quiz/releases/tag/v0.2.4)**.
 
 Prefer the installer: the portable build unpacks itself into a new folder on
 every run, so Windows treats it as a new program each time and may ask about
@@ -65,8 +65,9 @@ the firewall again and again. The installer keeps one stable path.
 ### What is new
 
 | Version | What it brings |
-| --- | --- |
-| **v0.2.3** | **The importer reads a printed exam.** A Word document or PDF with unnumbered questions and choices without letters now comes in as questions with their choices - a paper with no answer key comes in as drafts, with one clear note instead of thirty warnings. PDFs are supported too, and a section name is no longer read out of a sentence ("A **connection** between two tables" is not a *Connect* section). |
+| --- | --- | --- |
+| **v0.2.4** | **The score sheet fits the screen.** The table of students x questions sat in a narrow column and always scrolled sideways. It now has the width, the questions are shown a page at a time, and the student column and the total stay put. A compact switch fits twice as many questions on a page. |
+| v0.2.3 | **The importer reads a printed exam.** A Word document or PDF with unnumbered questions and choices without letters now comes in as questions with their choices - a paper with no answer key comes in as drafts, with one clear note instead of thirty warnings. PDFs are supported too, and a section name is no longer read out of a sentence ("A **connection** between two tables" is not a *Connect* section). |
 | v0.2.2 | **The case, the spaces and the dashes do not count.** A written answer is compared without them, so `tokyo` is right for a key of `Tokyo` and `e mail` is right for `e-mail`. The score sheet says when an answer only matched because of that, and suggests the closest answer when a student was nearly right. An enumeration also counts the same answer only once now. |
 | v0.2.1 | **Phones connect, first time.** The app now asks at startup when Windows is blocking the quiz server, and the dashboard always shows the firewall state instead of only when something is wrong. The check works on non-English Windows (it used to read every rule as "unknown" there, so the fix was never offered). The manual commands and `setup-firewall.bat` are shipped with the app. Plus an installer build with a stable path. |
 | v0.2.0 | **Results and score sheet.** Every finished session is saved and scored for you: a question list with the right answer and how many students got it, and a students x questions grid. Click any cell to change the points, the mark or add a note. Grading covers all eight question types, with partial credit for multi-part ones. |
@@ -371,9 +372,16 @@ drive the actual window, start the app with remote debugging enabled and run
 `ui-check` in a second terminal:
 
 ```bash
-npx electron . --remote-debugging-port=9222
+npx electron . --remote-debugging-port=9222 --user-data-dir=.tmp/ui-profile
 npm run ui-check
 ```
+
+**Give the test its own profile.** `--user-data-dir` points the app at a
+folder of its own, so the check gets a fresh library with the sample quiz and
+never touches your own quizzes and results. Without it the check runs against
+your real profile, and it fails as soon as your library holds a quiz that
+cannot be started - a draft, for instance - because the dashboard starts the
+quiz it finds first.
 
 `ui-check` attaches to the renderer over the DevTools protocol, joins two fake
 students, then clicks the real controls by their stable `data-testid` (Kick, an
@@ -436,6 +444,17 @@ Every finished session is saved as a **result session** and scored for you.
   students got it) and a grid of students x questions. Each cell shows the
   answer, whether it was right and the points it earned; wrong answers stand
   out.
+- **The sheet never scrolls sideways.** A paper with thirty questions is far
+  wider than any window, so the questions are shown a page at a time - the
+  buttons in the panel header say which page is on screen (`Q1-4`, `Q5-8`), and
+  a page holds exactly as many questions as fit. The student column stays put
+  on the left and the total stays put on the right, so you never lose your
+  place.
+- **The compact switch** shrinks a cell to its mark and its points, so twice as
+  many questions fit on a page. The answer is still in the tooltip and in the
+  editor.
+- **The question list** is the narrow column on the left and scrolls on its
+  own, so the score sheet keeps the width.
 - **Marking by hand**: click any cell to change the points, the mark
   (correct / wrong / not graded) and a note. The student's total follows, and
   the cell is flagged as no longer auto-graded.
