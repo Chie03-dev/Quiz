@@ -5,9 +5,11 @@ import type { Quiz } from '../../shared/types'
 import { quizStartError } from '../../shared/validation'
 import { toRuntimeQuiz } from '../quizFormat'
 import { QuizLibrary } from './library'
+import { MemeStore } from './memes'
 import { migrate } from './schema'
 
 export { QuizLibrary } from './library'
+export { MemeStore } from './memes'
 export { SCHEMA_VERSION } from './schema'
 
 /**
@@ -29,17 +31,34 @@ function nativeOptions(): { nativeBinding?: string } {
 }
 
 /**
- * Opens the quiz database at filePath, runs pending migrations, and seeds the
+ * The app's own data: the quiz library and the meme tray, both on one
+ * database connection so they never fight over the same SQLite file.
+ */
+export interface AppData {
+  quizzes: QuizLibrary
+  memes: MemeStore
+  /** True when the database file was brand new: the sample data is seeded then. */
+  fresh: boolean
+}
+
+/**
+ * Opens the database at filePath, runs pending migrations, and seeds the
  * sample quiz on the very first run. The file lives in app.getPath('userData')
  * when the app opens it; tests pass a temp path.
  */
-export function openQuizLibrary(filePath: string): QuizLibrary {
+export function openAppData(filePath: string): AppData {
   const db = new Database(filePath, nativeOptions())
   db.pragma('foreign_keys = ON')
   const fresh = migrate(db)
-  const library = new QuizLibrary(db)
-  if (fresh) library.seedSampleQuiz()
-  return library
+  const quizzes = new QuizLibrary(db)
+  const memes = new MemeStore(db)
+  if (fresh) quizzes.seedSampleQuiz()
+  return { quizzes, memes, fresh }
+}
+
+/** The quiz library alone; kept for the test scripts and older call sites. */
+export function openQuizLibrary(filePath: string): QuizLibrary {
+  return openAppData(filePath).quizzes
 }
 
 export type StartAttempt = { ok: true; quiz: Quiz } | { ok: false; message: string }

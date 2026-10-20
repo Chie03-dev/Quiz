@@ -767,3 +767,108 @@
   font-size: var(--fs-xs);
 }
 
+/* --- meme tray ------------------------------------------------------ */
+
+.memes {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.memes__errors {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  margin-bottom: var(--sp-3);
+}
+
+.memes__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: var(--sp-3);
+}
+
+.memes__item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: var(--sp-2);
+  background: var(--ui-surface-2);
+  border: 1px solid var(--ui-border);
+  border-radius: var(--r-md);
+}
+
+.memes__item--on {
+  border-color: var(--ui-accent);
+  box-shadow: 0 0 0 1px var(--ui-accent);
+}
+
+.memes__pick {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.memes__thumb {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  border-radius: var(--r-sm);
+  background: var(--ui-surface-3);
+}
+
+.memes__name {
+  overflow: hidden;
+  color: var(--ui-text-muted);
+  font-size: var(--fs-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.memes__actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+}
+
+/* The live screen shows the tray as a horizontal strip. */
+.memes--strip .memes__grid {
+  display: flex;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  padding-bottom: var(--sp-1);
+}
+
+.memes--strip .memes__item {
+  flex: 0 0 150px;
+}
+
+/* The instructor's own preview of a pop: never in the way of a click. */
+.memes__overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--sp-6);
+  background: rgba(0, 0, 0, 0.72);
+  pointer-events: none;
+}
+
+.memes__overlay-img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-2);
+}
+

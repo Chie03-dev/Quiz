@@ -1,12 +1,15 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import type { StateSnapshot, StudentInfo } from '../../shared/types'
+import { MEME_DURATION_MS } from '../../shared/types'
 import { Badge } from '../components/Badge'
-import { Button } from '../components/Button'
+import { Button, IconButton } from '../components/Button'
 import { ConfirmButton } from '../components/ConfirmButton'
 import { EmptyState } from '../components/EmptyState'
 import { Icon } from '../components/Icon'
 import { LockToggle } from '../components/LockToggle'
 import { Panel } from '../components/Panel'
+import { MemeOverlay } from '../memes/MemeOverlay'
+import { MemeTray } from '../memes/MemeTray'
 
 /** Ticks once a second so the countdown moves without any server round trip. */
 function useRemaining(endsAt: number | null, timerPaused: boolean, remainingMs: number | null): number {
@@ -99,11 +102,16 @@ function EndQuizButton(): React.JSX.Element {
 function StudentCard({
   student,
   total,
-  answered
+  answered,
+  canPop,
+  onPop
 }: {
   student: StudentInfo
   total: number
   answered: number
+  /** True when a meme is selected and can be popped at this student. */
+  canPop: boolean
+  onPop: (studentId: string) => void
 }): React.JSX.Element {
   const avatar = student.name.trim()
     .split(' ')
@@ -127,6 +135,15 @@ function StudentCard({
         {paused && <Badge tone="warn">Paused</Badge>}
         {finished && <Badge tone="ok">Finished</Badge>}
         <Badge tone={student.status === 'connected' ? 'ok' : 'danger'}>{student.status}</Badge>
+        <IconButton
+          label={canPop ? `Pop the meme to ${student.name}` : 'Select a meme first'}
+          icon={<Icon name="zap" />}
+          variant="secondary"
+          size="sm"
+          testId={`pop-student-${student.name}`}
+          disabled={!canPop}
+          onClick={() => onPop(student.id)}
+        />
       </div>
       <div className="live__card-meta">
         answered {answered} of {total} ({pct}%)
@@ -227,6 +244,17 @@ function Ended({ state }: { state: StateSnapshot }): React.JSX.Element {
         >
           New session
         </Button>
+        {state.meme?.active && (
+          <Button
+            variant="danger"
+            size="sm"
+            icon={<Icon name="close" />}
+            testId="meme-dismiss"
+            onClick={() => void window.quiz.hideMeme()}
+          >
+            Dismiss meme
+          </Button>
+        )}
       </div>
 
       <Panel title="Summary" actions={<Badge tone="neutral">{reason}</Badge>}>
@@ -273,9 +301,30 @@ function Ended({ state }: { state: StateSnapshot }): React.JSX.Element {
 /** Running and ended views. Counts only; step 2 has no scores. */
 export function LiveSession({ state }: { state: StateSnapshot }): React.JSX.Element {
   const [eventsOpen, setEventsOpen] = useState(true)
+  /** The meme the per-student pop buttons use. */
+  const [selectedMeme, setSelectedMeme] = useState<string | null>(null)
+  /** The instructor's own preview of the last pop. */
+  const [preview, setPreview] = useState<string | null>(null)
   const { students, quiz } = state
   const remaining = useRemaining(quiz.endsAt, quiz.timerPaused, quiz.remainingMs)
   const timerPaused = quiz.timerPaused
+
+  // The instructor sees the meme too, so the pop is not a surprise for them.
+  const showPreview = useCallback((memeId: string) => {
+    void window.quiz.memeData(memeId).then((url) => {
+      if (url) setPreview(url)
+    })
+  }, [])
+  const hidePreview = useCallback(() => setPreview(null), [])
+
+  const popTo = useCallback(
+    (studentId: string) => {
+      if (!selectedMeme) return
+      void window.quiz.popMeme(selectedMeme, [studentId])
+      showPreview(selectedMeme)
+    },
+    [selectedMeme, showPreview]
+  )
 
   if (quiz.status === 'ended') return <Ended state={state} />
 
@@ -335,6 +384,17 @@ export function LiveSession({ state }: { state: StateSnapshot }): React.JSX.Elem
               Approve all ({paused.length})
             </Button>
           )}
+          {state.meme?.active && (
+            <Button
+              variant="danger"
+              size="sm"
+              icon={<Icon name="close" />}
+              testId="meme-dismiss"
+              onClick={() => void window.quiz.hideMeme()}
+            >
+              Dismiss meme
+            </Button>
+          )}
           <EndQuizButton />
         </div>
       </div>
@@ -344,6 +404,13 @@ export function LiveSession({ state }: { state: StateSnapshot }): React.JSX.Elem
           All connected students have finished
         </div>
       )}
+
+      <MemeTray
+        selectedId={selectedMeme}
+        onSelect={(id) => setSelectedMeme(id || null)}
+        onPop={showPreview}
+        compact
+      />
 
       <div className="live__columns">
         <Panel
@@ -373,6 +440,8 @@ export function LiveSession({ state }: { state: StateSnapshot }): React.JSX.Elem
                           student={s}
                           total={total}
                           answered={quiz.answeredByStudent[s.id] ?? 0}
+                          canPop={selectedMeme !== null}
+                          onPop={popTo}
                         />
                       ))}
                     </ul>
@@ -426,6 +495,10 @@ export function LiveSession({ state }: { state: StateSnapshot }): React.JSX.Elem
           )}
         </Panel>
       </div>
+
+      {preview && (
+        <MemeOverlay url={preview} durationMs={MEME_DURATION_MS} onDone={hidePreview} />
+      )}
     </div>
   )
 }

@@ -27,6 +27,8 @@ export type IconName =
   | 'unlock'
   | 'chevron-down'
   | 'chevron-up'
+  | 'zap'
+  | 'image'
 
 const PATHS: Record<IconName, ReactNode> = {
   dashboard: (
@@ -105,7 +107,15 @@ const PATHS: Record<IconName, ReactNode> = {
     </>
   ),
   'chevron-down': <path d="m6 9 6 6 6-6" />,
-  'chevron-up': <path d="m6 15 6-6 6 6" />
+  'chevron-up': <path d="m6 15 6-6 6 6" />,
+  zap: <path d="M13 2 4 14h7l-1 8 9-12h-7z" />,
+  image: (
+    <>
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <circle cx="8.5" cy="9.5" r="1.5" />
+      <path d="m4 17 5-5 4 4 2-2 5 4" />
+    </>
+  )
 }
 
 /** Renders one of the app's inline SVG icons. */

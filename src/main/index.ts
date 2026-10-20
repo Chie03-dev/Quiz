@@ -1,9 +1,15 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { promises as fs } from 'node:fs'
+import { randomUUID } from 'node:crypto'
 import { extname, join } from 'node:path'
 import type {
   ExportQuizResult,
   ImportQuizResult,
+  MemeInfo,
+  MemePopResult,
+  MemeSavePayload,
+  MemeSaveResult,
+  MemeState,
   QuizState,
   SaveQuizResult,
   ServerInfo,
@@ -12,15 +18,19 @@ import type {
   StoredQuiz,
   StudentInfo
 } from '../shared/types'
+import { MEME_DURATION_MS } from '../shared/types'
 import { startServer, type QuizServer } from './server'
 import { checkFirewallRules, installFirewallRules } from './firewall'
-import { openQuizLibrary, runtimeQuizForStart, QuizLibrary } from './db'
+import { openAppData, runtimeQuizForStart, type MemeStore, type QuizLibrary } from './db'
+import { MemeAssets, MEME_DIR_NAME, MEME_MAX_BYTES, buildPopPayload, seedSampleMeme } from './memes/store'
 import { parseQuizJson, serializeQuiz } from './quizFormat'
 import { describeError, importQuizFile } from './import'
 
 let win: BrowserWindow | null = null
 let server: QuizServer | null = null
 let library: QuizLibrary | null = null
+let memeStore: MemeStore | null = null
+let memeAssets: MemeAssets | null = null
 let latestStudents: StudentInfo[] = []
 let latestServer: ServerInfo | null = null
 let latestQuiz: QuizState = {
@@ -34,10 +44,20 @@ let latestQuiz: QuizState = {
   endReason: null
 }
 let latestLockMode = true
+/** The last meme pop, or null when none was sent. */
+let latestMeme: MemeState | null = null
+/** Clears the "a meme is showing" flag once its time is up. */
+let memeTimer: NodeJS.Timeout | null = null
 
 const snapshot = (): StateSnapshot | null =>
   latestServer
-    ? { server: latestServer, students: latestStudents, quiz: latestQuiz, lockMode: latestLockMode }
+    ? {
+        server: latestServer,
+        students: latestStudents,
+        quiz: latestQuiz,
+        lockMode: latestLockMode,
+        meme: latestMeme
+      }
     : null
 
 function pushState(): void {
@@ -87,7 +107,8 @@ async function boot(): Promise<void> {
     onLockChanged: (lockMode) => {
       latestLockMode = lockMode
       pushState()
-    }
+    },
+    memes: memeAssets ?? undefined
   })
   await createWindow()
 }
@@ -104,6 +125,10 @@ function registerIpc(): void {
     latestStudents = server.session.list()
     latestQuiz = server.session.quizState()
     latestLockMode = server.session.lockEnabled()
+    // A new session starts without a meme on screen.
+    latestMeme = null
+    if (memeTimer) clearTimeout(memeTimer)
+    memeTimer = null
     pushState()
     return snapshot()
   })
@@ -316,10 +341,146 @@ function registerIpc(): void {
   // Reading the firewall needs no admin; installing always comes from a click.
   ipcMain.handle('firewall:status', () => checkFirewallRules())
   ipcMain.handle('firewall:install', () => installFirewallRules())
+
+  // --- memes: the instructor's jumpscare tray ---
+
+  ipcMain.handle('memes:list', () => memeStore?.list() ?? [])
+
+  ipcMain.handle('memes:save', (_event, payload: unknown): MemeSaveResult => {
+    if (!memeStore || !memeAssets) return { ok: false, error: 'The meme tray is not open.' }
+    try {
+      const p = payload as Partial<MemeSavePayload> | null
+      if (!p || typeof p.name !== 'string' || !p.name.trim()) {
+        return { ok: false, error: 'The image has no name.' }
+      }
+      if (p.mime !== 'image/jpeg' && p.mime !== 'image/png') {
+        return { ok: false, error: 'Only JPEG and PNG images are supported.' }
+      }
+      const bytes = toBytes(p.bytes)
+      if (!bytes || bytes.length === 0) return { ok: false, error: 'The image is empty.' }
+      if (bytes.length > MEME_MAX_BYTES) {
+        return { ok: false, error: 'The compressed image is larger than 2 MB.' }
+      }
+      const width = typeof p.width === 'number' ? p.width : 0
+      const height = typeof p.height === 'number' ? p.height : 0
+      if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1) {
+        return { ok: false, error: 'The image has no usable size.' }
+      }
+      const thumb = typeof p.thumb === 'string' ? p.thumb : ''
+      if (thumb && !thumb.startsWith('data:image/')) {
+        return { ok: false, error: 'The thumbnail is not a data URL.' }
+      }
+      const id = randomUUID()
+      const fileName = memeAssets.write(id, bytes, p.mime)
+      const row = memeStore.insert({
+        id,
+        name: p.name.trim().slice(0, 120),
+        fileName,
+        mime: p.mime,
+        width,
+        height,
+        byteSize: bytes.length,
+        thumb
+      })
+      const meme: MemeInfo = {
+        id: row.id,
+        name: row.name,
+        mime: row.mime,
+        width: row.width,
+        height: row.height,
+        byteSize: row.byteSize,
+        thumb: row.thumb,
+        createdAt: row.createdAt
+      }
+      return { ok: true, meme }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+
+  ipcMain.handle('memes:delete', (_event, id: unknown) => {
+    if (typeof id !== 'string' || !memeStore || !memeAssets) return false
+    const row = memeStore.get(id)
+    if (!row) return false
+    memeAssets.remove(row.fileName)
+    return memeStore.delete(id)
+  })
+
+  // The full image as a data URL, for the instructor's own preview only.
+  ipcMain.handle('memes:data', (_event, id: unknown) => {
+    if (typeof id !== 'string' || !memeAssets) return null
+    const asset = memeAssets.byId(id)
+    if (!asset) return null
+    const bytes = memeAssets.read(asset.fileName)
+    if (!bytes) return null
+    return `data:${asset.mime};base64,${bytes.toString('base64')}`
+  })
+
+  // --- meme pops (instructor commands, IPC-only) ---
+
+  ipcMain.handle('server:popMeme', (_event, memeId: unknown, studentIds: unknown): MemePopResult => {
+    if (!server) return { ok: false, error: 'The server is not ready yet.' }
+    if (typeof memeId !== 'string') return { ok: false, error: 'No meme is selected.' }
+    const payload = memeStore ? buildPopPayload(memeStore, memeId, MEME_DURATION_MS) : null
+    if (!payload) return { ok: false, error: 'That meme is no longer in the tray.' }
+    const targets = toIdList(studentIds)
+    const sent = server.popMeme(payload, targets)
+    latestMeme = { memeId: payload.memeId, at: Date.now(), targets: targets ?? [], active: true }
+    scheduleMemeExpiry()
+    pushState()
+    return { ok: true, sent }
+  })
+
+  ipcMain.handle('server:hideMeme', (_event, studentIds: unknown): MemePopResult => {
+    if (!server) return { ok: false, error: 'The server is not ready yet.' }
+    const targets = toIdList(studentIds)
+    const sent = server.hideMeme(targets)
+    if (latestMeme) latestMeme = { ...latestMeme, active: false }
+    if (memeTimer) clearTimeout(memeTimer)
+    memeTimer = null
+    pushState()
+    return { ok: true, sent }
+  })
+}
+
+/** The student ids of a targeted pop; undefined means every student. */
+function toIdList(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const ids = value.filter((id): id is string => typeof id === 'string' && id.length > 0)
+  return ids.length > 0 ? ids : undefined
+}
+
+/** The image bytes as they arrive over IPC. */
+function toBytes(value: unknown): Uint8Array | null {
+  if (value instanceof Uint8Array) return value
+  if (value instanceof ArrayBuffer) return new Uint8Array(value)
+  if (ArrayBuffer.isView(value)) {
+    return new Uint8Array(value.buffer, value.byteOffset, value.byteLength)
+  }
+  return null
+}
+
+/** The meme is only "showing" for its own duration; then the flag clears. */
+function scheduleMemeExpiry(): void {
+  if (memeTimer) clearTimeout(memeTimer)
+  memeTimer = setTimeout(() => {
+    memeTimer = null
+    if (!latestMeme || !latestMeme.active) return
+    latestMeme = { ...latestMeme, active: false }
+    pushState()
+  }, MEME_DURATION_MS)
 }
 
 app.whenReady().then(async () => {
-  library = openQuizLibrary(join(app.getPath('userData'), 'quiz-library.db'))
+  const userData = app.getPath('userData')
+  const data = openAppData(join(userData, 'quiz-library.db'))
+  library = data.quizzes
+  memeStore = data.memes
+  memeAssets = new MemeAssets(memeStore, join(userData, MEME_DIR_NAME))
+  memeAssets.ensure()
+  // The sample meme is seeded on a brand-new profile only, next to the
+  // sample quiz: deleting every meme never brings it back.
+  if (data.fresh) seedSampleMeme(memeAssets, app.getAppPath())
   registerIpc()
   await boot()
   app.on('activate', () => {
@@ -334,6 +495,9 @@ app.on('window-all-closed', () => {
 app.on('before-quit', () => {
   void server?.close()
   server = null
+  if (memeTimer) clearTimeout(memeTimer)
   library?.close()
   library = null
+  memeStore = null
+  memeAssets = null
 })

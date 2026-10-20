@@ -263,6 +263,30 @@ While a quiz runs, the live session takes over the content area:
   show an **Approve resume** button.
 - **Per question**: each question with an answered-count bar.
 
+### Memes
+
+The **meme tray** is the instructor's jumpscare: a shelf of images that can be
+popped full-screen onto the students' phones mid-quiz.
+
+- **Where it lives**: a panel at the bottom of the Dashboard column, and a
+  horizontal strip above the student cards on the live screen.
+- **Adding**: *Add memes* opens the OS file picker. The image is compressed in
+  the renderer (max 1024 px on the long edge, JPEG unless it needs its
+  transparency) and stored in the app database; the file itself lands in
+  `<userData>/memes`. A fresh profile gets one sample meme; deleting every
+  meme never brings it back.
+- **Popping**: *Pop* sends the meme to every connected phone. The meme is also
+  selected, so the per-student zap button on a student card pops it at that
+  one student only.
+- **Dismissing**: while a meme is up, *Dismiss meme* clears it everywhere.
+- **The clock keeps running.** A meme is cosmetic: it never pauses the
+  countdown, never pauses a student, and never produces `focus_lost`. The
+  student keeps answering under the overlay - at the cost of quiz time. Freeze
+  the countdown with the timer control if you want to talk it through.
+- **The phone fetches the image itself** from `GET /memes/<file>` on the same
+  server and port; only a relative path travels over the socket. An old phone
+  that does not know `meme_pop` ignores it silently.
+
 ### Approve flow
 
 1. A student pauses (lock is ON and they lose focus, or they go offline).
@@ -282,6 +306,9 @@ Tokens and shared primitives keep the UI consistent:
 - `src/renderer/components/` - shared React components: `Button`/`IconButton`,
   `Icon` (inline SVG, no icon pack), `Panel`, `Badge`, `EmptyState`,
   `ConfirmButton`, `Field`, `LockToggle`, `AppShell`.
+- `src/renderer/memes/` - the meme tray (`MemeTray.tsx`), the instructor's
+  own preview (`MemeOverlay.tsx`) and the renderer-side image compression
+  (`compress.ts`).
 
 The UI never shows scores - counts and progress only. The server owns the clock
 and the timers; the UI just renders `endsAt` / `remainingMs` / `timerPaused`.

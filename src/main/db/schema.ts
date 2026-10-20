@@ -5,7 +5,7 @@ import type { Database } from 'better-sqlite3'
  * whenever a table changes; migrations run in order inside a transaction so
  * an existing library upgrades without losing data.
  */
-export const SCHEMA_VERSION = 1
+export const SCHEMA_VERSION = 2
 
 const MIGRATIONS: string[] = [
   // 1: the step-4 quiz library.
@@ -30,6 +30,20 @@ const MIGRATIONS: string[] = [
     status TEXT NOT NULL CHECK (status IN ('draft', 'ready'))
   );
   CREATE INDEX questions_by_quiz ON questions(quiz_id, position);
+  `,
+  // 2: the meme tray (the instructor's jumpscare images).
+  `
+  CREATE TABLE memes (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    file_name TEXT NOT NULL,
+    mime TEXT NOT NULL,
+    width INTEGER NOT NULL,
+    height INTEGER NOT NULL,
+    byte_size INTEGER NOT NULL,
+    thumb TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  );
   `
 ]
 

@@ -4,6 +4,10 @@ import type {
   FirewallInstallResult,
   FirewallStatus,
   ImportQuizResult,
+  MemeInfo,
+  MemePopResult,
+  MemeSavePayload,
+  MemeSaveResult,
   QuizMeta,
   SaveQuizResult,
   StartQuizResult,
@@ -46,6 +50,20 @@ const api = {
   exportQuiz: (id: string): Promise<ExportQuizResult> => ipcRenderer.invoke('lib:export', id),
   /** Opens a file dialog, validates the JSON and adds the quiz to the library. */
   importQuiz: (): Promise<ImportQuizResult> => ipcRenderer.invoke('lib:import'),
+  // --- memes: the instructor's jumpscare tray ---
+  listMemes: (): Promise<MemeInfo[]> => ipcRenderer.invoke('memes:list'),
+  /** Stores one already-compressed meme and returns it. */
+  saveMeme: (meme: MemeSavePayload): Promise<MemeSaveResult> =>
+    ipcRenderer.invoke('memes:save', meme),
+  deleteMeme: (id: string): Promise<boolean> => ipcRenderer.invoke('memes:delete', id),
+  /** The full image as a data URL, for the instructor's own preview. */
+  memeData: (id: string): Promise<string | null> => ipcRenderer.invoke('memes:data', id),
+  /** Pops a meme to the listed students (everyone when no list is given). */
+  popMeme: (memeId: string, studentIds?: string[]): Promise<MemePopResult> =>
+    ipcRenderer.invoke('server:popMeme', memeId, studentIds),
+  /** Clears the meme overlay on the listed students. */
+  hideMeme: (studentIds?: string[]): Promise<MemePopResult> =>
+    ipcRenderer.invoke('server:hideMeme', studentIds),
   onStateChanged: (cb: (state: StateSnapshot) => void): (() => void) => {
     const listener = (_e: unknown, state: StateSnapshot): void => cb(state)
     ipcRenderer.on('state:changed', listener)

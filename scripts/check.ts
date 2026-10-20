@@ -7,13 +7,16 @@
  */
 import WebSocket from 'ws'
 import { createServer } from 'node:net'
+import { randomUUID } from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { startServer } from '../src/main/server'
 import { isValidAnswer, toPublicQuestions } from '../src/main/server/quizRun'
 import { SAMPLE_QUIZ } from '../src/main/sampleQuiz'
-import { openQuizLibrary, runtimeQuizForStart, type QuizLibrary } from '../src/main/db'
+import { openAppData, openQuizLibrary, runtimeQuizForStart, type MemeStore, type QuizLibrary } from '../src/main/db'
+import { buildPopPayload, MemeAssets, MEME_FILE_PATTERN, seedSampleMeme } from '../src/main/memes/store'
 import { parseQuizJson, serializeQuiz, toRuntimeQuiz } from '../src/main/quizFormat'
 import { quizStartError, validateQuestion } from '../src/shared/validation'
 import { buildCheckArgs, buildInstallCommand, CHECK_OPTIONS, classifyCheckOutput, encodePowerShell, FIREWALL_RULES, FIREWALL_PROFILE } from '../src/main/firewall'
@@ -238,11 +241,17 @@ async function main(): Promise<void> {
 
   const seen: any[] = []
   let lastInfo: any = null
+  // The meme tray gets its own temp database and folder, like the library.
+  const memeDir = mkdtempSync(join(tmpdir(), 'quiz-memes-'))
+  const memeData = openAppData(join(memeDir, 'memes.db'))
+  const memeAssets = new MemeAssets(memeData.memes, join(memeDir, 'files'))
+  memeAssets.ensure()
   const server = await startServer({
     onStudentsChanged: (s) => seen.push(JSON.parse(JSON.stringify(s))),
     onServerChanged: (i) => (lastInfo = i),
     onQuizChanged: () => {},
-    onLockChanged: () => {}
+    onLockChanged: () => {},
+    memes: memeAssets
   })
   const port = server.info().port
   const pin = server.session.pin
@@ -294,6 +303,10 @@ async function main(): Promise<void> {
   // --- quiz run (step 2), before the rate-limit tests block the IP ---
   console.log('\n--- quiz run ---')
   await checkQuizRun(server, port, seededQuiz)
+
+  // --- meme pops (the jumpscare tray), also before the rate limit ---
+  console.log('\n--- memes ---')
+  await checkMemes(server, port, memeData.memes, memeAssets)
 
   // 7. five wrong PINs then RATE_LIMITED on the 6th (per IP, so run last)
   for (let i = 0; i < 5; i++) {
@@ -376,6 +389,9 @@ async function main(): Promise<void> {
   // 13. firewall command building (pure; no netsh, no elevation)
   console.log('\n--- firewall ---')
   checkFirewallCommands()
+
+  memeData.quizzes.close()
+  rmSync(memeDir, { recursive: true, force: true })
 
   console.log('done')
   process.exit(process.exitCode ?? 0)
@@ -969,8 +985,173 @@ async function checkQuizRun(server: any, port: number, quiz: Quiz = SAMPLE_QUIZ)
   server.newSession()
 }
 
-/** Timer control against the live server: pause, adjust, resume, clamp, rejoin. */
-async function checkTimerControl(server: any, port: number): Promise<void> {
+/**
+ * The meme tray and the phone-facing pop, against the live server: the
+ * payload shape, the HTTP asset route, the targeting, the dismiss and the
+ * promise that a pop never touches the quiz clock.
+ */
+async function checkMemes(
+  server: any,
+  port: number,
+  store: MemeStore,
+  assets: MemeAssets
+): Promise<void> {
+  server.newSession()
+  const pin = server.session.pin
+
+  // --- a meme in the tray ---
+  const bytes = Buffer.from('these stand in for the compressed jpeg bytes')
+  const id = randomUUID()
+  const fileName = assets.write(id, bytes, 'image/jpeg')
+  const row = store.insert({
+    id,
+    name: 'Test meme',
+    fileName,
+    mime: 'image/jpeg',
+    width: 320,
+    height: 240,
+    byteSize: bytes.length,
+    thumb: ''
+  })
+  const list = store.list()
+  log(list.length === 1 && list[0].name === 'Test meme', 'the meme store lists the meme')
+  log(!('fileName' in list[0]), 'the public meme shape carries no file name')
+  log(MEME_FILE_PATTERN.test(row.fileName), 'the stored file name matches the safe pattern')
+  log(!MEME_FILE_PATTERN.test('../../quiz-library.db'), 'a path traversal never matches the pattern')
+  log(store.get('no-such-meme') === null, 'an unknown meme id is unknown to the store')
+
+  // --- the bundled sample meme ---
+  const sampleDir = mkdtempSync(join(tmpdir(), 'quiz-sample-meme-'))
+  const sampleData = openAppData(join(sampleDir, 'sample.db'))
+  const sampleAssets = new MemeAssets(sampleData.memes, join(sampleDir, 'files'))
+  const sample = seedSampleMeme(sampleAssets, projectRoot())
+  log(sample !== null, 'the bundled sample meme is seeded on a fresh profile')
+  log(
+    sample !== null && MEME_FILE_PATTERN.test(sample.fileName),
+    'the seeded sample gets a safe file name'
+  )
+  log(
+    sample !== null && sampleAssets.read(sample.fileName) !== null,
+    'the seeded sample file is written to the meme folder'
+  )
+  log(sampleData.fresh, 'a brand-new database reports itself as fresh')
+  sampleData.quizzes.close()
+  rmSync(sampleDir, { recursive: true, force: true })
+
+  // --- the payload the phone would get ---
+  const payload = buildPopPayload(store, id, 3000)
+  log(payload !== null, 'a known meme builds a pop payload')
+  log(buildPopPayload(store, 'no-such-meme', 3000) === null, 'an unknown meme id is refused')
+  log(
+    payload !== null && Object.keys(payload).sort().join(',') ===
+      'durationMs,height,memeId,mime,path,width',
+    'the pop payload carries exactly the documented fields'
+  )
+  log(
+    payload !== null && payload.path.startsWith('/memes/') && !payload.path.includes('://'),
+    'the path is relative, never an absolute URL'
+  )
+  log(
+    payload !== null &&
+      !payload.path.includes('\\') &&
+      !payload.path.includes(':') &&
+      !payload.path.includes('..'),
+    'the path never leaks a local file path'
+  )
+  assertNoKeys(payload, 'the meme pop payload')
+
+  // --- two students join ---
+  const alice = client(port)
+  await alice.open()
+  alice.send('join', { pin, name: 'MemeAlice', deviceToken: 'meme-alice' })
+  const aliceId = (await alice.wait('joined')).d.studentId
+  const aliceHb = setInterval(() => alice.send('hb', {}), 400)
+  const bob = client(port)
+  await bob.open()
+  bob.send('join', { pin, name: 'MemeBob', deviceToken: 'meme-bob' })
+  const bobId = (await bob.wait('joined')).d.studentId
+  const bobHb = setInterval(() => bob.send('hb', {}), 400)
+
+  // --- a quiz runs, so the clock check has something to compare ---
+  const quiz = { ...SAMPLE_QUIZ, limitMs: 600_000 }
+  log(server.startQuiz(quiz), 'a quiz runs for the meme checks')
+  await alice.wait('quiz_start')
+  const endsBefore = server.session.quizState().endsAt
+
+  // --- a pop reaches every connected student ---
+  const sent = server.popMeme(payload!)
+  log(sent === 2, `a pop reaches every connected student (${sent})`)
+  const popAlice = await alice.wait('meme_pop')
+  const popBob = await bob.wait('meme_pop')
+  log(popAlice.d.memeId === id && popBob.d.memeId === id, 'the pop carries the meme id')
+  log(popAlice.d.durationMs === 3000, 'the pop carries the duration')
+  log(popAlice.d.mime === 'image/jpeg', 'the pop carries the mime type')
+  log(popAlice.d.width === 320 && popAlice.d.height === 240, 'the pop carries the pixel size')
+  log(
+    server.session.quizState().endsAt === endsBefore,
+    'a pop does not change the quiz clock'
+  )
+
+  // --- the HTTP asset route ---
+  const asset = await fetch(`http://127.0.0.1:${port}${popAlice.d.path}`)
+  log(asset.status === 200, 'the meme is served over plain HTTP')
+  log(asset.headers.get('content-type') === 'image/jpeg', 'the asset route sends the stored content type')
+  const served = Buffer.from(await asset.arrayBuffer())
+  log(served.length === bytes.length, 'the asset route sends the stored bytes')
+  log(
+    (asset.headers.get('cache-control') ?? '').includes('immutable'),
+    'the asset route marks the file immutable'
+  )
+  const missing = await fetch(`http://127.0.0.1:${port}/memes/0123456789abcdef0123.jpg`)
+  log(missing.status === 404, 'an unknown meme file gets 404')
+  const traversal = await fetch(`http://127.0.0.1:${port}/memes/..%2F..%2Fmemes.db`)
+  log(traversal.status === 404, 'a path traversal attempt gets 404')
+
+  // --- a targeted pop reaches only its target ---
+  const alicePops = alice.msgs.filter((m) => m.t === 'meme_pop').length
+  const bobPops = bob.msgs.filter((m) => m.t === 'meme_pop').length
+  const targeted = server.popMeme(payload!, [bobId])
+  log(targeted === 1, 'a targeted pop is sent to exactly one socket')
+  await waitFresh(bob, 'meme_pop')
+  log(
+    bob.msgs.filter((m) => m.t === 'meme_pop').length === bobPops + 1,
+    'the targeted student receives the pop'
+  )
+  log(
+    alice.msgs.filter((m) => m.t === 'meme_pop').length === alicePops,
+    'the other student never sees a targeted pop'
+  )
+
+  // --- dismiss ---
+  const hidden = server.hideMeme()
+  log(hidden === 2, 'meme_hide reaches every connected student')
+  const hideAlice = await waitFresh(alice, 'meme_hide')
+  log(hideAlice.d !== undefined, 'meme_hide carries an empty payload')
+  log(
+    server.session.quizState().endsAt === endsBefore,
+    'dismissing a meme does not change the quiz clock'
+  )
+
+  // --- an unknown meme id never reaches a phone ---
+  const beforeUnknown = alice.msgs.length
+  log(buildPopPayload(store, 'no-such-meme', 3000) === null, 'an unknown meme id sends nothing')
+  await sleep(150)
+  log(alice.msgs.length === beforeUnknown, 'a refused pop sends no message at all')
+
+  clearInterval(aliceHb)
+  clearInterval(bobHb)
+  alice.close()
+  bob.close()
+  await sleep(150)
+  server.newSession()
+}
+
+/** The project root, so the bundled resources (the sample meme) can be found. */
+function projectRoot(): string {
+  return resolve(dirname(fileURLToPath(import.meta.url)), '..')
+}
+
+/** Timer control against the live server: pause, adjust, resume, clamp, rejoin. */async function checkTimerControl(server: any, port: number): Promise<void> {
   server.newSession()
   const pin = server.session.pin
   const quiz = { ...SAMPLE_QUIZ, limitMs: 600_000 }
