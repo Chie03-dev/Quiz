@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { ImportQuizReport, StateSnapshot } from '../shared/types'
 import { AppShell, type ShellSection } from './components/AppShell'
+import { ErrorBoundary } from './components/ErrorBoundary'
 import { Dashboard } from './screens/Dashboard'
 import { LiveSession } from './screens/LiveSession'
 import { QuizLibrary } from './screens/QuizLibrary'
@@ -61,7 +62,9 @@ export function App(): React.JSX.Element {
         title={state.quiz.title ?? 'Live session'}
         subtitle="The session is live. Counts and progress only."
       >
-        <LiveSession state={state} />
+        <ErrorBoundary>
+          <LiveSession state={state} />
+        </ErrorBoundary>
       </AppShell>
     )
   }
@@ -78,7 +81,9 @@ export function App(): React.JSX.Element {
         title="Quiz ended"
         subtitle="The session has finished."
       >
-        <LiveSession state={state} onOpenResults={() => setView({ name: 'results' })} />
+        <ErrorBoundary>
+          <LiveSession state={state} onOpenResults={() => setView({ name: 'results' })} />
+        </ErrorBoundary>
       </AppShell>
     )
   }
@@ -149,7 +154,10 @@ export function App(): React.JSX.Element {
       title={title}
       subtitle={subtitle}
     >
-      {content}
+      {/* A screen that fails to render shows a message, not a white window,
+          and the shell around it keeps working. The key is the screen, so
+          moving to another one gives the broken screen a fresh start. */}
+      <ErrorBoundary key={view.name === 'result' ? view.sessionId : view.name}>{content}</ErrorBoundary>
     </AppShell>
   )
 }

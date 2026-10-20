@@ -306,7 +306,15 @@ export interface ResultQuestionDetail {
   sessionId: string
   /** The library question id; null when the question was created ad hoc. */
   questionId: string | null
-  position: number
+  /**
+   * The number of the question in the session, counted from one - the number
+   * the instructor sees ("Q7").
+   *
+   * The count is made here, once, so that every screen shows the same
+   * number. A screen that works it out for itself is a screen that can work
+   * it out wrong.
+   */
+  number: number
   type: QuestionType
   body: string
   points: number

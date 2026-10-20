@@ -8,7 +8,7 @@
 import WebSocket from 'ws'
 import { createServer } from 'node:net'
 import { randomUUID } from 'node:crypto'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -351,6 +351,117 @@ const TYPE_ANSWERS: Record<string, unknown> = {
   q8: { p1: 'a2', p2: 'a3', p3: 'a1' }
 }
 
+/** One CSS rule: the selectors it applies to and the properties it sets. */
+interface CssRule {
+  selectors: string[]
+  properties: string[]
+  where: string
+}
+
+/**
+ * Reads the rules of a stylesheet.
+ *
+ * The rules inside a media query are left out: a narrow screen is meant to
+ * set things differently, and that is not a conflict. Comments are taken out
+ * first, so a comment never ends up as part of a selector.
+ */
+function parseCssRules(css: string, file: string): CssRule[] {
+  const rules: CssRule[] = []
+  // The comments are blanked out, not removed, so the line numbers still
+  // point at the rule in the file.
+  const text = css.replace(/\/\*[\s\S]*?\*\//g, (comment) => comment.replace(/[^\n]/g, ' '))
+  let depth = 0
+  let buffer = ''
+  let selector = ''
+  let body = ''
+  let line = 1
+  let selectorStart = 1
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]
+    if (ch === '\n') {
+      line++
+      continue
+    }
+    if (ch === '{') {
+      if (depth === 0) {
+        // The selector is what came before the brace.
+        selector = buffer.trim()
+        buffer = ''
+        body = ''
+      }
+      depth++
+      continue
+    }
+    if (ch === '}') {
+      depth--
+      if (depth === 0) {
+        if (selector && !selector.startsWith('@')) {
+          const properties = body
+            .split(';')
+            .map((part) => part.split(':')[0]?.trim() ?? '')
+            .filter((name) => name.length > 0 && !name.startsWith('--'))
+          rules.push({
+            selectors: selector.split(',').map((s) => s.trim().replace(/\s+/g, ' ')).filter(Boolean),
+            properties,
+            where: `${file}:${selectorStart}`
+          })
+        }
+        selector = ''
+        buffer = ''
+        body = ''
+        continue
+      }
+      body += ch
+      continue
+    }
+    if (depth === 0) {
+      if (!buffer.trim() && ch.trim()) selectorStart = line
+      buffer += ch
+    } else body += ch
+  }
+  return rules
+}
+
+/**
+ * The stylesheets must not set the same property on the same selector twice.
+ *
+ * A property that is set in two places is a trap: the later one wins, and
+ * nothing says so. It cost a rebuild once - a grid that was set up in two
+ * places, and the older flex rule kept winning, so the drawer came out as
+ * one tall column instead of two.
+ *
+ * Grouping is fine - `h1, h2, h3 { margin: 0 }` and then `h1 { font-size }`
+ * set different properties, and that is how CSS is meant to be written.
+ * Setting the *same* property twice for the same selector is not.
+ */
+function checkStylesheets(): void {
+  console.log('--- stylesheets ---')
+  const dir = join(projectRoot(), 'src', 'renderer')
+  const files = ['tokens.css', 'ui.css', 'shell.css', 'screens.css']
+  const known = new Map<string, Map<string, string>>()
+  const clashes: string[] = []
+  for (const file of files) {
+    const css = readFileSync(join(dir, file), 'utf8')
+    for (const rule of parseCssRules(css, file)) {
+      for (const selector of rule.selectors) {
+        const set = known.get(selector) ?? new Map<string, string>()
+        for (const property of rule.properties) {
+          const where = set.get(property)
+          if (where) clashes.push(`${selector} sets ${property} again (${where} and ${rule.where})`)
+          else set.set(property, rule.where)
+        }
+        known.set(selector, set)
+      }
+    }
+  }
+  log(
+    clashes.length === 0,
+    clashes.length === 0
+      ? 'no stylesheet sets the same property on the same selector twice'
+      : `no stylesheet sets the same property on the same selector twice: ${clashes.join(', ')}`
+  )
+}
+
 async function main(): Promise<void> {
   // --- quiz library (step 4): exercised offline against a temp database ---
   console.log('--- quiz library ---')
@@ -359,6 +470,10 @@ async function main(): Promise<void> {
   // --- results: the score sheets of finished sessions ---
   console.log('\n--- results ---')
   checkResults()
+
+  // --- the stylesheets ---
+  console.log('\n--- stylesheets ---')
+  checkStylesheets()
 
   const seen: any[] = []
   let lastInfo: any = null
