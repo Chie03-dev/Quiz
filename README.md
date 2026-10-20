@@ -56,7 +56,7 @@ published for every version:
 | `QuizInstructor-<version>-setup.exe` | An installer. It puts the app in `%LOCALAPPDATA%\Programs\Quiz Instructor` and leaves a shortcut on the desktop. No admin rights, no Program Files. **Use this one.** |
 | `QuizInstructor-<version>-portable.exe` | The app in a single file, unpacked to a temporary folder on every start. Nothing is installed. |
 
-**Latest release: [v0.2.5](https://github.com/Chie03-dev/Quiz/releases/tag/v0.2.5)**.
+**Latest release: [v0.2.6](https://github.com/Chie03-dev/Quiz/releases/tag/v0.2.6)**.
 
 Prefer the installer: the portable build unpacks itself into a new folder on
 every run, so Windows treats it as a new program each time and may ask about
@@ -66,7 +66,8 @@ the firewall again and again. The installer keeps one stable path.
 
 | Version | What it brings |
 | --- | --- | --- |
-| **v0.2.5** | **The mark is where you clicked.** The editor for an answer sat at the end of the page, so clicking a wrong answer meant scrolling down to find it. It is now a drawer at the bottom of the screen: it opens where you are, says who and which question, and closes with Escape. |
+| **v0.2.6** | **The mistakes that cost a rebuild cannot happen again.** The check suite now refuses a stylesheet that sets the same property on the same selector twice, the number of a question is counted in one place instead of in every screen, and a screen that fails to render shows what went wrong instead of an empty window. |
+| v0.2.5 | **The mark is where you clicked.** The editor for an answer sat at the end of the page, so clicking a wrong answer meant scrolling down to find it. It is now a drawer at the bottom of the screen: it opens where you are, says who and which question, and closes with Escape. |
 | v0.2.4 | **The score sheet fits the screen.** The table of students x questions sat in a narrow column and always scrolled sideways. It now has the width, the questions are shown a page at a time, and the student column and the total stay put. A compact switch fits twice as many questions on a page. |
 | v0.2.3 | **The importer reads a printed exam.** A Word document or PDF with unnumbered questions and choices without letters now comes in as questions with their choices - a paper with no answer key comes in as drafts, with one clear note instead of thirty warnings. PDFs are supported too, and a section name is no longer read out of a sentence ("A **connection** between two tables" is not a *Connect* section). |
 | v0.2.2 | **The case, the spaces and the dashes do not count.** A written answer is compared without them, so `tokyo` is right for a key of `Tokyo` and `e mail` is right for `e-mail`. The score sheet says when an answer only matched because of that, and suggests the closest answer when a student was nearly right. An enumeration also counts the same answer only once now. |
@@ -395,6 +396,26 @@ screenshots of each screen to `shots/`.
 
 Note: it needs the debugging port, so use it for testing only, never for a
 session in front of students.
+
+### The three guards
+
+Three mistakes cost a rebuild each, so the checks that catch them are part of
+`npm run check` now:
+
+- **One stylesheet rule per property.** A class that sets the same property in
+  two places is a trap: the later rule wins and nothing says so. It cost a
+  drawer its layout once - a grid set up in two places, and the older flex rule
+  kept winning. Grouping is fine (`h1, h2, h3 { margin: 0 }` and then
+  `h1 { font-size }` set different properties); setting the *same* property
+  twice is not, and the check says where.
+- **One number per question.** The number of a question ("Q7") is counted once,
+  in the main process, and comes to the screen as `question.number`. A screen
+  that counts for itself is a screen that can count wrong - the sheet and the
+  drawer once disagreed about which question was being marked.
+- **No white windows.** A screen that fails to render shows what went wrong
+  and a way back, inside a shell that keeps working, instead of an empty
+  window. The error is logged, so the UI check fails on the message rather than
+  timing out on a blank screen.
 
 ## Instructor UI (design system + shell)
 

@@ -44,7 +44,6 @@ h2 {
 h3 {
   font-size: var(--fs-md);
 }
-
 p {
   margin: 0;
 }
@@ -270,7 +269,6 @@ ul {
 .ui-textarea {
   min-height: 88px;
   resize: vertical;
-  font-family: inherit;
 }
 
 .ui-select {

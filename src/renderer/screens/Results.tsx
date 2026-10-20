@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type {
   ResultAnswerDetail,
   ResultQuestionDetail,
@@ -376,7 +376,7 @@ export function ResultDetail({
    * through it - and losing the student names on the left - the questions are
    * shown a page at a time, with the page sized to the window.
    */
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = sheetRef.current
     if (!el) return
     const measure = (): void => {
@@ -386,6 +386,8 @@ export function ResultDetail({
       const fit = Math.floor((width - SHEET_SIDE_COLUMNS) / cell)
       setPerPage(Math.max(3, Math.min(fit, 40)))
     }
+    // Measured before the first paint, so the sheet does not open with one
+    // number of questions and jump to another a moment later.
     measure()
     const observer = new ResizeObserver(measure)
     observer.observe(el)
@@ -422,8 +424,9 @@ export function ResultDetail({
     if (!detail || !selectedAnswer) return 'Mark an answer'
     const student = detail.students.find((s) => s.id === selectedAnswer.studentId)
     const question = detail.questions.find((q) => q.id === selectedAnswer.questionId)
-    // The position is counted from zero; the sheet counts from one.
-    const number = question ? `Q${question.position + 1}` : ''
+    // The number comes from the question itself, so the drawer and the sheet
+    // can never disagree about which question this is.
+    const number = question ? `Q${question.number}` : ''
     return `${student?.studentName ?? 'Student'} · ${number}`.trim()
   }, [detail, selectedAnswer])
 
@@ -596,9 +599,9 @@ export function ResultDetail({
                       <th scope="col" className="res__sheet-student">
                         Student
                       </th>
-                      {visibleQuestions.map((question, index) => (
+                      {visibleQuestions.map((question) => (
                         <th key={question.id} scope="col">
-                          <span className="res__sheet-q">Q{currentPage * perPage + index + 1}</span>
+                          <span className="res__sheet-q">Q{question.number}</span>
                           <span className="res__sheet-p">{question.points}p</span>
                         </th>
                       ))}

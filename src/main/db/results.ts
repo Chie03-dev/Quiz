@@ -304,7 +304,10 @@ export class ResultsStore {
       id: row.id,
       sessionId: row.sessionId,
       questionId: row.questionId,
-      position: row.position,
+      // The row keeps the order counted from zero; the instructor counts the
+      // questions from one, and that count is made here so every screen
+      // shows the same number.
+      number: row.position + 1,
       type: row.type as QuestionType,
       body: row.body,
       points: row.points,

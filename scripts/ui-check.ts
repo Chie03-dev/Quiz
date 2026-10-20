@@ -422,20 +422,21 @@ async function main(): Promise<void> {
     const rows = await cdp.eval<number>(`document.querySelectorAll('[data-testid^="result-"]').length`)
     log(rows >= 1, `the results list shows the sessions (${rows})`)
     log(await clickByTestId(cdp, `open-result-${sessionId}`), 'the session opens')
-    // The sheet is loaded over IPC, so the cells show up a moment later.
-    const cells = await waitFor(async () => {
-      const n = await cdp.eval<number>(`document.querySelectorAll('[data-testid^="cell-"]').length`)
-      return n > 0 ? n : null
-    })
     // The sheet shows the questions a page at a time, so the cell count
     // follows the page; what has to hold is a cell for every student and
-    // every question that is on the page.
-    const columns = await cdp.eval<number>(
-      `document.querySelectorAll('.res__sheet thead th').length - 2`
+    // every question that is on the page. The cells and the columns are read
+    // in one go: the page size settles after the first paint, and two reads
+    // could see two different pages.
+    const sheet = await waitFor(async () =>
+      cdp.eval<{ cells: number; columns: number } | null>(`(() => {
+         const cells = document.querySelectorAll('[data-testid^="cell-"]').length
+         const columns = document.querySelectorAll('.res__sheet thead th').length - 2
+         return cells > 0 && columns > 0 ? { cells, columns } : null
+       })()`)
     )
     log(
-      columns > 0 && cells === ended.students.length * columns,
-      `the score sheet has a cell for every student and question on the page (${cells} cells, ${columns} columns)`
+      !!sheet && sheet.cells === ended.students.length * sheet.columns,
+      `the score sheet has a cell for every student and question on the page (${sheet?.cells} cells, ${sheet?.columns} columns)`
     )
     const listedQuestions = await cdp.eval<number>(`document.querySelectorAll('.res__question').length`)
     log(listedQuestions === totalQuestions, `the question list shows every question (${listedQuestions})`)
@@ -544,8 +545,8 @@ async function main(): Promise<void> {
       return n > 0 ? n : null
     })
     log(
-      compactColumns >= columns,
-      `the compact cells show more questions on a page (${columns} -> ${compactColumns})`
+      compactColumns >= (sheet?.columns ?? 0),
+      `the compact cells show more questions on a page (${sheet?.columns} -> ${compactColumns})`
     )
     const stillFits = await cdp.eval<boolean>(
       `(() => {
