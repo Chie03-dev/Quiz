@@ -983,14 +983,17 @@
 
 .res__columns {
   display: grid;
-  grid-template-columns: 1fr 340px;
+  /* The question list is the narrow column and the score sheet takes the
+     rest: the sheet is a table of students x questions and needs the width.
+     The other way round it sat in 340 px and always scrolled sideways. */
+  grid-template-columns: 320px minmax(0, 1fr);
   gap: var(--sp-4);
   align-items: start;
 }
 
-@media (max-width: 1200px) {
+@media (max-width: 1100px) {
   .res__columns {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
@@ -1000,6 +1003,11 @@
   display: flex;
   flex-direction: column;
   gap: var(--sp-3);
+  /* The list of every question is long; it scrolls in its own column so the
+     score sheet stays where it is. */
+  max-height: 70vh;
+  overflow-y: auto;
+  padding-right: var(--sp-1);
 }
 
 .res__question {
@@ -1015,11 +1023,14 @@
 .res__question-head {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: var(--sp-2);
 }
 
+/* The question text gets a line of its own, so it is not squeezed to
+   nothing by the badges next to it. */
 .res__question-body {
-  flex: 1;
+  flex: 1 1 100%;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1040,6 +1051,63 @@
 }
 
 /* --- the score sheet --------------------------------------------------- */
+
+/* The pages of questions, so a long paper never scrolls sideways. */
+.res__pages {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-1);
+  margin-right: var(--sp-2);
+}
+
+/* The compact switch: the mark and the points only. */
+.res__toggle {
+  padding: var(--sp-1) var(--sp-2);
+  border: 1px solid var(--ui-border);
+  border-radius: var(--r-full);
+  background: var(--ui-surface-2);
+  color: var(--ui-text-muted);
+  font: inherit;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.res__toggle:hover {
+  border-color: var(--ui-border-strong);
+  color: var(--ui-text);
+}
+
+.res__toggle.is-active {
+  border-color: var(--ui-accent);
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent);
+}
+
+.res__page {
+  padding: var(--sp-1) var(--sp-2);
+  border: 1px solid var(--ui-border);
+  border-radius: var(--r-full);
+  background: var(--ui-surface-2);
+  color: var(--ui-text-muted);
+  font: inherit;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.res__page:hover {
+  border-color: var(--ui-border-strong);
+  color: var(--ui-text);
+}
+
+.res__page.is-active {
+  border-color: var(--ui-accent);
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent);
+}
 
 .res__sheet-scroll {
   overflow-x: auto;
@@ -1077,8 +1145,9 @@
   position: sticky;
   left: 0;
   z-index: 2;
-  min-width: 140px;
-  max-width: 200px;
+  width: 150px;
+  min-width: 150px;
+  max-width: 150px;
   padding: var(--sp-2) var(--sp-3) !important;
   background: var(--ui-surface);
   border-right: 1px solid var(--ui-border);
@@ -1110,21 +1179,41 @@
   letter-spacing: 0;
 }
 
+/* The total stays in sight while the questions scroll. */
+.res__sheet-total-head,
+.res__sheet-total {
+  position: sticky;
+  right: 0;
+  z-index: 1;
+  background: var(--ui-surface);
+}
+
+.res__sheet-total-head {
+  border-left: 1px solid var(--ui-border);
+}
+
 .res__sheet-total {
   padding: var(--sp-2) var(--sp-3) !important;
+  border-left: 1px solid var(--ui-border);
   font-family: var(--font-mono);
   white-space: nowrap;
 }
 
 /* --- one answer cell --------------------------------------------------- */
 
+/*
+ * The cell has a fixed width, because the sheet works out how many questions
+ * fit on a page from it. The answer is cut after two lines; the full text is
+ * in the tooltip and in the editor.
+ */
 .res__cell {
   display: flex;
-  align-items: center;
-  gap: var(--sp-2);
-  width: 100%;
-  min-width: 120px;
-  max-width: 220px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--sp-1);
+  width: 124px;
+  min-width: 124px;
+  max-width: 124px;
   padding: var(--sp-2);
   border: 1px solid transparent;
   border-radius: var(--r-sm);
@@ -1142,6 +1231,14 @@
 .res__cell.is-selected {
   border-color: var(--ui-accent);
   box-shadow: 0 0 0 1px var(--ui-accent);
+}
+
+/* The mark on the left, the points on the right. */
+.res__cell-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-1);
 }
 
 .res__cell-mark {
@@ -1174,11 +1271,16 @@
 }
 
 .res__cell-text {
-  flex: 1;
   min-width: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  font-size: var(--fs-xs);
+  line-height: 1.3;
+  /* Two lines, then it stops. The rest is in the tooltip. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow-wrap: anywhere;
 }
 
 .res__cell-points {
@@ -1186,6 +1288,27 @@
   color: var(--ui-text-dim);
   font-family: var(--font-mono);
   font-size: var(--fs-xs);
+}
+
+/*
+ * Compact cells: the mark and the points, and nothing else. More questions
+ * fit on a page, and the answer is in the tooltip and in the editor.
+ */
+.res__sheet--compact .res__cell {
+  width: 56px;
+  min-width: 56px;
+  max-width: 56px;
+  padding: var(--sp-1);
+}
+
+.res__sheet--compact .res__cell-text {
+  display: none;
+}
+
+.res__sheet--compact .res__cell-top {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0;
 }
 
 /* --- the answer editor ------------------------------------------------- */

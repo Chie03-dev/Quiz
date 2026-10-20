@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
   ResultAnswerDetail,
   ResultQuestionDetail,
@@ -32,6 +32,21 @@ const reasonLabel = (reason: ResultSessionMeta['endReason']): string => {
 
 /** The grade of one answer: right, wrong, partly right or unmarked. */
 type CellState = 'ok' | 'bad' | 'partial' | 'none'
+
+/**
+ * How wide one answer cell is, and how much room the student column and the
+ * total column take.
+ *
+ * The sheet shows the questions in pages of the size that fits the window, so
+ * a paper with thirty questions never needs a sideways scroll. The cell width
+ * has to be a fixed number for that to work, and it has to be the same one
+ * the stylesheet uses.
+ */
+const SHEET_CELL_WIDTH = 124
+const SHEET_CELL_WIDTH_COMPACT = 56
+const SHEET_SIDE_COLUMNS = 150 + 88
+/** How many questions a page holds when the window has not been measured yet. */
+const SHEET_PAGE_SIZE = 8
 
 /** How a cell is shown: the mark, the colour and the text of the badge. */
 function cellState(answer: ResultAnswerDetail | undefined): { state: CellState; mark: string } {
@@ -327,6 +342,12 @@ export function ResultDetail({
   const [selected, setSelected] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [page, setPage] = useState(0)
+  const sheetRef = useRef<HTMLDivElement>(null)
+  const [perPage, setPerPage] = useState(SHEET_PAGE_SIZE)
+  // Compact cells show the mark and the points only, so more questions fit on
+  // a page. The answer is in the tooltip and in the editor.
+  const [compact, setCompact] = useState(false)
 
   const load = useCallback(() => {
     void window.quiz.getResult(sessionId).then((found) => {
@@ -341,6 +362,30 @@ export function ResultDetail({
   }, [sessionId])
 
   useEffect(load, [load])
+
+  /**
+   * How many questions fit on the sheet.
+   *
+   * The sheet is a table of students x questions, and a paper with thirty
+   * questions is far wider than any window. Instead of scrolling sideways
+   * through it - and losing the student names on the left - the questions are
+   * shown a page at a time, with the page sized to the window.
+   */
+  useEffect(() => {
+    const el = sheetRef.current
+    if (!el) return
+    const measure = (): void => {
+      const width = el.clientWidth
+      if (width <= 0) return
+      const cell = compact ? SHEET_CELL_WIDTH_COMPACT : SHEET_CELL_WIDTH
+      const fit = Math.floor((width - SHEET_SIDE_COLUMNS) / cell)
+      setPerPage(Math.max(3, Math.min(fit, 40)))
+    }
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [detail !== null, compact])
 
   /** The answers of every student, by question id. */
   const answersByStudent = useMemo(() => {
@@ -391,6 +436,17 @@ export function ResultDetail({
     [selectedAnswer, load]
   )
 
+  // The questions of the page that is on screen. This is worked out before
+  // the early returns below, because a hook may not be called from one path
+  // and not from the other.
+  const questions = detail?.questions ?? []
+  const pageCount = Math.max(1, Math.ceil(questions.length / perPage))
+  const currentPage = Math.min(page, pageCount - 1)
+  const visibleQuestions = useMemo(
+    () => questions.slice(currentPage * perPage, currentPage * perPage + perPage),
+    [questions, currentPage, perPage]
+  )
+
   if (missing) {
     return (
       <div className="res">
@@ -416,7 +472,7 @@ export function ResultDetail({
     )
   }
 
-  const { meta, questions, students } = detail
+  const { meta, students } = detail
 
   return (
     <div className="res">
@@ -474,25 +530,66 @@ export function ResultDetail({
               </ul>
             )}
           </Panel>
+        </div>
 
-          <Panel title="Score sheet" actions={<Badge tone="neutral">{students.length} students</Badge>}>
+        <div className="ed">
+          <Panel
+            title="Score sheet"
+            actions={
+              <>
+                <button
+                  type="button"
+                  className={`res__toggle${compact ? ' is-active' : ''}`}
+                  aria-pressed={compact}
+                  title="Show the mark and the points only, so more questions fit on the page"
+                  data-testid="sheet-compact"
+                  onClick={() => setCompact((c) => !c)}
+                >
+                  Compact
+                </button>
+                {pageCount > 1 && (
+                  <div className="res__pages" role="group" aria-label="Which questions to show">
+                    {Array.from({ length: pageCount }, (_, i) => {
+                      const first = i * perPage + 1
+                      const last = Math.min((i + 1) * perPage, questions.length)
+                      return (
+                        <button
+                          key={i}
+                          type="button"
+                          className={`res__page${i === currentPage ? ' is-active' : ''}`}
+                          aria-pressed={i === currentPage}
+                          data-testid={`sheet-page-${i}`}
+                          onClick={() => setPage(i)}
+                        >
+                          Q{first}–{last}
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
+                <Badge tone="neutral">{students.length} students</Badge>
+              </>
+            }
+          >
             {students.length === 0 ? (
               <EmptyState title="Nobody was in this session" icon={<Icon name="users" />} />
             ) : (
-              <div className="res__sheet-scroll">
-                <table className="res__sheet">
+              <div className="res__sheet-scroll" ref={sheetRef}>
+                <table className={`res__sheet${compact ? ' res__sheet--compact' : ''}`}>
                   <thead>
                     <tr>
                       <th scope="col" className="res__sheet-student">
                         Student
                       </th>
-                      {questions.map((question, index) => (
+                      {visibleQuestions.map((question, index) => (
                         <th key={question.id} scope="col">
-                          <span className="res__sheet-q">Q{index + 1}</span>
+                          <span className="res__sheet-q">Q{currentPage * perPage + index + 1}</span>
                           <span className="res__sheet-p">{question.points}p</span>
                         </th>
                       ))}
-                      <th scope="col">Total</th>
+                      <th scope="col" className="res__sheet-total-head">
+                        Total
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
@@ -502,7 +599,7 @@ export function ResultDetail({
                           {student.studentName}
                           {student.finished && <span className="res__sheet-flag">finished</span>}
                         </th>
-                        {questions.map((question) => {
+                        {visibleQuestions.map((question) => {
                           const answer = answersByStudent.get(student.id)?.get(question.id)
                           const { state, mark } = cellState(answer)
                           const text = question ? answerText(question, answer?.value ?? null) : ''
@@ -525,11 +622,13 @@ export function ResultDetail({
                                 data-testid={`cell-${student.id}-${question.id}`}
                                 onClick={() => setSelected(answer?.id ?? null)}
                               >
-                                <span className="res__cell-mark">{mark}</span>
-                                <span className="res__cell-text">{text}</span>
-                                <span className="res__cell-points">
-                                  {answer ? answer.pointsAwarded : 0}/{answer?.pointsPossible ?? question.points}
+                                <span className="res__cell-top">
+                                  <span className="res__cell-mark">{mark}</span>
+                                  <span className="res__cell-points">
+                                    {answer ? answer.pointsAwarded : 0}/{answer?.pointsPossible ?? question.points}
+                                  </span>
                                 </span>
+                                <span className="res__cell-text">{text}</span>
                               </button>
                             </td>
                           )
@@ -545,27 +644,27 @@ export function ResultDetail({
             )}
           </Panel>
         </div>
+      </div>
 
-        <div className="ed">
-          <Panel title="Mark an answer" actions={<Badge tone="neutral">instructor</Badge>}>
-            {selectedAnswer ? (
-              <AnswerEditor
-                answer={selectedAnswer}
-                question={selectedQuestion}
-                onSave={save}
-                onCancel={() => setSelected(null)}
-                busy={busy}
-                error={error}
-              />
-            ) : (
-              <EmptyState
-                title="Pick an answer"
-                body="Click any cell of the score sheet to change the mark."
-                icon={<Icon name="edit" />}
-              />
-            )}
-          </Panel>
-        </div>
+      <div className="ed">
+        <Panel title="Mark an answer" actions={<Badge tone="neutral">instructor</Badge>}>
+          {selectedAnswer ? (
+            <AnswerEditor
+              answer={selectedAnswer}
+              question={selectedQuestion}
+              onSave={save}
+              onCancel={() => setSelected(null)}
+              busy={busy}
+              error={error}
+            />
+          ) : (
+            <EmptyState
+              title="Pick an answer"
+              body="Click any cell of the score sheet to change the mark."
+              icon={<Icon name="edit" />}
+            />
+          )}
+        </Panel>
       </div>
 
       <div className="live__controls">
