@@ -56,7 +56,7 @@ published for every version:
 | `QuizInstructor-<version>-setup.exe` | An installer. It puts the app in `%LOCALAPPDATA%\Programs\Quiz Instructor` and leaves a shortcut on the desktop. No admin rights, no Program Files. **Use this one.** |
 | `QuizInstructor-<version>-portable.exe` | The app in a single file, unpacked to a temporary folder on every start. Nothing is installed. |
 
-**Latest release: [v0.2.6](https://github.com/Chie03-dev/Quiz/releases/tag/v0.2.6)**.
+**Latest release: [v0.2.7](https://github.com/Chie03-dev/Quiz/releases/tag/v0.2.7)**.
 
 Prefer the installer: the portable build unpacks itself into a new folder on
 every run, so Windows treats it as a new program each time and may ask about
@@ -66,6 +66,7 @@ the firewall again and again. The installer keeps one stable path.
 
 | Version | What it brings |
 | --- | --- | --- |
+| **v0.2.7** | **Your logo on the icon.** The Windows app icon is now the instructor logo you supplied (`logoInstructor.jpg`) instead of the placeholder. Also: student cards on the live screen now wrap their status badges to a second line instead of squeezing the name when the window is narrow. |
 | **v0.2.6** | **The mistakes that cost a rebuild cannot happen again.** The check suite now refuses a stylesheet that sets the same property on the same selector twice, the number of a question is counted in one place instead of in every screen, and a screen that fails to render shows what went wrong instead of an empty window. |
 | v0.2.5 | **The mark is where you clicked.** The editor for an answer sat at the end of the page, so clicking a wrong answer meant scrolling down to find it. It is now a drawer at the bottom of the screen: it opens where you are, says who and which question, and closes with Escape. |
 | v0.2.4 | **The score sheet fits the screen.** The table of students x questions sat in a narrow column and always scrolled sideways. It now has the width, the questions are shown a page at a time, and the student column and the total stay put. A compact switch fits twice as many questions on a page. |
