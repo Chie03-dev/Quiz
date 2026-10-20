@@ -33,6 +33,8 @@ export interface QuizServerOptions {
   onLockChanged: (lockMode: boolean) => void
   /** The meme tray, when the app has one open. */
   memes?: MemeAssetSource
+  /** Called once when a run ends, whatever ended it (timer or instructor). */
+  onQuizEnded?: (reason: 'time' | 'instructor') => void
 }
 
 export interface QuizServer {
@@ -71,7 +73,8 @@ export async function startServer(opts: QuizServerOptions): Promise<QuizServer> 
   const session = new QuizSession(
     (students) => opts.onStudentsChanged(students),
     (state) => opts.onQuizChanged(state),
-    (lockMode) => opts.onLockChanged(lockMode)
+    (lockMode) => opts.onLockChanged(lockMode),
+    (reason) => opts.onQuizEnded?.(reason)
   )
   const info = (): ServerInfo => ({
     pin: session.pin,

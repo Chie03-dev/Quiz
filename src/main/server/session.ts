@@ -1,5 +1,6 @@
 import { randomInt, randomUUID } from 'node:crypto'
 import type {
+  AnswerValue,
   MemePopPayload,
   PauseReason,
   Quiz,
@@ -66,11 +67,17 @@ export class QuizSession {
   constructor(
     private onChange: (students: StudentInfo[]) => void,
     onQuizChange: (state: QuizState) => void,
-    private onLockChange: (lockMode: boolean) => void = () => {}
+    private onLockChange: (lockMode: boolean) => void = () => {},
+    /** Called once when the run ends, whatever ended it. */
+    private onQuizEnded: (reason: 'time' | 'instructor') => void = () => {}
   ) {
     this.pin = generatePin()
     this.run = new QuizRun(
-      () => this.broadcast({ t: 'quiz_end', d: { reason: this.run.state().endReason ?? 'instructor' } }),
+      () => {
+        const reason = this.run.state().endReason ?? 'instructor'
+        this.broadcast({ t: 'quiz_end', d: { reason } })
+        this.onQuizEnded(reason)
+      },
       onQuizChange
     )
   }
@@ -372,6 +379,19 @@ export class QuizSession {
   /** Instructor ends the quiz early; the run then sends quiz_end itself. */
   endQuiz(): boolean {
     return this.run.end('instructor')
+  }
+
+  /**
+   * Every answer of the run, student id -> question id -> value. The main
+   * process takes this as the snapshot it grades into the results store.
+   */
+  answersSnapshot(): Record<string, Record<string, AnswerValue>> {
+    return this.run.exportAnswers()
+  }
+
+  /** The quiz of the current run, with its questions and keys. */
+  quizSnapshot(): Quiz | null {
+    return this.run.quizSnapshot()
   }
 
   /**

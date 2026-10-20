@@ -1,4 +1,11 @@
-import type { Choice, PublicQuestion, Quiz, QuizState, ServerErrorCode } from '../../shared/types'
+import type {
+  AnswerValue,
+  Choice,
+  PublicQuestion,
+  Quiz,
+  QuizState,
+  ServerErrorCode
+} from '../../shared/types'
 
 /** What the session must do after an answer arrived. */
 export type AnswerOutcome =
@@ -195,6 +202,27 @@ export class QuizRun {
     const out: Record<string, unknown> = {}
     for (const [qid, a] of this.answers.get(studentId) ?? []) out[qid] = a.value
     return out
+  }
+
+  /**
+   * Every answer of the run, student id -> question id -> value. The results
+   * store takes this as its snapshot when the quiz ends; the run keeps only
+   * the latest answer per student and question, so this is the final state.
+   */
+  exportAnswers(): Record<string, Record<string, AnswerValue>> {
+    const out: Record<string, Record<string, AnswerValue>> = {}
+    for (const [studentId, mine] of this.answers) {
+      const values: Record<string, AnswerValue> = {}
+      // Every stored value passed isValidAnswer, so it has an answer shape.
+      for (const [qid, a] of mine) values[qid] = a.value as AnswerValue
+      out[studentId] = values
+    }
+    return out
+  }
+
+  /** The quiz of this run, with its questions and keys. Main process only. */
+  quizSnapshot(): Quiz | null {
+    return this.quiz
   }
 
   state(): QuizState {

@@ -215,7 +215,13 @@ function EventLog({ events, open, onToggle }: { events: StudentInfo['events']; o
   )
 }
 
-function Ended({ state }: { state: StateSnapshot }): React.JSX.Element {
+function Ended({
+  state,
+  onOpenResults
+}: {
+  state: StateSnapshot
+  onOpenResults?: () => void
+}): React.JSX.Element {
   const { students, quiz } = state
   const total = quiz.questions.length
   const reason = quiz.endReason === 'time' ? 'Time is up.' : 'Ended by the instructor.'
@@ -244,6 +250,16 @@ function Ended({ state }: { state: StateSnapshot }): React.JSX.Element {
         >
           New session
         </Button>
+        {onOpenResults && (
+          <Button
+            variant="secondary"
+            icon={<Icon name="results" />}
+            testId="open-results"
+            onClick={onOpenResults}
+          >
+            View results
+          </Button>
+        )}
         {state.meme?.active && (
           <Button
             variant="danger"
@@ -262,6 +278,7 @@ function Ended({ state }: { state: StateSnapshot }): React.JSX.Element {
           {total} question{total === 1 ? '' : 's'} · {students.length} student
           {students.length === 1 ? '' : 's'}
         </p>
+        <p className="ui-muted">The results of this session are saved.</p>
       </Panel>
 
       <Panel title="Students" actions={<Badge tone="neutral">{students.length}</Badge>}>
@@ -298,13 +315,21 @@ function Ended({ state }: { state: StateSnapshot }): React.JSX.Element {
   )
 }
 
-/** Running and ended views. Counts only; step 2 has no scores. */
-export function LiveSession({ state }: { state: StateSnapshot }): React.JSX.Element {
+/** Running and ended views. Counts only; the score sheet lives in Results. */
+export function LiveSession({
+  state,
+  onOpenResults
+}: {
+  state: StateSnapshot
+  onOpenResults?: () => void
+}): React.JSX.Element {
   const [eventsOpen, setEventsOpen] = useState(true)
   /** The meme the per-student pop buttons use. */
   const [selectedMeme, setSelectedMeme] = useState<string | null>(null)
   /** The instructor's own preview of the last pop. */
   const [preview, setPreview] = useState<string | null>(null)
+  /** True once the instructor saved the score sheet by hand. */
+  const [saved, setSaved] = useState(false)
   const { students, quiz } = state
   const remaining = useRemaining(quiz.endsAt, quiz.timerPaused, quiz.remainingMs)
   const timerPaused = quiz.timerPaused
@@ -317,6 +342,13 @@ export function LiveSession({ state }: { state: StateSnapshot }): React.JSX.Elem
   }, [])
   const hidePreview = useCallback(() => setPreview(null), [])
 
+  /** Saves the score sheet as it stands; the end of the quiz saves it again. */
+  const saveResults = useCallback(() => {
+    void window.quiz.saveCurrentResult().then((meta) => {
+      if (meta) setSaved(true)
+    })
+  }, [])
+
   const popTo = useCallback(
     (studentId: string) => {
       if (!selectedMeme) return
@@ -326,7 +358,7 @@ export function LiveSession({ state }: { state: StateSnapshot }): React.JSX.Elem
     [selectedMeme, showPreview]
   )
 
-  if (quiz.status === 'ended') return <Ended state={state} />
+  if (quiz.status === 'ended') return <Ended state={state} onOpenResults={onOpenResults} />
 
   const total = quiz.questions.length
   const paused = students.filter((s) => s.paused)
@@ -395,6 +427,16 @@ export function LiveSession({ state }: { state: StateSnapshot }): React.JSX.Elem
               Dismiss meme
             </Button>
           )}
+          <Button
+            variant="ghost"
+            size="sm"
+            icon={<Icon name="results" />}
+            testId="save-results"
+            title="Saves the score sheet as it stands. The end of the quiz saves it again."
+            onClick={saveResults}
+          >
+            {saved ? 'Results saved' : 'Save results'}
+          </Button>
           <EndQuizButton />
         </div>
       </div>

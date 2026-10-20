@@ -8,6 +8,7 @@ export type IconName =
   | 'dashboard'
   | 'quizzes'
   | 'live'
+  | 'results'
   | 'plus'
   | 'trash'
   | 'copy'
@@ -51,6 +52,12 @@ const PATHS: Record<IconName, ReactNode> = {
       <circle cx="12" cy="12" r="2.5" />
       <path d="M7.8 7.8a6 6 0 0 0 0 8.4M16.2 16.2a6 6 0 0 0 0-8.4" />
       <path d="M5 5a10 10 0 0 0 0 14M19 19a10 10 0 0 0 0-14" />
+    </>
+  ),
+  results: (
+    <>
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <path d="M7.5 16v-3.5M12 16V8M16.5 16v-5.5" />
     </>
   ),
   plus: <path d="M12 5v14M5 12h14" />,

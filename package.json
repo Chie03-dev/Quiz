@@ -1,6 +1,6 @@
 {
   "name": "quiz-instructor",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "LAN quiz instructor console - run quizzes from the phones in the room",
   "main": "./out/main/index.js",
   "author": "Quiz",
@@ -82,7 +82,9 @@
       "target": [
         {
           "target": "portable",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "icon": "build/icon.ico",
