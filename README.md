@@ -53,6 +53,16 @@ Prebuilt portable executables are published on the
 console starts - no installer, no admin rights, nothing written to Program
 Files.
 
+**Latest release: [v0.2.0](https://github.com/Chie03-dev/Quiz/releases/tag/v0.2.0)**
+(`QuizInstructor-0.2.0-portable.exe`).
+
+### What is new
+
+| Version | What it brings |
+| --- | --- |
+| **v0.2.0** | **Results and score sheet.** Every finished session is saved and scored for you: a question list with the right answer and how many students got it, and a students x questions grid. Click any cell to change the points, the mark or add a note. Grading covers all eight question types, with partial credit for multi-part ones. |
+| v0.1.0 | The first portable build: quiz library, quiz editor, live session with counts only, and the meme tray. |
+
 - The app runs from a temporary folder; your quizzes and memes stay in
   `%APPDATA%\quiz-instructor`, exactly like the development build.
 - **Windows may warn about an unknown publisher.** The build is not code-signed,
@@ -63,6 +73,8 @@ Files.
   does need admin rights, as any firewall change does).
 - The portable build is unsigned, so keep the app up to date by downloading the
   newest release; there is no auto-updater.
+- Your data survives an update: the library, the memes and the saved results
+  live in `%APPDATA%\quiz-instructor` and are carried over untouched.
 
 To build it yourself:
 
@@ -264,10 +276,11 @@ left sidebar, and screens rendered inside it. A screen never replaces the shell.
 
 ### Layout
 
-- **Sidebar** (`src/renderer/components/AppShell.tsx`): brand mark plus three
-  nav entries - **Dashboard**, **Quizzes**, **Live session** - with a badge on
-  Live session showing the live/ended state or the connected-student count. A
-  footer note reminds you it runs on your local network.
+- **Sidebar** (`src/renderer/components/AppShell.tsx`): brand mark plus four
+  nav entries - **Dashboard**, **Quizzes**, **Results**, **Live session** -
+  with a badge on Live session showing the live/ended state or the
+  connected-student count. A footer note reminds you it runs on your local
+  network.
 - **Top bar**: screen title and subtitle on the left, screen-specific actions
   on the right.
 - **Content**: a scrolling area the active screen renders into.
@@ -285,6 +298,37 @@ left sidebar, and screens rendered inside it. A screen never replaces the shell.
   badge (draft/ready), live validation problems, reorder/delete, and the
   type-specific question forms.
 - **`LiveSession.tsx`** - the running and ended views.
+- **`Results.tsx`** - the saved sessions (list) and the score sheet of one
+  session (detail).
+
+### Results
+
+Every finished session is saved as a **result session** and scored for you.
+
+- **When it is saved**: when the quiz ends, by the timer or by the instructor.
+  The run's answers are snapshotted together with the questions and their
+  answer keys, so the sheet still reads correctly after a library question is
+  edited or deleted. There is one result session per run; saving again
+  replaces it.
+- **The list** (`Results` in the sidebar, or the *Results* button on the
+  dashboard) shows every saved session: the quiz, when it ran, why it ended,
+  how many students took it and what the quiz was worth. A session can be
+  deleted (its students, questions and answers go with it).
+- **The score sheet** has a question list (the right answer and how many
+  students got it) and a grid of students x questions. Each cell shows the
+  answer, whether it was right and the points it earned; wrong answers stand
+  out.
+- **Marking by hand**: click any cell to change the points, the mark
+  (correct / wrong / not graded) and a note. The student's total follows, and
+  the cell is flagged as no longer auto-graded.
+- **Grading rules** (all overridable): mcq on the option id, true/false on the
+  boolean, identification on the accepted answers (case and spaces ignored),
+  fill-in blank by blank, enumeration on the accepted items, matching and
+  connect pair by pair, and problem questions on the answer, with the stored
+  tolerance when there is one. Multi-part questions get partial credit.
+
+**The phones never see any of this.** Grading, the answer keys and the score
+sheet stay in the instructor app; no new message is sent to a phone.
 
 ### Live session
 

@@ -12,15 +12,50 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import Database from 'better-sqlite3'
 import { startServer } from '../src/main/server'
 import { isValidAnswer, toPublicQuestions } from '../src/main/server/quizRun'
 import { SAMPLE_QUIZ } from '../src/main/sampleQuiz'
-import { openAppData, openQuizLibrary, runtimeQuizForStart, type MemeStore, type QuizLibrary } from '../src/main/db'
+import { openAppData, openQuizLibrary, runtimeQuizForStart, type MemeStore, type QuizLibrary, type ResultsStore } from '../src/main/db'
+import { gradeAnswer, type ResultQuestionInput } from '../src/main/db/results'
+import { buildSessionSnapshot, snapshotQuestions } from '../src/main/results/session'
 import { buildPopPayload, MemeAssets, MEME_FILE_PATTERN, seedSampleMeme } from '../src/main/memes/store'
 import { parseQuizJson, serializeQuiz, toRuntimeQuiz } from '../src/main/quizFormat'
 import { quizStartError, validateQuestion } from '../src/shared/validation'
 import { buildCheckArgs, buildInstallCommand, CHECK_OPTIONS, classifyCheckOutput, encodePowerShell, FIREWALL_RULES, FIREWALL_PROFILE } from '../src/main/firewall'
-import { FIRST_PORT, MAX_PORT, PORT_RANGE, type QuestionType, type Quiz, type StoredQuestion, type StoredQuiz } from '../src/shared/types'
+import { FIRST_PORT, MAX_PORT, PORT_RANGE, type QuestionType, type Quiz, type ResultSessionMeta, type StoredQuestion, type StoredQuiz, type StudentInfo } from '../src/shared/types'
+
+/** The reasons the sessions of the live server ended, in order. */
+const endedReasons: string[] = []
+
+/** The result session of the last finished run of the live server. */
+let liveResult: ResultSessionMeta | null = null
+
+/** The store the live server's sessions are saved into. */
+let liveResults: ResultsStore
+
+/**
+ * The main process's own step when a quiz ends: snapshot the session into
+ * the results store. Mirrors persistResults() in src/main/index.ts.
+ */
+function saveLiveResult(
+  store: ResultsStore,
+  server: any,
+  reason: 'time' | 'instructor'
+): ResultSessionMeta | null {
+  const snapshot = buildSessionSnapshot({
+    quiz: null,
+    runtime: server.session.quizSnapshot(),
+    quizTitle: server.session.quizState().title ?? 'Quiz',
+    startedAt: null,
+    endedAt: Date.now(),
+    endReason: reason,
+    students: server.session.list(),
+    answers: server.session.answersSnapshot()
+  })
+  if (!snapshot.questions.length) return null
+  return store.createFromSession(snapshot)
+}
 
 /**
  * Firewall command building. Pure string work only: these tests never run
@@ -239,6 +274,10 @@ async function main(): Promise<void> {
   console.log('--- quiz library ---')
   const seededQuiz = checkLibrary()
 
+  // --- results: the score sheets of finished sessions ---
+  console.log('\n--- results ---')
+  checkResults()
+
   const seen: any[] = []
   let lastInfo: any = null
   // The meme tray gets its own temp database and folder, like the library.
@@ -246,13 +285,20 @@ async function main(): Promise<void> {
   const memeData = openAppData(join(memeDir, 'memes.db'))
   const memeAssets = new MemeAssets(memeData.memes, join(memeDir, 'files'))
   memeAssets.ensure()
+  liveResults = memeData.results
+  let liveServer: any = null
   const server = await startServer({
     onStudentsChanged: (s) => seen.push(JSON.parse(JSON.stringify(s))),
     onServerChanged: (i) => (lastInfo = i),
     onQuizChanged: () => {},
     onLockChanged: () => {},
+    onQuizEnded: (reason) => {
+      endedReasons.push(reason)
+      liveResult = saveLiveResult(liveResults, liveServer, reason)
+    },
     memes: memeAssets
   })
+  liveServer = server
   const port = server.info().port
   const pin = server.session.pin
   console.log(`server on port ${port}, PIN ${pin}, ip ${server.info().selectedIp}`)
@@ -451,8 +497,7 @@ function validQuestions(): StoredQuestion[] {
  * all eight types, export/import round trip, malformed import rejection, and
  * start refusal. Returns the seeded sample quiz as a runtime Quiz so the
  * existing quiz-run checks exercise a saved quiz rather than a constant.
- */
-function checkLibrary(): Quiz {
+ */function checkLibrary(): Quiz {
   const dir = mkdtempSync(join(tmpdir(), 'quiz-check-'))
   try {
     const lib = openQuizLibrary(join(dir, 'test.db'))
@@ -806,7 +851,12 @@ function checkStartRefusal(lib: QuizLibrary, seeded: StoredQuiz): void {
   )
 }
 /** Step-2 quiz run against the live server. */
-async function checkQuizRun(server: any, port: number, quiz: Quiz = SAMPLE_QUIZ): Promise<void> {
+async function checkQuizRun(
+  server: any,
+  port: number,
+  quiz: Quiz = SAMPLE_QUIZ,
+  results: ResultsStore = liveResults
+): Promise<void> {
   // A fresh lobby with no students: the server must refuse to start.
   server.newSession()
   const freshPin = server.session.pin
@@ -943,6 +993,20 @@ async function checkQuizRun(server: any, port: number, quiz: Quiz = SAMPLE_QUIZ)
   log(server.endQuiz(), 'endQuiz succeeds while running')
   const endedMsg = await back.wait('quiz_end')
   log(endedMsg.d.reason === 'instructor', 'quiz_end reports reason "instructor"')
+  log(
+    endedReasons[endedReasons.length - 1] === 'instructor',
+    'the session reports that the instructor ended it'
+  )
+  log(liveResult !== null, 'the finished run is saved as a result session')
+  const liveDetail = liveResult ? results.get(liveResult.id) : null
+  log(liveDetail !== null && liveDetail.questions.length === quiz.questions.length, 'the saved sheet has every question')
+  log(liveDetail !== null && liveDetail.students.length === 1, 'the saved sheet has the student of the run')
+  const liveAlice = liveDetail?.students.find((s) => s.studentName === 'RunAlice')
+  log(liveAlice !== undefined && liveAlice.totalPointsAwarded > 0, 'the saved sheet scores the answers of the run')
+  log(
+    liveDetail !== null && liveDetail.meta.endReason === 'instructor',
+    'the saved sheet remembers why the run ended'
+  )
   log(server.session.status() === 'ended', 'the session status becomes ended')
   back.send('answer', { qid: 'q2', value: false, seq: ++seq })
   log((await back.wait('error')).d.code === 'QUIZ_ENDED', 'a late answer returns QUIZ_ENDED')
@@ -958,6 +1022,7 @@ async function checkQuizRun(server: any, port: number, quiz: Quiz = SAMPLE_QUIZ)
   await bob.wait('quiz_start')
   const timerEnd = await bob.wait('quiz_end', 6000)
   log(timerEnd.d.reason === 'time', 'the server timer ends the quiz with reason "time"')
+  log(endedReasons[endedReasons.length - 1] === 'time', 'the session reports that the timer ended it')
   log(server.session.quizState().status === 'ended', 'the timer moves the status to ended')
 
   // --- step 3: lock and pause ---
@@ -1691,4 +1756,247 @@ async function checkReconnectPause(server: any, port: number, quiz: Quiz = SAMPL
   await sleep(150)
   server.session.heartbeatTimeoutMs = 10_000
   server.newSession()
+}
+
+/** A student of the results snapshot, shaped like the roster entry. */
+function resultStudent(id: string, name: string, finished: boolean): StudentInfo {
+  return {
+    id,
+    name,
+    status: 'connected',
+    paused: false,
+    pauseReason: null,
+    focusLosses: 0,
+    resumeRequested: false,
+    finished,
+    finishedAt: finished ? 2000 : null,
+    events: []
+  }
+}
+
+/** The quiz the results checks run against: one question of every type. */
+function resultQuiz(): StoredQuiz {
+  return {
+    id: 'quiz-1',
+    title: 'Results quiz',
+    timeLimitSec: 300,
+    createdAt: 0,
+    updatedAt: 0,
+    questions: validQuestions()
+  }
+}
+
+/** The questions of that quiz, in the shape the results store wants. */
+function resultQuestions(quiz: StoredQuiz): ResultQuestionInput[] {
+  return snapshotQuestions(quiz, null)
+}
+
+/**
+ * The results checks: the grading of every question type, the score sheet
+ * that comes out of it, the instructor's edits and the CRUD around it. All of
+ * it against a temp database, like the library checks.
+ */
+function checkResults(): void {
+  const dir = mkdtempSync(join(tmpdir(), 'quiz-results-'))
+  try {
+    const dbPath = join(dir, 'results.db')
+    const data = openAppData(dbPath)
+    try {
+      checkResultsStore(data.results, dbPath)
+    } finally {
+      data.quizzes.close()
+    }
+    checkResultsMigration(dir)
+  } finally {
+    rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 })
+  }
+}
+
+/** The results checks against one open store. */
+function checkResultsStore(store: ResultsStore, dbPath: string): void {
+  {
+    const quiz = resultQuiz()
+    const questions = resultQuestions(quiz)
+
+    log(questions.length === 8, 'the snapshot keeps a question of every type')
+
+    // --- the grader on its own, for every type ---
+    const byId = (id: string): ResultQuestionInput => questions.find((q) => q.id === id)!
+    const graded = (id: string, value: any) => gradeAnswer(byId(id), value)
+    log(graded('t-mcq', 'b').correct === true && graded('t-mcq', 'b').pointsAwarded === 1, 'an mcq answer is graded on the option id')
+    log(graded('t-mcq', 'a').correct === false, 'the wrong mcq option is wrong')
+    log(graded('t-tf', true).correct === true && graded('t-tf', false).correct === false, 'a true/false answer is graded on the boolean')
+    log(graded('t-id', ' paris ').correct === true, 'an identification answer ignores case and spaces')
+    log(graded('t-id', 'Kyoto').correct === false, 'the wrong identification answer is wrong')
+    log(
+      graded('t-fillin', ['x', 'y']).pointsAwarded === 2 && graded('t-fillin', ['x', 'y']).correct === true,
+      'a fill-in with every blank right gets every point'
+    )
+    log(
+      graded('t-fillin', ['x', 'nope']).pointsAwarded === 1 &&
+        graded('t-fillin', ['x', 'nope']).correct === false,
+      'a fill-in with one blank right gets half the points'
+    )
+    log(
+      graded('t-fillin', ['x', 'why']).correct === true,
+      'a fill-in accepts an alternative answer for a blank'
+    )
+    log(
+      graded('t-enum', ['red', 'blue']).pointsAwarded === 2,
+      'an enumeration with every item right gets every point'
+    )
+    log(graded('t-enum', ['red']).pointsAwarded === 1, 'an enumeration with one item right gets partial points')
+    log(graded('t-prob', '42.3').correct === true, 'a problem answer inside the tolerance is right')
+    log(graded('t-prob', '41').correct === false, 'a problem answer outside the tolerance is wrong')
+    log(graded('t-prob', '42.6').correct === false, 'the tolerance is not a free pass')
+    log(graded('t-match', { l1: 'r1', l2: 'r2' }).pointsAwarded === 3, 'a complete matching gets every point')
+    log(graded('t-match', { l1: 'r1' }).pointsAwarded === 1.5, 'a half-right matching gets half the points')
+    log(graded('t-conn', { p1: 'a1', p2: 'a2' }).pointsAwarded === 3, 'a complete connect gets every point')
+    log(graded('t-conn', { p1: 'a1' }).pointsAwarded === 1.5, 'a half-right connect gets half the points')
+    log(graded('t-mcq', null).correct === null, 'an answer that was never given is not graded')
+
+    // --- the snapshot of a finished session ---
+    const snapshot = buildSessionSnapshot({
+      quiz,
+      runtime: null,
+      quizTitle: 'Results quiz',
+      startedAt: 1000,
+      endedAt: 2000,
+      endReason: 'instructor',
+      students: [
+        resultStudent('s1', 'Alice', true),
+        resultStudent('s2', 'Bob', false),
+        resultStudent('s3', 'Carol', false)
+      ],
+      answers: {
+        s1: {
+          't-mcq': 'b',
+          't-tf': true,
+          't-id': ' paris ',
+          't-fillin': ['x', 'y'],
+          't-enum': ['red', 'blue'],
+          't-prob': '42.3',
+          't-match': { l1: 'r1', l2: 'r2' },
+          't-conn': { p1: 'a1', p2: 'a2' }
+        },
+        s2: {
+          't-mcq': 'a',
+          't-tf': false,
+          't-id': 'Kyoto',
+          't-fillin': ['x', 'nope'],
+          't-enum': ['red'],
+          't-prob': '41',
+          't-match': { l1: 'r1' },
+          't-conn': { p1: 'a1' }
+        }
+      }
+    })
+    log(snapshot.quizId === 'quiz-1' && snapshot.students.length === 3, 'the snapshot keeps the quiz and the students')
+
+    const meta = store.createFromSession(snapshot)
+    log(meta.quizTitle === 'Results quiz' && meta.totalPoints === 16, 'the session keeps its title and the quiz total')
+    log(meta.endReason === 'instructor' && meta.startedAt === 1000 && meta.endedAt === 2000, 'the session keeps when it ran')
+    log(store.list().length === 1 && store.list()[0].studentCount === 3, 'the results list shows the session with its three students')
+
+    const detail = store.get(meta.id)!
+    log(detail.questions.length === 8, 'the score sheet keeps every question')
+    log(detail.students.length === 3, 'the score sheet keeps every student')
+    log(detail.questions[0].key === 'b', 'the score sheet keeps the answer keys')
+
+    const alice = detail.students.find((s) => s.studentName === 'Alice')!
+    const bob = detail.students.find((s) => s.studentName === 'Bob')!
+    const carol = detail.students.find((s) => s.studentName === 'Carol')!
+    // The answers point at the snapshot rows, so the library id is looked up
+    // through the question list.
+    const rowIdOf = (libraryId: string): string =>
+      detail.questions.find((q) => q.questionId === libraryId)!.id
+    const answerOf = (student: typeof alice, libraryId: string) =>
+      student.answers.find((a) => a.questionId === rowIdOf(libraryId))!
+    log(alice.totalPointsAwarded === 16 && alice.totalPointsPossible === 16, 'a perfect student scores every point')
+    log(bob.totalPointsAwarded === 5, 'a partly wrong student gets the partial points')
+    log(
+      carol.totalPointsAwarded === 0 &&
+        carol.answers.length === 8 &&
+        carol.answers.every((a) => a.value === null && a.correct === null),
+      'a student who never answered has a row for every question but no mark'
+    )
+    log(answerOf(bob, 't-fillin').pointsAwarded === 1, 'the score sheet shows the partial points of a fill-in')
+    log(answerOf(bob, 't-match').pointsAwarded === 1.5, 'the score sheet shows the partial points of a matching')
+    log(answerOf(alice, 't-prob').correct === true, 'the score sheet marks a tolerated answer as right')
+    log(answerOf(bob, 't-prob').correct === false, 'the score sheet marks a wrong answer as wrong')
+
+    // --- the instructor changes a mark ---
+    const edited = answerOf(bob, 't-fillin')
+    const update = store.updateAnswer({
+      answerId: edited.id,
+      pointsAwarded: 2,
+      correct: true,
+      notes: 'good idea, wrong word'
+    })
+    log(update.ok, 'an instructor can change a mark')
+    const after = store.get(meta.id)!
+    const bobAfter = after.students.find((s) => s.studentName === 'Bob')!
+    log(bobAfter.totalPointsAwarded === 6, 'the student total follows the changed mark')
+    const changed = bobAfter.answers.find((a) => a.id === edited.id)!
+    log(changed.autoGraded === false, 'a changed mark is no longer auto-graded')
+    log(changed.notes === 'good idea, wrong word', 'the note of a changed mark is kept')
+    log(changed.correct === true && changed.pointsAwarded === 2, 'the mark and the points of the change are stored')
+
+    log(store.updateAnswer({ answerId: edited.id, pointsAwarded: 99 }).ok, 'a mark beyond the question is accepted')
+    const clamped = store.get(meta.id)!.students
+      .find((s) => s.studentName === 'Bob')!
+      .answers.find((a) => a.id === edited.id)!
+    log(clamped.pointsAwarded === 2, 'a mark beyond the question is clamped to the question')
+    log(
+      store.updateAnswer({ answerId: 'no-such-answer', pointsAwarded: 1 }).ok === false,
+      'changing an answer that is not there is refused'
+    )
+    log(
+      store.updateAnswer({ answerId: edited.id, pointsAwarded: Number.NaN }).ok === false,
+      'a mark that is not a number is refused'
+    )
+
+    // --- delete ---
+    log(store.delete(meta.id), 'a session can be deleted')
+    log(store.get(meta.id) === null, 'the deleted session is gone')
+    log(store.list().length === 0, 'the results list is empty again')
+    log(store.delete(meta.id) === false, 'deleting twice reports false')
+
+    // The cascade really happened: the rows are gone from the file.
+    const raw = new Database(dbPath)
+    const left = raw
+      .prepare(
+        `SELECT (SELECT COUNT(*) FROM result_students) +
+                (SELECT COUNT(*) FROM result_questions) +
+                (SELECT COUNT(*) FROM result_answers) AS n`
+      )
+      .get() as { n: number }
+    log(left.n === 0, 'deleting a session takes its students, questions and answers with it')
+    raw.close()
+  }
+}
+
+/**
+ * An existing database (schema v2) upgrades to v3 without losing anything:
+ * the library is still there and the results tables are created.
+ */
+function checkResultsMigration(dir: string): void {
+  const path = join(dir, 'legacy.db')
+  const first = openAppData(path)
+  first.quizzes.create('Legacy quiz')
+  first.quizzes.close()
+
+  // Turn it back into a v2 database: no results tables, user_version 2.
+  const raw = new Database(path)
+  raw.pragma('foreign_keys = OFF')
+  raw.exec('DROP TABLE result_answers; DROP TABLE result_students; DROP TABLE result_questions; DROP TABLE result_sessions;')
+  raw.pragma('user_version = 2')
+  raw.close()
+
+  const upgraded = openAppData(path)
+  const quizzes = upgraded.quizzes.list()
+  log(quizzes.some((q) => q.title === 'Legacy quiz'), 'an existing database keeps its quizzes after the upgrade')
+  log(upgraded.results.list().length === 0, 'the upgraded database starts with no results')
+  log(upgraded.results.get('no-such-session') === null, 'an unknown session is unknown to the results store')
+  upgraded.quizzes.close()
 }

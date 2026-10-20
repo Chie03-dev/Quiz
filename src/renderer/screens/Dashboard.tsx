@@ -219,10 +219,12 @@ function RosterRow({
  */
 export function Dashboard({
   state,
-  onOpenLibrary
+  onOpenLibrary,
+  onOpenResults
 }: {
   state: StateSnapshot
   onOpenLibrary: () => void
+  onOpenResults: () => void
 }): React.JSX.Element {
   const { server, students } = state
   const { pin, port, selectedIp, addresses } = server
@@ -363,6 +365,14 @@ export function Dashboard({
                 <StartQuizButton connectedCount={connected} quizId={selectedQuiz} onError={setStartError} />
                 <Button variant="secondary" icon={<Icon name="quizzes" />} onClick={onOpenLibrary}>
                   Quiz library
+                </Button>
+                <Button
+                  variant="secondary"
+                  icon={<Icon name="results" />}
+                  testId="open-results"
+                  onClick={onOpenResults}
+                >
+                  Results
                 </Button>
                 <Button
                   variant="secondary"

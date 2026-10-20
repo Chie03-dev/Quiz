@@ -5,12 +5,15 @@ import { Dashboard } from './screens/Dashboard'
 import { LiveSession } from './screens/LiveSession'
 import { QuizLibrary } from './screens/QuizLibrary'
 import { QuizEditor } from './screens/QuizEditor'
+import { ResultDetail, Results } from './screens/Results'
 
 /** Where the instructor is. The editor sits on top of the library. */
 type View =
   | { name: 'dashboard' }
   | { name: 'library' }
   | { name: 'editor'; quizId: string; importReport?: ImportQuizReport | null }
+  | { name: 'results' }
+  | { name: 'result'; sessionId: string }
 
 export function App(): React.JSX.Element {
   const [state, setState] = useState<StateSnapshot | null>(null)
@@ -49,29 +52,47 @@ export function App(): React.JSX.Element {
   }
 
   // While a quiz runs, the live session is the only thing on screen.
-  if (state.quiz.status !== 'lobby') {
+  if (state.quiz.status === 'running') {
     return (
       <AppShell
         section="live"
         onNavigate={() => undefined}
-        liveBadge={state.quiz.status === 'running' ? 'live' : 'ended'}
-        title={state.quiz.status === 'running' ? (state.quiz.title ?? 'Live session') : 'Quiz ended'}
-        subtitle={
-          state.quiz.status === 'running'
-            ? 'The session is live. Counts and progress only.'
-            : 'The session has finished.'
-        }
+        liveBadge="live"
+        title={state.quiz.title ?? 'Live session'}
+        subtitle="The session is live. Counts and progress only."
       >
         <LiveSession state={state} />
       </AppShell>
     )
   }
 
+  // The results stay reachable after the quiz ended: the finished session
+  // keeps its own screen until the instructor walks away from it.
+  const inResults = view.name === 'results' || view.name === 'result'
+  if (state.quiz.status === 'ended' && !inResults) {
+    return (
+      <AppShell
+        section="live"
+        onNavigate={() => undefined}
+        liveBadge="ended"
+        title="Quiz ended"
+        subtitle="The session has finished."
+      >
+        <LiveSession state={state} onOpenResults={() => setView({ name: 'results' })} />
+      </AppShell>
+    )
+  }
+
   const section: ShellSection =
-    view.name === 'library' || view.name === 'editor' ? 'quizzes' : 'dashboard'
+    view.name === 'library' || view.name === 'editor'
+      ? 'quizzes'
+      : view.name === 'results' || view.name === 'result'
+        ? 'results'
+        : 'dashboard'
 
   const navigate = (next: ShellSection): void => {
     if (next === 'quizzes') setView({ name: 'library' })
+    else if (next === 'results') setView({ name: 'results' })
     else setView({ name: 'dashboard' })
   }
 
@@ -98,8 +119,26 @@ export function App(): React.JSX.Element {
         onOpen={(quizId) => setView({ name: 'editor', quizId })}
       />
     )
+  } else if (view.name === 'results') {
+    title = 'Results'
+    subtitle = 'Every finished session, with its score sheet.'
+    content = (
+      <Results onOpen={(sessionId) => setView({ name: 'result', sessionId })} onBack={() => setView({ name: 'dashboard' })} />
+    )
+  } else if (view.name === 'result') {
+    title = 'Score sheet'
+    subtitle = 'Where every student answered what.'
+    content = (
+      <ResultDetail sessionId={view.sessionId} onBack={() => setView({ name: 'results' })} />
+    )
   } else {
-    content = <Dashboard state={state} onOpenLibrary={() => setView({ name: 'library' })} />
+    content = (
+      <Dashboard
+        state={state}
+        onOpenLibrary={() => setView({ name: 'library' })}
+        onOpenResults={() => setView({ name: 'results' })}
+      />
+    )
   }
 
   return (

@@ -9,7 +9,11 @@ import type {
   MemeSavePayload,
   MemeSaveResult,
   QuizMeta,
+  ResultOperationResult,
+  ResultSessionDetail,
+  ResultSessionMeta,
   SaveQuizResult,
+  SaveResultAnswerInput,
   StartQuizResult,
   StateSnapshot,
   StoredQuiz
@@ -64,6 +68,20 @@ const api = {
   /** Clears the meme overlay on the listed students. */
   hideMeme: (studentIds?: string[]): Promise<MemePopResult> =>
     ipcRenderer.invoke('server:hideMeme', studentIds),
+  // --- results: the score sheets of finished sessions ---
+  /** Every saved session, newest first. */
+  listResults: (): Promise<ResultSessionMeta[]> => ipcRenderer.invoke('results:list'),
+  /** One session with its questions, students and answers. */
+  getResult: (id: string): Promise<ResultSessionDetail | null> =>
+    ipcRenderer.invoke('results:get', id),
+  /** Deletes a session and everything that belongs to it. */
+  deleteResult: (id: string): Promise<boolean> => ipcRenderer.invoke('results:delete', id),
+  /** Changes the points, the correct flag or the note of one answer. */
+  updateResultAnswer: (input: SaveResultAnswerInput): Promise<ResultOperationResult> =>
+    ipcRenderer.invoke('results:updateAnswer', input),
+  /** Saves the running session as it stands. */
+  saveCurrentResult: (): Promise<ResultSessionMeta | null> =>
+    ipcRenderer.invoke('results:createFromCurrent'),
   onStateChanged: (cb: (state: StateSnapshot) => void): (() => void) => {
     const listener = (_e: unknown, state: StateSnapshot): void => cb(state)
     ipcRenderer.on('state:changed', listener)

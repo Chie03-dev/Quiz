@@ -11,7 +11,11 @@ import type {
   MemeSaveResult,
   MemeState,
   QuizState,
+  ResultEndReason,
+  ResultOperationResult,
+  ResultSessionMeta,
   SaveQuizResult,
+  SaveResultAnswerInput,
   ServerInfo,
   StartQuizResult,
   StateSnapshot,
@@ -21,7 +25,8 @@ import type {
 import { MEME_DURATION_MS } from '../shared/types'
 import { startServer, type QuizServer } from './server'
 import { checkFirewallRules, installFirewallRules } from './firewall'
-import { openAppData, runtimeQuizForStart, type MemeStore, type QuizLibrary } from './db'
+import { openAppData, runtimeQuizForStart, type MemeStore, type QuizLibrary, type ResultsStore } from './db'
+import { buildSessionSnapshot } from './results/session'
 import { MemeAssets, MEME_DIR_NAME, MEME_MAX_BYTES, buildPopPayload, seedSampleMeme } from './memes/store'
 import { parseQuizJson, serializeQuiz } from './quizFormat'
 import { describeError, importQuizFile } from './import'
@@ -30,9 +35,16 @@ let win: BrowserWindow | null = null
 let server: QuizServer | null = null
 let library: QuizLibrary | null = null
 let memeStore: MemeStore | null = null
+let resultsStore: ResultsStore | null = null
 let memeAssets: MemeAssets | null = null
 let latestStudents: StudentInfo[] = []
 let latestServer: ServerInfo | null = null
+/** The library quiz of the running session, kept for the results snapshot. */
+let activeQuiz: StoredQuiz | null = null
+/** When the running session started. */
+let activeQuizStartedAt: number | null = null
+/** The result session of the current run, once it has been saved. */
+let savedResultId: string | null = null
 let latestQuiz: QuizState = {
   status: 'lobby',
   title: null,
@@ -63,6 +75,39 @@ const snapshot = (): StateSnapshot | null =>
 function pushState(): void {
   const state = snapshot()
   if (state && win && !win.isDestroyed()) win.webContents.send('state:changed', state)
+}
+
+/**
+ * Snapshots the session into the results store. Called for every way a quiz
+ * can end (the instructor's button and the timer) and by the manual save.
+ * There is one result session per run: a new snapshot replaces the old one.
+ */
+function persistResults(reason: ResultEndReason | null): ResultSessionMeta | null {
+  if (!server || !resultsStore) return null
+  const students = server.session.list()
+  if (students.length === 0) return null
+
+  const snapshot = buildSessionSnapshot({
+    quiz: activeQuiz,
+    runtime: server.session.quizSnapshot(),
+    quizTitle: activeQuiz?.title ?? server.session.quizState().title ?? 'Quiz',
+    startedAt: activeQuizStartedAt,
+    endedAt: Date.now(),
+    endReason: reason,
+    students,
+    answers: server.session.answersSnapshot()
+  })
+  if (snapshot.questions.length === 0) return null
+
+  // One result session per run: the newer snapshot replaces the older.
+  if (savedResultId) {
+    resultsStore.delete(savedResultId)
+    savedResultId = null
+  }
+
+  const meta = resultsStore.createFromSession(snapshot)
+  savedResultId = meta.id
+  return meta
 }
 
 async function createWindow(): Promise<void> {
@@ -108,6 +153,9 @@ async function boot(): Promise<void> {
       latestLockMode = lockMode
       pushState()
     },
+    onQuizEnded: (reason) => {
+      persistResults(reason)
+    },
     memes: memeAssets ?? undefined
   })
   await createWindow()
@@ -129,6 +177,10 @@ function registerIpc(): void {
     latestMeme = null
     if (memeTimer) clearTimeout(memeTimer)
     memeTimer = null
+    // A new run has its own result session.
+    activeQuiz = null
+    activeQuizStartedAt = null
+    savedResultId = null
     pushState()
     return snapshot()
   })
@@ -142,6 +194,11 @@ function registerIpc(): void {
     if (!server.startQuiz(attempt.quiz)) {
       return { ok: false, message: 'The quiz could not start. Is at least one student in the lobby?' }
     }
+    // The library quiz is kept for the results snapshot: it carries the
+    // full answer keys, not just the flattened ones the run needs.
+    activeQuiz = library.get(quizId)
+    activeQuizStartedAt = Date.now()
+    savedResultId = null
     latestQuiz = server.session.quizState()
     pushState()
     return { ok: true }
@@ -441,6 +498,47 @@ function registerIpc(): void {
     pushState()
     return { ok: true, sent }
   })
+
+  // --- results: the score sheets of finished sessions ---
+
+  ipcMain.handle('results:list', () => resultsStore?.list() ?? [])
+
+  ipcMain.handle('results:get', (_event, id: unknown) => {
+    if (typeof id !== 'string' || !resultsStore) return null
+    return resultsStore.get(id)
+  })
+
+  ipcMain.handle('results:delete', (_event, id: unknown) => {
+    if (typeof id !== 'string' || !resultsStore) return false
+    const deleted = resultsStore.delete(id)
+    if (deleted && id === savedResultId) savedResultId = null
+    return deleted
+  })
+
+  ipcMain.handle('results:updateAnswer', (_event, input: unknown): ResultOperationResult => {
+    if (!resultsStore) return { ok: false, error: 'The results are not open.' }
+    if (!input || typeof input !== 'object') return { ok: false, error: 'Invalid answer update.' }
+    const { answerId, pointsAwarded, correct, notes } = input as Partial<SaveResultAnswerInput>
+    if (typeof answerId !== 'string') return { ok: false, error: 'Invalid answer id.' }
+    if (typeof pointsAwarded !== 'number' || !Number.isFinite(pointsAwarded)) {
+      return { ok: false, error: 'The points must be a number.' }
+    }
+    if (correct !== undefined && correct !== null && typeof correct !== 'boolean') {
+      return { ok: false, error: 'The correct flag must be true, false or null.' }
+    }
+    if (notes !== undefined && notes !== null && typeof notes !== 'string') {
+      return { ok: false, error: 'The note must be text.' }
+    }
+    return resultsStore.updateAnswer({ answerId, pointsAwarded, correct, notes })
+  })
+
+  // Saves the running session as it stands; the end of the quiz saves again.
+  ipcMain.handle('results:createFromCurrent', () => {
+    if (!server || !resultsStore) return null
+    const state = server.session.quizState()
+    if (state.status === 'lobby') return null
+    return persistResults(state.endReason)
+  })
 }
 
 /** The student ids of a targeted pop; undefined means every student. */
@@ -476,6 +574,7 @@ app.whenReady().then(async () => {
   const data = openAppData(join(userData, 'quiz-library.db'))
   library = data.quizzes
   memeStore = data.memes
+  resultsStore = data.results
   memeAssets = new MemeAssets(memeStore, join(userData, MEME_DIR_NAME))
   memeAssets.ensure()
   // The sample meme is seeded on a brand-new profile only, next to the
@@ -502,5 +601,6 @@ app.on('before-quit', () => {
   library?.close()
   library = null
   memeStore = null
+  resultsStore = null
   memeAssets = null
 })

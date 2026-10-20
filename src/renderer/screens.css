@@ -872,3 +872,307 @@
   box-shadow: var(--shadow-2);
 }
 
+
+/* --- results: the score sheet ------------------------------------------- */
+
+.res {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+}
+
+.res__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.res__row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-4);
+  border: 1px solid var(--ui-border);
+  border-radius: var(--r-md);
+  background: var(--ui-surface);
+}
+
+.res__row:hover {
+  border-color: var(--ui-border-strong);
+}
+
+.res__title {
+  flex: 1;
+  min-width: 0;
+  font-weight: var(--fw-medium);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.res__meta {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex: 0 0 auto;
+}
+
+.res__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex: 0 0 auto;
+}
+
+.res__summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-5);
+  color: var(--ui-text-muted);
+  font-size: var(--fs-sm);
+}
+
+.res__summary strong {
+  color: var(--ui-text);
+  font-size: var(--fs-base);
+}
+
+.res__columns {
+  display: grid;
+  grid-template-columns: 1fr 340px;
+  gap: var(--sp-4);
+  align-items: start;
+}
+
+@media (max-width: 1200px) {
+  .res__columns {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* --- question overview ------------------------------------------------- */
+
+.res__questions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.res__question {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: var(--sp-3);
+  border: 1px solid var(--ui-border);
+  border-radius: var(--r-md);
+  background: var(--ui-surface-2);
+}
+
+.res__question-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.res__question-body {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.res__question-meta {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  color: var(--ui-text-muted);
+  font-size: var(--fs-sm);
+}
+
+.res__question-key strong {
+  color: var(--ui-text);
+}
+
+/* --- the score sheet --------------------------------------------------- */
+
+.res__sheet-scroll {
+  overflow-x: auto;
+}
+
+.res__sheet {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: var(--fs-sm);
+}
+
+.res__sheet th,
+.res__sheet td {
+  padding: var(--sp-1);
+  text-align: left;
+  vertical-align: top;
+}
+
+.res__sheet thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: var(--sp-2);
+  background: var(--ui-surface);
+  border-bottom: 1px solid var(--ui-border);
+  color: var(--ui-text-muted);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-bold);
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.res__sheet-student {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  min-width: 140px;
+  max-width: 200px;
+  padding: var(--sp-2) var(--sp-3) !important;
+  background: var(--ui-surface);
+  border-right: 1px solid var(--ui-border);
+  font-weight: var(--fw-medium);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.res__sheet tbody tr:hover .res__sheet-student {
+  background: var(--ui-surface-2);
+}
+
+.res__sheet-flag {
+  margin-left: var(--sp-2);
+  color: var(--ui-ok);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+}
+
+.res__sheet-q {
+  display: block;
+}
+
+.res__sheet-p {
+  display: block;
+  color: var(--ui-text-dim);
+  font-weight: var(--fw-medium);
+  letter-spacing: 0;
+}
+
+.res__sheet-total {
+  padding: var(--sp-2) var(--sp-3) !important;
+  font-family: var(--font-mono);
+  white-space: nowrap;
+}
+
+/* --- one answer cell --------------------------------------------------- */
+
+.res__cell {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  width: 100%;
+  min-width: 120px;
+  max-width: 220px;
+  padding: var(--sp-2);
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  background: var(--ui-surface-2);
+  color: var(--ui-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.res__cell:hover {
+  border-color: var(--ui-border-strong);
+}
+
+.res__cell.is-selected {
+  border-color: var(--ui-accent);
+  box-shadow: 0 0 0 1px var(--ui-accent);
+}
+
+.res__cell-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+  border-radius: var(--r-full);
+  background: var(--ui-surface-3);
+  color: var(--ui-text-dim);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-bold);
+}
+
+.res__cell--ok .res__cell-mark {
+  background: var(--ui-ok-soft);
+  color: var(--ui-ok);
+}
+
+.res__cell--bad .res__cell-mark {
+  background: var(--ui-danger-soft);
+  color: var(--ui-danger);
+}
+
+.res__cell--partial .res__cell-mark {
+  background: var(--ui-amber-soft);
+  color: var(--ui-amber);
+}
+
+.res__cell-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.res__cell-points {
+  flex: 0 0 auto;
+  color: var(--ui-text-dim);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+}
+
+/* --- the answer editor ------------------------------------------------- */
+
+.res__editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.res__editor-body {
+  color: var(--ui-text);
+  font-size: var(--fs-sm);
+}
+
+.res__editor-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+
+.res__editor-label {
+  color: var(--ui-text-muted);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-bold);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.res__editor-value {
+  color: var(--ui-text);
+  font-size: var(--fs-sm);
+  word-break: break-word;
+}

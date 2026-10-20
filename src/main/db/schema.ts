@@ -5,7 +5,7 @@ import type { Database } from 'better-sqlite3'
  * whenever a table changes; migrations run in order inside a transaction so
  * an existing library upgrades without losing data.
  */
-export const SCHEMA_VERSION = 2
+export const SCHEMA_VERSION = 3
 
 const MIGRATIONS: string[] = [
   // 1: the step-4 quiz library.
@@ -44,6 +44,56 @@ const MIGRATIONS: string[] = [
     thumb TEXT NOT NULL,
     created_at INTEGER NOT NULL
   );
+  `,
+  // 3: the results of finished sessions (the instructor's score sheet).
+  `
+  CREATE TABLE result_sessions (
+    id TEXT PRIMARY KEY,
+    quiz_id TEXT,
+    quiz_title TEXT NOT NULL,
+    started_at INTEGER,
+    ended_at INTEGER NOT NULL,
+    end_reason TEXT,
+    total_points INTEGER NOT NULL,
+    created_at INTEGER NOT NULL
+  );
+  CREATE TABLE result_students (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL REFERENCES result_sessions(id) ON DELETE CASCADE,
+    student_name TEXT NOT NULL,
+    student_key TEXT,
+    finished INTEGER NOT NULL DEFAULT 0,
+    total_points_awarded REAL NOT NULL DEFAULT 0,
+    total_points_possible INTEGER NOT NULL DEFAULT 0
+  );
+  CREATE TABLE result_questions (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL REFERENCES result_sessions(id) ON DELETE CASCADE,
+    question_id TEXT,
+    position INTEGER NOT NULL,
+    type TEXT NOT NULL,
+    body TEXT NOT NULL,
+    points INTEGER NOT NULL,
+    data_json TEXT NOT NULL,
+    key_json TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  );
+  CREATE TABLE result_answers (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL REFERENCES result_sessions(id) ON DELETE CASCADE,
+    student_id TEXT NOT NULL REFERENCES result_students(id) ON DELETE CASCADE,
+    question_id TEXT NOT NULL REFERENCES result_questions(id) ON DELETE CASCADE,
+    value_json TEXT,
+    correct INTEGER,
+    points_awarded REAL NOT NULL DEFAULT 0,
+    points_possible INTEGER NOT NULL,
+    auto_graded INTEGER NOT NULL DEFAULT 1,
+    notes TEXT
+  );
+  CREATE INDEX idx_result_students_session ON result_students(session_id);
+  CREATE INDEX idx_result_questions_session ON result_questions(session_id);
+  CREATE INDEX idx_result_answers_session ON result_answers(session_id);
+  CREATE INDEX idx_result_answers_student_q ON result_answers(student_id, question_id);
   `
 ]
 

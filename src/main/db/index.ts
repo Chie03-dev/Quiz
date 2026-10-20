@@ -6,10 +6,12 @@ import { quizStartError } from '../../shared/validation'
 import { toRuntimeQuiz } from '../quizFormat'
 import { QuizLibrary } from './library'
 import { MemeStore } from './memes'
+import { ResultsStore } from './results'
 import { migrate } from './schema'
 
 export { QuizLibrary } from './library'
 export { MemeStore } from './memes'
+export { ResultsStore } from './results'
 export { SCHEMA_VERSION } from './schema'
 
 /**
@@ -31,12 +33,14 @@ function nativeOptions(): { nativeBinding?: string } {
 }
 
 /**
- * The app's own data: the quiz library and the meme tray, both on one
- * database connection so they never fight over the same SQLite file.
+ * The app's own data: the quiz library, the meme tray and the results of
+ * finished sessions, all on one database connection so they never fight over
+ * the same SQLite file.
  */
 export interface AppData {
   quizzes: QuizLibrary
   memes: MemeStore
+  results: ResultsStore
   /** True when the database file was brand new: the sample data is seeded then. */
   fresh: boolean
 }
@@ -52,8 +56,9 @@ export function openAppData(filePath: string): AppData {
   const fresh = migrate(db)
   const quizzes = new QuizLibrary(db)
   const memes = new MemeStore(db)
+  const results = new ResultsStore(db)
   if (fresh) quizzes.seedSampleQuiz()
-  return { quizzes, memes, fresh }
+  return { quizzes, memes, results, fresh }
 }
 
 /** The quiz library alone; kept for the test scripts and older call sites. */

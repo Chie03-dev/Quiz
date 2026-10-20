@@ -2,7 +2,7 @@ import type { ReactNode } from 'react'
 import { Icon, type IconName } from './Icon'
 
 /** The screens the sidebar can show. */
-export type ShellSection = 'dashboard' | 'quizzes' | 'live'
+export type ShellSection = 'dashboard' | 'quizzes' | 'results' | 'live'
 
 interface NavEntry {
   id: ShellSection
@@ -13,6 +13,7 @@ interface NavEntry {
 const NAV: NavEntry[] = [
   { id: 'dashboard', label: 'Dashboard', icon: 'dashboard' },
   { id: 'quizzes', label: 'Quizzes', icon: 'quizzes' },
+  { id: 'results', label: 'Results', icon: 'results' },
   { id: 'live', label: 'Live session', icon: 'live' }
 ]
 

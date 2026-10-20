@@ -277,6 +277,92 @@ export type ServerErrorCode =
   | 'PAUSED'
   | 'FINISHED'
 
+// --- results: the persisted score sheet of a finished session ---
+
+/** Why a session ended; the same reasons the phones are told about. */
+export type ResultEndReason = 'time' | 'instructor'
+
+/** One saved session in the results list. */
+export interface ResultSessionMeta {
+  id: string
+  /** The library quiz it came from; null when that quiz is gone. */
+  quizId: string | null
+  quizTitle: string
+  startedAt: number | null
+  endedAt: number
+  endReason: ResultEndReason | null
+  /** The points the quiz was worth in total. */
+  totalPoints: number
+  studentCount: number
+  createdAt: number
+}
+
+/**
+ * A question as it was asked, snapshotted with its answer key. The snapshot
+ * keeps the score sheet readable even after the library question is edited.
+ */
+export interface ResultQuestionDetail {
+  id: string
+  sessionId: string
+  /** The library question id; null when the question was created ad hoc. */
+  questionId: string | null
+  position: number
+  type: QuestionType
+  body: string
+  points: number
+  data: QuestionData
+  key: StoredKey
+}
+
+/** One student's answer to one question. */
+export interface ResultAnswerDetail {
+  id: string
+  sessionId: string
+  studentId: string
+  questionId: string
+  /** The answer as the student sent it; null when they never answered. */
+  value: AnswerValue | null
+  /** null when the answer was never graded (no answer, or no key). */
+  correct: boolean | null
+  pointsAwarded: number
+  pointsPossible: number
+  /** False once the instructor has adjusted the answer by hand. */
+  autoGraded: boolean
+  notes: string | null
+}
+
+/** One student in a session, with all of their answers. */
+export interface ResultStudentDetail {
+  id: string
+  sessionId: string
+  studentName: string
+  /** The session student id this row came from. */
+  studentKey: string | null
+  finished: boolean
+  totalPointsAwarded: number
+  totalPointsPossible: number
+  answers: ResultAnswerDetail[]
+}
+
+/** A whole session: the questions, the students and every answer. */
+export interface ResultSessionDetail {
+  meta: ResultSessionMeta
+  questions: ResultQuestionDetail[]
+  students: ResultStudentDetail[]
+}
+
+/** What the instructor changes about one answer. */
+export interface SaveResultAnswerInput {
+  answerId: string
+  pointsAwarded: number
+  /** null marks the answer as ungraded; omitted leaves it as it is. */
+  correct?: boolean | null
+  notes?: string | null
+}
+
+/** The outcome of a write to the results store. */
+export type ResultOperationResult = { ok: true } | { ok: false; error: string }
+
 // --- memes: the instructor's jumpscare tray (see docs/protocol.md, "Meme pop") ---
 
 /** How long a popped meme stays on a student's screen. */

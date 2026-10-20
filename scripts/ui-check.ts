@@ -102,6 +102,29 @@ const isDisabled = (cdp: Cdp, testId: string): Promise<boolean> =>
     return !!el && !!el.disabled
   })()`)
 
+/** Clicks the first element whose data-testid starts with the prefix. */
+const clickByTestIdPrefix = (cdp: Cdp, prefix: string): Promise<boolean> =>
+  cdp.eval<boolean>(`(() => {
+    const el = document.querySelector('[data-testid^=' + ${JSON.stringify(prefix)} + ']')
+    if (!el) return false
+    el.click()
+    return true
+  })()`)
+
+/**
+ * Sets the value of an input the way a person would, so React notices the
+ * change: the native setter plus an input event.
+ */
+const setInput = (cdp: Cdp, testId: string, value: string): Promise<boolean> =>
+  cdp.eval<boolean>(`(() => {
+    const el = document.querySelector('[data-testid=${JSON.stringify(testId)}]')
+    if (!el) return false
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set
+    setter.call(el, ${JSON.stringify(value)})
+    el.dispatchEvent(new Event('input', { bubbles: true }))
+    return true
+  })()`)
+
 /**
  * Starts a fake student against the running app.
  * tsx is invoked directly (not via npm) so no shell is needed.
@@ -364,7 +387,70 @@ async function main(): Promise<void> {
       'the ended view shows counts only, never scores'
     )
 
+    // --- the results screen ---
+    log(await hasTestId(cdp, 'nav-results'), 'the sidebar has a Results entry')
+    log(await hasTestId(cdp, 'open-results'), 'the ended view offers the results')
     log(await clickByTestId(cdp, 'new-session'), 'New session is available on the ended view')
+    log(await clickByTestId(cdp, 'nav-results'), 'the results list is reachable from the sidebar')
+    const sessionId = await cdp.eval<string | null>(
+      `(() => {
+         const el = document.querySelector('[data-testid^="result-"]')
+         return el ? el.getAttribute('data-testid').replace(/^result-/, '') : null
+       })()`
+    )
+    log(!!sessionId, 'the results list shows the finished session')
+    const rows = await cdp.eval<number>(`document.querySelectorAll('[data-testid^="result-"]').length`)
+    log(rows >= 1, `the results list shows the sessions (${rows})`)
+    log(await clickByTestId(cdp, `open-result-${sessionId}`), 'the session opens')
+    // The sheet is loaded over IPC, so the cells show up a moment later.
+    const cells = await waitFor(async () => {
+      const n = await cdp.eval<number>(`document.querySelectorAll('[data-testid^="cell-"]').length`)
+      return n > 0 ? n : null
+    })
+    log(
+      cells === ended.students.length * totalQuestions,
+      `the score sheet has a cell for every student and question (${cells})`
+    )
+    const listedQuestions = await cdp.eval<number>(`document.querySelectorAll('.res__question').length`)
+    log(listedQuestions === totalQuestions, `the question list shows every question (${listedQuestions})`)
+
+    // --- marking an answer by hand ---
+    log(await clickByTestIdPrefix(cdp, 'cell-'), 'a cell of the score sheet was clicked')
+    log(await hasTestId(cdp, 'answer-points'), 'the editor of the answer opened')
+    const studentId = await cdp.eval<string | null>(
+      `(() => {
+         const el = document.querySelector('[data-testid^="student-"]')
+         return el ? el.getAttribute('data-testid').replace(/^student-/, '') : null
+       })()`
+    )
+    const totalBefore = studentId ? await textByTestId(cdp, `total-${studentId}`) : null
+    await setInput(cdp, 'answer-points', '1')
+    log(await clickByTestId(cdp, 'answer-save'), 'the mark was saved')
+    const totalAfter = studentId
+      ? await waitFor(async () => {
+          const now = await textByTestId(cdp, `total-${studentId}`)
+          return now && now !== totalBefore ? now : null
+        })
+      : null
+    log(
+      !!totalAfter && totalAfter !== totalBefore,
+      `the student total follows the changed mark (${totalBefore} -> ${totalAfter})`
+    )
+
+    // --- deleting the session ---
+    log(await clickByTestId(cdp, 'nav-results'), 'the results list is reachable from the sidebar')
+    log(await clickByTestId(cdp, `delete-result-${sessionId}`), 'the delete button was found and clicked')
+    log(
+      await clickByTestId(cdp, `delete-result-confirm-${sessionId}`),
+      'the delete confirmation was clicked'
+    )
+    const gone = await waitFor(async () => {
+      const still = await cdp.eval<boolean>(
+        `!!document.querySelector('[data-testid="result-${sessionId}"]')`
+      )
+      return still === false ? { still } : null
+    })
+    log(gone.still === false, 'the deleted session leaves the results list')
 
     console.log('done')
   } finally {

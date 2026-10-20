@@ -67,7 +67,7 @@ export function toRuntimeQuiz(quiz: StoredQuiz): Quiz {
 }
 
 /** The stored data fields of a flat runtime question. */
-function runtimeData(q: QuizQuestion): QuestionData {
+export function runtimeData(q: QuizQuestion): QuestionData {
   const out: QuestionData = {}
   if (q.options) out.options = q.options
   if (q.blanks !== undefined) out.blanks = q.blanks
