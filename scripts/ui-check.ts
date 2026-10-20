@@ -392,11 +392,15 @@ async function main(): Promise<void> {
     log(await hasTestId(cdp, 'open-results'), 'the ended view offers the results')
     log(await clickByTestId(cdp, 'new-session'), 'New session is available on the ended view')
     log(await clickByTestId(cdp, 'nav-results'), 'the results list is reachable from the sidebar')
-    const sessionId = await cdp.eval<string | null>(
-      `(() => {
-         const el = document.querySelector('[data-testid^="result-"]')
-         return el ? el.getAttribute('data-testid').replace(/^result-/, '') : null
-       })()`
+    // The list arrives over IPC, so it is not on screen the instant the
+    // screen opens.
+    const sessionId = await waitFor(async () =>
+      cdp.eval<string | null>(
+        `(() => {
+           const el = document.querySelector('[data-testid^="result-"]')
+           return el ? el.getAttribute('data-testid').replace(/^result-/, '') : null
+         })()`
+      )
     )
     log(!!sessionId, 'the results list shows the finished session')
     const rows = await cdp.eval<number>(`document.querySelectorAll('[data-testid^="result-"]').length`)

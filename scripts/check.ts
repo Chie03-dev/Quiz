@@ -22,7 +22,7 @@ import { buildSessionSnapshot, snapshotQuestions } from '../src/main/results/ses
 import { buildPopPayload, MemeAssets, MEME_FILE_PATTERN, seedSampleMeme } from '../src/main/memes/store'
 import { parseQuizJson, serializeQuiz, toRuntimeQuiz } from '../src/main/quizFormat'
 import { quizStartError, validateQuestion } from '../src/shared/validation'
-import { buildCheckArgs, buildInstallCommand, CHECK_OPTIONS, classifyCheckOutput, encodePowerShell, FIREWALL_RULES, FIREWALL_PROFILE } from '../src/main/firewall'
+import { buildCheckArgs, buildCheckScript, buildInstallCommand, buildInstallCommands, CHECK_OPTIONS, classifyCheckOutput, encodePowerShell, FIREWALL_RULES, FIREWALL_PROFILE, parseCheckOutput } from '../src/main/firewall'
 import { FIRST_PORT, MAX_PORT, PORT_RANGE, type QuestionType, type Quiz, type ResultSessionMeta, type StoredQuestion, type StoredQuiz, type StudentInfo } from '../src/shared/types'
 
 /** The reasons the sessions of the live server ended, in order. */
@@ -165,6 +165,79 @@ function checkFirewallCommands(): void {
     'the encoded command holds no whitespace or quotes, so Start-Process cannot split it'
   )
   log(buildInstallCommand([]) === '', 'an empty rule list builds nothing')
+
+  // The primary check must not depend on the language of Windows. netsh prints
+  // "No rules match the specified criteria" in the system language, so parsing
+  // it meant every rule read as "unknown" on a non-English PC - the app could
+  // then never tell that the firewall was ready and never offered the fix.
+  const script = buildCheckScript(FIREWALL_RULES)
+  log(script.includes('Get-NetFirewallRule'), 'the check asks the firewall cmdlets')
+  log(!/netsh/u.test(script), 'the check does not parse netsh output')
+  log(
+    script.includes("'Quiz LAN Server'") && script.includes("'Quiz LAN Discovery'"),
+    'the check looks up both rules by name'
+  )
+  log(
+    script.includes('-DisplayName'),
+    'the check looks up by display name, because -Name matches the instance id'
+  )
+  log(
+    !/rule name:/iu.test(script),
+    'the check does not look for a translated label in the output'
+  )
+
+  // The output is read in our own format, so it does not depend on the
+  // language either.
+  const parsed = parseCheckOutput(
+    'PRESENT Quiz LAN Server\r\nMISSING Quiz LAN Discovery\r\nnoise from powershell\r\n'
+  )
+  log(
+    parsed.present.length === 1 && parsed.present[0] === 'Quiz LAN Server',
+    'a present rule is read back'
+  )
+  log(
+    parsed.missing.length === 1 && parsed.missing[0] === 'Quiz LAN Discovery',
+    'a missing rule is read back'
+  )
+  log(
+    parseCheckOutput('UNSUPPORTED').present.length === 0 &&
+      parseCheckOutput('UNSUPPORTED').missing.length === 0,
+    'an unsupported platform says nothing about the rules'
+  )
+  log(
+    parseCheckOutput('UNKNOWN Quiz LAN Server').unknown[0] === 'Quiz LAN Server',
+    'an unknown rule is read back as unknown'
+  )
+  log(
+    parseCheckOutput('').present.length === 0 &&
+      parseCheckOutput('').missing.length === 0 &&
+      parseCheckOutput('').unknown.length === 0,
+    'empty output says nothing about the rules'
+  )
+
+  // The manual fallback has to be runnable as typed, one command per line.
+  const manual = buildInstallCommands(FIREWALL_RULES)
+  log(manual.length === FIREWALL_RULES.length, 'there is one manual command per rule')
+  log(
+    manual.every((line) => line.startsWith('netsh advfirewall firewall add rule name="')),
+    'every manual command is a complete netsh add'
+  )
+  log(
+    manual.every((line) => !line.includes('&') && !line.includes(';')),
+    'the manual commands carry no shell operators'
+  )
+  log(
+    manual.some((line) => line.includes('localport=8080-8089') && line.includes('protocol=TCP')),
+    'the manual server command opens the shared port range'
+  )
+  log(
+    manual.some((line) => line.includes('localport=5353') && line.includes('protocol=UDP')),
+    'the manual discovery command opens the mDNS port'
+  )
+  log(
+    buildInstallCommands([]).length === 0,
+    'no rules build no manual commands'
+  )
 }
 
 const log = (ok: boolean, msg: string): void => {

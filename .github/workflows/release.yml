@@ -1,6 +1,6 @@
-name: Release (portable exe)
+name: Release (Windows exe)
 
-# Tag a version (v0.1.0) to publish a downloadable portable .exe on the
+# Tag a version (v0.1.0) to publish the downloadable Windows builds on the
 # Releases page, the same way the Android app publishes an .apk.
 on:
   push:
@@ -11,8 +11,8 @@ permissions:
   contents: write
 
 jobs:
-  portable:
-    name: Build the portable Windows exe
+  build:
+    name: Build the Windows executables
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -26,17 +26,17 @@ jobs:
         # The postinstall step fetches the Electron build of better-sqlite3.
         run: npm ci
 
-      - name: Typecheck, build and package the portable exe
+      - name: Typecheck, build and package
         run: npm run dist
         env:
           # No code signing certificate: skip the auto-discovery so the build
           # does not stall looking for one.
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
 
-      - name: Upload the exe to the workflow run
+      - name: Upload the exes to the workflow run
         uses: actions/upload-artifact@v4
         with:
-          name: quiz-instructor-portable
+          name: quiz-instructor-windows
           path: release/*.exe
           if-no-files-found: error
 
@@ -48,13 +48,20 @@ jobs:
           draft: true
           generate_release_notes: true
           body: |
-            Download the portable `.exe`, run it, and the instructor console
-            starts. There is no installer and no admin rights needed.
+            Two builds are attached:
+
+            - `QuizInstructor-<version>-setup.exe` - an installer. It puts the
+              app in `%LOCALAPPDATA%\Programs\Quiz Instructor`, needs no admin
+              rights and gives the app a stable path. **Use this one.**
+            - `QuizInstructor-<version>-portable.exe` - the app in a single
+              file, unpacked to a temporary folder on every start. Nothing is
+              installed, but Windows treats it as a new program each time and
+              may ask about the firewall again.
 
             **Windows may warn you about an unknown publisher.** The build is
             not code-signed, so SmartScreen shows "Windows protected your PC".
             Click **More info** -> **Run anyway**.
 
             The app runs a quiz server on your LAN (ports 8080-8089) and shows
-            a QR code the students scan. The "Allow phones to connect" button
-            in the app opens the firewall for you.
+            a QR code the students scan. When Windows Firewall is blocking that,
+            the app asks at startup and offers to open the firewall for you.

@@ -45,32 +45,39 @@ and falls back to the next free port, up to 8089. That range is defined once in
 `src/shared/types.ts` (`FIRST_PORT` / `MAX_PORT`) and reused by the firewall
 rules, so the two cannot drift apart.
 
-## Download a portable build (no install)
+## Download a build
 
-Prebuilt portable executables are published on the
-[Releases page](https://github.com/Chie03-dev/Quiz/releases). Download
-`QuizInstructor-<version>-portable.exe`, double-click it, and the instructor
-console starts - no installer, no admin rights, nothing written to Program
-Files.
+Prebuilt executables are published on the
+[Releases page](https://github.com/Chie03-dev/Quiz/releases). Two kinds are
+published for every version:
 
-**Latest release: [v0.2.0](https://github.com/Chie03-dev/Quiz/releases/tag/v0.2.0)**
-(`QuizInstructor-0.2.0-portable.exe`).
+| File | What it is |
+| --- | --- |
+| `QuizInstructor-<version>-setup.exe` | An installer. It puts the app in `%LOCALAPPDATA%\Programs\Quiz Instructor` and leaves a shortcut on the desktop. No admin rights, no Program Files. **Use this one.** |
+| `QuizInstructor-<version>-portable.exe` | The app in a single file, unpacked to a temporary folder on every start. Nothing is installed. |
+
+**Latest release: [v0.2.1](https://github.com/Chie03-dev/Quiz/releases/tag/v0.2.1)**.
+
+Prefer the installer: the portable build unpacks itself into a new folder on
+every run, so Windows treats it as a new program each time and may ask about
+the firewall again and again. The installer keeps one stable path.
 
 ### What is new
 
 | Version | What it brings |
 | --- | --- |
-| **v0.2.0** | **Results and score sheet.** Every finished session is saved and scored for you: a question list with the right answer and how many students got it, and a students x questions grid. Click any cell to change the points, the mark or add a note. Grading covers all eight question types, with partial credit for multi-part ones. |
+| **v0.2.1** | **Phones connect, first time.** The app now asks at startup when Windows is blocking the quiz server, and the dashboard always shows the firewall state instead of only when something is wrong. The check works on non-English Windows (it used to read every rule as "unknown" there, so the fix was never offered). The manual commands and `setup-firewall.bat` are shipped with the app. Plus an installer build with a stable path. |
+| v0.2.0 | **Results and score sheet.** Every finished session is saved and scored for you: a question list with the right answer and how many students got it, and a students x questions grid. Click any cell to change the points, the mark or add a note. Grading covers all eight question types, with partial credit for multi-part ones. |
 | v0.1.0 | The first portable build: quiz library, quiz editor, live session with counts only, and the meme tray. |
 
-- The app runs from a temporary folder; your quizzes and memes stay in
-  `%APPDATA%\quiz-instructor`, exactly like the development build.
+- The app runs from a temporary folder when you use the portable build; your
+  quizzes and memes stay in `%APPDATA%\quiz-instructor`, exactly like the
+  development build.
 - **Windows may warn about an unknown publisher.** The build is not code-signed,
   so SmartScreen shows *"Windows protected your PC"*: click **More info** ->
   **Run anyway**. Same for a possible antivirus warning.
-- The firewall notice still applies: the app checks for the firewall rules on
-  startup and the **Allow phones to connect** button installs them (that one
-  does need admin rights, as any firewall change does).
+- The firewall setup still needs admin rights, as any firewall change does.
+  The app asks for it at startup and offers the button on the dashboard.
 - The portable build is unsigned, so keep the app up to date by downloading the
   newest release; there is no auto-updater.
 - Your data survives an update: the library, the memes and the saved results
@@ -81,10 +88,11 @@ To build it yourself:
 ```bash
 npm run dist
 # -> release/QuizInstructor-<version>-portable.exe
+# -> release/QuizInstructor-<version>-setup.exe
 ```
 
-Pushing a `v*` tag builds it on GitHub Actions and attaches the `.exe` to a
-draft release (`.github/workflows/release.yml`).
+Pushing a `v*` tag builds it on GitHub Actions and attaches the `.exe` files to
+a draft release (`.github/workflows/release.yml`).
 
 > **Troubleshooting:** if `npm run dist` fails with
 > `EBUSY: resource busy or locked ... app.asar`, something is holding the
@@ -109,19 +117,53 @@ Answer keys are never sent to phones.
 Windows blocks incoming connections by default, so phones cannot reach the server
 until you allow it. The app checks for this when it opens.
 
+### The startup prompt
+
+On a PC where the rules are missing, the app asks once at startup:
+
+> Phones cannot connect to this PC yet.
+> Windows Firewall is blocking the quiz server on ports 8080-8089, so phones on
+> the same Wi-Fi cannot join.
+
+**Allow phones to connect** raises the Windows **User Account Control** prompt
+and installs the rules. **Not now** changes nothing: the dashboard still shows
+the amber notice with the same button, so the setup can be done at any time.
+
+The prompt is only there when the rules are genuinely missing. Once they are in
+place it never appears again on that PC.
+
 ### The "Allow phones to connect" button
 
-If the rules are missing, an amber notice appears above the PIN and QR code:
+The dashboard shows the state of the firewall at all times:
 
-> Phones may not be able to connect until you allow this app through the
-> Windows firewall.
+| State | What you see |
+| --- | --- |
+| Ready | a quiet green line, *Firewall: ready, phones can connect*, with a **Check again** link |
+| Blocked | the amber notice with the **Allow phones to connect** button |
+| Unclear | a grey notice that still offers the button |
 
-Click **Allow phones to connect**. Windows shows a single **User Account
-Control** prompt (*Do you want to allow this app to make changes to your
-device?*) the first time; after you accept it, a green **Phones can connect**
-message appears and then fades. The prompt only ever comes from that button —
-the app never installs anything on its own, and reading the rules needs no
-administrator rights at all.
+The button is only shown when there is something to do, and it only adds the
+rules that are missing, so pressing it twice cannot create duplicates. It raises
+a single **User Account Control** prompt (*Do you want to allow this app to make
+changes to your device?*) the first time; after you accept it, a green **Phones
+can connect** message appears and then fades. The prompt only ever comes from
+that button or the startup prompt — the app never installs anything on its own,
+and reading the rules needs no administrator rights at all.
+
+### When the button cannot help
+
+If the app cannot raise the UAC prompt (a school laptop, a policy that blocks
+elevation, a user who cancelled), the same notice has a **Do it manually** link
+that shows the two commands to paste into PowerShell *as administrator*:
+
+```powershell
+netsh advfirewall firewall add rule name="Quiz LAN Server" dir=in action=allow protocol=TCP localport=8080-8089 profile=any
+netsh advfirewall firewall add rule name="Quiz LAN Discovery" dir=in action=allow protocol=UDP localport=5353 profile=any
+```
+
+The same two commands are in `setup-firewall.bat`, which is shipped next to the
+app (right-click it, **Run as administrator**). In a packaged build it sits in
+the `resources` folder next to the app.
 
 The app passes the two `netsh` commands to an elevated PowerShell via
 `-EncodedCommand` (base64 of UTF-16LE). This matters: a rule name contains a
@@ -159,16 +201,31 @@ Whether it worked is decided by reading the firewall back afterwards, never by
 the exit code — `netsh` exits 0 even when a rule fails to add, which is what made
 an earlier failure report itself as success.
 
-The check runs `netsh advfirewall firewall show rule` with the name quoted and
-`windowsVerbatimArguments` set. Both matter: without the verbatim flag Node
-escapes the inner quote as `\"`, netsh answers *"A specified value is not valid"*
-even when the rule is right there, and the app reports an installed rule as
-missing — which shows the notice at startup and makes a successful install look
-like it failed.
+The check asks Windows for the rules with the NetSecurity cmdlets
+(`Get-NetFirewallRule -DisplayName ...`) and reads the objects they return, not
+the text `netsh` prints. This matters: netsh's wording is translated, so on a
+non-English Windows *"No rules match the specified criteria"* is a different
+sentence and the old text matching read **every** rule as *unknown*. The app
+then could not tell that the firewall was ready, could not tell the instructor
+that it was broken, and never offered the fix — the phone simply could not
+connect. The cmdlets return data, not prose, so the check reads the same in
+every language.
 
-If netsh replies with anything other than a `Rule Name:` line or *"No rules match
-the specified criteria"*, the app says the state is **unknown** and points you at
-the command to run by hand, rather than claiming the rules are missing.
+The lookup is by **display name**, because `netsh`'s `name=` sets that field
+while the internal name of a netsh-created rule is a GUID, and `-Name` on the
+cmdlet actually matches the instance id — a lookup by `-Name` finds nothing at
+all.
+
+If the cmdlets are not available the app falls back to
+`netsh advfirewall firewall show rule` with the name quoted and
+`windowsVerbatimArguments` set. Both matter there: without the verbatim flag
+Node escapes the inner quote as `\"`, netsh answers *"A specified value is not
+valid"* even when the rule is right there, and the app reports an installed rule
+as missing — which shows the notice at startup and makes a successful install
+look like it failed.
+
+If neither way can tell, the app says the state is **unknown** — and still
+offers the button, so the instructor is never left without a way forward.
 
 The trade-off of `profile=any`: classroom Wi-Fi is frequently classified as
 **Public**, and a `Private`-only rule would silently not apply there, so phones
@@ -188,7 +245,9 @@ netsh advfirewall firewall delete rule name="Quiz LAN Discovery"
 `setup-firewall.bat` adds the same two rules and is useful if the button fails,
 if UAC is blocked by policy, or if you would rather not click. Right-click it and
 choose **Run as administrator**. It must stay in step with the app: same rule
-names, same ports, same profile.
+names, same ports, same profile. It is shipped with the app, in the `resources`
+folder next to the app, and the dashboard's **Do it manually** link opens that
+folder for you.
 
 ### Stricter option: Private networks only
 
