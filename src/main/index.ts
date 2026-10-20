@@ -479,8 +479,11 @@ app.whenReady().then(async () => {
   memeAssets = new MemeAssets(memeStore, join(userData, MEME_DIR_NAME))
   memeAssets.ensure()
   // The sample meme is seeded on a brand-new profile only, next to the
-  // sample quiz: deleting every meme never brings it back.
-  if (data.fresh) seedSampleMeme(memeAssets, app.getAppPath())
+  // sample quiz: deleting every meme never brings it back. It lives in the
+  // project folder while developing and beside the asar once packaged.
+  if (data.fresh) {
+    seedSampleMeme(memeAssets, [app.getAppPath(), process.resourcesPath])
+  }
   registerIpc()
   await boot()
   app.on('activate', () => {
