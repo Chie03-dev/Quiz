@@ -21,6 +21,15 @@ import { gradeAnswer, type ResultQuestionInput } from '../src/main/db/results'
 import { buildSessionSnapshot, snapshotQuestions } from '../src/main/results/session'
 import { buildPopPayload, MemeAssets, MEME_FILE_PATTERN, seedSampleMeme } from '../src/main/memes/store'
 import { parseQuizJson, serializeQuiz, toRuntimeQuiz } from '../src/main/quizFormat'
+import {
+  adviseAnswer,
+  answersMatch,
+  compareAnswers,
+  editDistance,
+  normalizeAnswer,
+  normalizeAnswerTight,
+  suggestAnswer
+} from '../src/shared/answers'
 import { quizStartError, validateQuestion } from '../src/shared/validation'
 import { buildCheckArgs, buildCheckScript, buildInstallCommand, buildInstallCommands, CHECK_OPTIONS, classifyCheckOutput, encodePowerShell, FIREWALL_RULES, FIREWALL_PROFILE, parseCheckOutput } from '../src/main/firewall'
 import { FIRST_PORT, MAX_PORT, PORT_RANGE, type QuestionType, type Quiz, type ResultSessionMeta, type StoredQuestion, type StoredQuiz, type StudentInfo } from '../src/shared/types'
@@ -1919,6 +1928,14 @@ function checkResultsStore(store: ResultsStore, dbPath: string): void {
       'an enumeration with every item right gets every point'
     )
     log(graded('t-enum', ['red']).pointsAwarded === 1, 'an enumeration with one item right gets partial points')
+    log(
+      graded('t-enum', ['red', 'red', 'red']).pointsAwarded === 1,
+      'an enumeration counts the same answer only once'
+    )
+    log(
+      graded('t-enum', ['red', 'green', 'blue']).pointsAwarded === 2,
+      'an enumeration with every colour right gets every point'
+    )
     log(graded('t-prob', '42.3').correct === true, 'a problem answer inside the tolerance is right')
     log(graded('t-prob', '41').correct === false, 'a problem answer outside the tolerance is wrong')
     log(graded('t-prob', '42.6').correct === false, 'the tolerance is not a free pass')
@@ -1927,6 +1944,78 @@ function checkResultsStore(store: ResultsStore, dbPath: string): void {
     log(graded('t-conn', { p1: 'a1', p2: 'a2' }).pointsAwarded === 3, 'a complete connect gets every point')
     log(graded('t-conn', { p1: 'a1' }).pointsAwarded === 1.5, 'a half-right connect gets half the points')
     log(graded('t-mcq', null).correct === null, 'an answer that was never given is not graded')
+
+    // --- the case, the spaces and the dashes do not count ---
+    log(graded('t-id', 'PARIS').correct === true, 'an identification answer ignores the case')
+    log(graded('t-id', '  pArIs  ').correct === true, 'an identification answer ignores the spaces around it')
+    log(graded('t-id', 'P a r i s').correct === true, 'an identification answer ignores spaces inside it')
+    log(graded('t-id', 'Par').correct === false, 'a shorter answer is still wrong')
+    log(graded('t-id', 'paris-city').correct === false, 'a longer answer is still wrong')
+    log(graded('t-fillin', ['X', 'y']).correct === true, 'a fill-in blank ignores the case')
+    log(graded('t-fillin', ['x', 'Y']).pointsAwarded === 2, 'every blank right gives every point')
+    log(graded('t-enum', ['RED', 'Blue']).pointsAwarded === 2, 'an enumeration ignores the case')
+    log(graded('t-enum', ['red', 'green']).pointsAwarded === 1, 'an enumeration with one item right keeps its point')
+
+    // --- the helpers behind it ---
+    log(normalizeAnswer('Paris') === 'paris', 'the folding lower-cases the answer')
+    log(normalizeAnswer('E-Mail') === 'e mail', 'a hyphen folds into a space')
+    log(normalizeAnswer('e–mail') === 'e mail', 'an en dash folds into a space')
+    log(normalizeAnswer('e−mail') === 'e mail', 'a minus sign folds into a space')
+    log(normalizeAnswer('the  beatles') === 'the beatles', 'a run of spaces folds into one space')
+    log(normalizeAnswerTight('e-mail') === 'email', 'the tight folding drops the separator')
+    log(normalizeAnswerTight('E Mail') === 'email', 'the tight folding drops the case too')
+    log(
+      compareAnswers('Paris', 'Paris') === 'exact',
+      'the same text is an exact match'
+    )
+    log(
+      compareAnswers('PARIS', 'Paris') === 'loose',
+      'a different case is a loose match'
+    )
+    log(
+      compareAnswers('e mail', 'e-mail') === 'loose',
+      'a dash for a space is a loose match'
+    )
+    log(
+      compareAnswers('email', 'e-mail') === 'loose',
+      'a missing separator is a loose match'
+    )
+    log(
+      compareAnswers('London', 'Paris') === 'none',
+      'a different word is not a match'
+    )
+    log(answersMatch(['Paris'], 'pArIs'), 'the match helper finds the answer')
+    log(!answersMatch(['Paris'], 'Rome'), 'the match helper rejects the wrong answer')
+    log(editDistance('abc', 'abc') === 0, 'the edit distance of the same text is zero')
+    log(editDistance('abc', 'abd') === 1, 'the edit distance counts one change')
+    log(editDistance('', 'abc') === 3, 'the edit distance counts every letter of an empty text')
+    log(suggestAnswer(['Paris'], 'Pariss') === 'Paris', 'a close answer suggests the key')
+    log(suggestAnswer(['Paris'], 'London') === null, 'a far answer suggests nothing')
+    log(suggestAnswer(['Paris'], '') === null, 'an empty answer suggests nothing')
+
+    // --- what the instructor is told about an answer ---
+    const idQuestion = byId('t-id')
+    log(
+      adviseAnswer(idQuestion, 'Paris').match === 'exact',
+      'the advice calls a letter-perfect answer exact'
+    )
+    log(
+      adviseAnswer(idQuestion, 'PARIS').match === 'loose',
+      'the advice calls a carelessly written answer loose'
+    )
+    log(
+      adviseAnswer(idQuestion, 'Pariss').suggestion === 'Paris',
+      'the advice suggests the key for a near miss'
+    )
+    log(
+      adviseAnswer(idQuestion, 'London').suggestion === null,
+      'the advice says nothing for a far miss'
+    )
+    log(
+      adviseAnswer(byId('t-mcq'), 'b').match === 'exact' &&
+        adviseAnswer(byId('t-mcq'), 'a').match === 'none',
+      'the advice reads an option id as it is'
+    )
 
     // --- the snapshot of a finished session ---
     const snapshot = buildSessionSnapshot({
@@ -1945,7 +2034,7 @@ function checkResultsStore(store: ResultsStore, dbPath: string): void {
         s1: {
           't-mcq': 'b',
           't-tf': true,
-          't-id': ' paris ',
+          't-id': 'PARIS',
           't-fillin': ['x', 'y'],
           't-enum': ['red', 'blue'],
           't-prob': '42.3',
@@ -1996,6 +2085,10 @@ function checkResultsStore(store: ResultsStore, dbPath: string): void {
     log(answerOf(bob, 't-fillin').pointsAwarded === 1, 'the score sheet shows the partial points of a fill-in')
     log(answerOf(bob, 't-match').pointsAwarded === 1.5, 'the score sheet shows the partial points of a matching')
     log(answerOf(alice, 't-prob').correct === true, 'the score sheet marks a tolerated answer as right')
+    log(
+      answerOf(alice, 't-id').correct === true && answerOf(alice, 't-id').pointsAwarded === 1,
+      'a student who typed the answer in capitals keeps the point'
+    )
     log(answerOf(bob, 't-prob').correct === false, 'the score sheet marks a wrong answer as wrong')
 
     // --- the instructor changes a mark ---

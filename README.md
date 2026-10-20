@@ -56,7 +56,7 @@ published for every version:
 | `QuizInstructor-<version>-setup.exe` | An installer. It puts the app in `%LOCALAPPDATA%\Programs\Quiz Instructor` and leaves a shortcut on the desktop. No admin rights, no Program Files. **Use this one.** |
 | `QuizInstructor-<version>-portable.exe` | The app in a single file, unpacked to a temporary folder on every start. Nothing is installed. |
 
-**Latest release: [v0.2.1](https://github.com/Chie03-dev/Quiz/releases/tag/v0.2.1)**.
+**Latest release: [v0.2.2](https://github.com/Chie03-dev/Quiz/releases/tag/v0.2.2)**.
 
 Prefer the installer: the portable build unpacks itself into a new folder on
 every run, so Windows treats it as a new program each time and may ask about
@@ -66,7 +66,8 @@ the firewall again and again. The installer keeps one stable path.
 
 | Version | What it brings |
 | --- | --- |
-| **v0.2.1** | **Phones connect, first time.** The app now asks at startup when Windows is blocking the quiz server, and the dashboard always shows the firewall state instead of only when something is wrong. The check works on non-English Windows (it used to read every rule as "unknown" there, so the fix was never offered). The manual commands and `setup-firewall.bat` are shipped with the app. Plus an installer build with a stable path. |
+| **v0.2.2** | **The case, the spaces and the dashes do not count.** A written answer is compared without them, so `tokyo` is right for a key of `Tokyo` and `e mail` is right for `e-mail`. The score sheet says when an answer only matched because of that, and suggests the closest answer when a student was nearly right. An enumeration also counts the same answer only once now. |
+| v0.2.1 | **Phones connect, first time.** The app now asks at startup when Windows is blocking the quiz server, and the dashboard always shows the firewall state instead of only when something is wrong. The check works on non-English Windows (it used to read every rule as "unknown" there, so the fix was never offered). The manual commands and `setup-firewall.bat` are shipped with the app. Plus an installer build with a stable path. |
 | v0.2.0 | **Results and score sheet.** Every finished session is saved and scored for you: a question list with the right answer and how many students got it, and a students x questions grid. Click any cell to change the points, the mark or add a note. Grading covers all eight question types, with partial credit for multi-part ones. |
 | v0.1.0 | The first portable build: quiz library, quiz editor, live session with counts only, and the meme tray. |
 
@@ -381,10 +382,21 @@ Every finished session is saved as a **result session** and scored for you.
   (correct / wrong / not graded) and a note. The student's total follows, and
   the cell is flagged as no longer auto-graded.
 - **Grading rules** (all overridable): mcq on the option id, true/false on the
-  boolean, identification on the accepted answers (case and spaces ignored),
-  fill-in blank by blank, enumeration on the accepted items, matching and
-  connect pair by pair, and problem questions on the answer, with the stored
-  tolerance when there is one. Multi-part questions get partial credit.
+  boolean, identification on the accepted answers, fill-in blank by blank,
+  enumeration on the accepted items, matching and connect pair by pair, and
+  problem questions on the answer, with the stored tolerance when there is one.
+  Multi-part questions get partial credit.
+- **The case, the spaces and the dashes do not count** in a written answer.
+  A key of `Tokyo` accepts `tokyo`, `TOKYO` and `  Tokyo `; a key of
+  `e-mail` accepts `e mail`, `e–mail` and `email`. A phone keyboard drops a
+  space and a word processor swaps the dash, and the student still knows the
+  answer. The score sheet says when an answer only matched because of that
+  ("Right, but the case, the spacing or the dashes were different"), so the
+  instructor can see it and mark it wrong if they want to.
+- **The closest answer is suggested.** A student who wrote `Pariss` for a key
+  of `Paris` sees the key offered next to their answer, so a slip is obvious
+  at a glance. Nothing is suggested when the answer is simply a different
+  word.
 
 **The phones never see any of this.** Grading, the answer keys and the score
 sheet stay in the instructor app; no new message is sent to a phone.

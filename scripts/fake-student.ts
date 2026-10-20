@@ -7,6 +7,7 @@
  * Options: --pin, --name, --ip (default 127.0.0.1), --port (default 8080),
  *          --token (default: a stable token cached in .fake-student-token.json),
  *          --answer (answer every question once quiz_start arrives),
+ *          --text <text> (what to type into every written question),
  *          --no-hb (never send heartbeats; step 3 pauses on the timeout),
  *          --focus-lost <delayMs>, --focus-gained <delayMs>, --resume-request <delayMs>,
  *          --finish <delayMs>
@@ -26,6 +27,8 @@ interface Args {
   token: string
   hb: boolean
   answer: boolean
+  /** The text to type into every written question. */
+  text?: string
   /** Step-3 triggers: ms after joining, or null for "never". */
   focusLostAt: number | null
   focusGainedAt: number | null
@@ -44,7 +47,7 @@ function parseArgs(argv: string[]): Args {
   const pin = get('--pin')
   const name = get('--name')
   if (!pin || !name) {
-    console.error('Usage: npm run fake-student -- --pin <pin> --name <name> [--ip <ip>] [--port <port>] [--token <token>] [--no-hb] [--answer] [--focus-lost <ms>] [--focus-gained <ms>] [--resume-request <ms>] [--finish <ms>]')
+    console.error('Usage: npm run fake-student -- --pin <pin> --name <name> [--ip <ip>] [--port <port>] [--token <token>] [--no-hb] [--answer] [--text <text>] [--focus-lost <ms>] [--focus-gained <ms>] [--resume-request <ms>] [--finish <ms>]')
     process.exit(1)
   }
 
@@ -78,6 +81,7 @@ function parseArgs(argv: string[]): Args {
     token,
     hb: !argv.includes('--no-hb'),
     answer: argv.includes('--answer'),
+    text: get('--text'),
     focusLostAt: delay(get('--focus-lost')),
     focusGainedAt: delay(get('--focus-gained')),
     resumeRequestAt: delay(get('--resume-request')),
@@ -92,23 +96,29 @@ function parseArgs(argv: string[]): Args {
   }
 }
 
-/** A plausible value for any question type, so every type gets exercised. */
-function answerFor(q: PublicQuestion): unknown {
+/**
+ * A plausible value for any question type, so every type gets exercised.
+ *
+ * The written types take the --text answer when there is one, so a test can
+ * make a student type the answer in the wrong case: the phone never sees the
+ * key, so the test has to know it.
+ */
+function answerFor(q: PublicQuestion, text?: string): unknown {
   switch (q.type) {
     case 'mcq':
       return q.options?.[0]?.id ?? ''
     case 'tf':
       return true
     case 'fillin':
-      return Array.from({ length: q.blanks ?? 0 }, (_, i) => `blank ${i + 1}`)
+      return Array.from({ length: q.blanks ?? 0 }, () => text ?? `blank 1`)
     case 'enumeration':
-      return Array.from({ length: Math.max(1, q.count ?? 1) }, (_, i) => `item ${i + 1}`)
+      return Array.from({ length: Math.max(1, q.count ?? 1) }, () => text ?? 'item 1')
     case 'matching':
       return Object.fromEntries((q.left ?? []).map((l, i) => [l.id, q.right?.[i]?.id ?? '']))
     case 'connect':
       return Object.fromEntries((q.prompts ?? []).map((p, i) => [p.id, q.answers?.[i]?.id ?? '']))
     default:
-      return `answer to ${q.qid}`
+      return text ?? `answer to ${q.qid}`
   }
 }
 
@@ -154,7 +164,7 @@ function main(): void {
       console.log(`[${args.name}] quiz_start: ${msg.d.questions.length} questions, ends in ${Math.round((msg.d.endsAt - msg.d.serverTime) / 1000)}s`)
       if (args.answer) {
         for (const q of msg.d.questions) {
-          const value = answerFor(q)
+          const value = answerFor(q, args.text)
           const send = (): void =>
             ws.send(JSON.stringify({ t: 'answer', d: { qid: q.qid, value, seq: nextSeq++ } }))
           if (ws.readyState === WebSocket.OPEN) send()

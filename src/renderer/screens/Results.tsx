@@ -5,7 +5,7 @@ import type {
   ResultSessionDetail,
   ResultSessionMeta
 } from '../../shared/types'
-import { answerText, keyText } from '../../shared/answers'
+import { adviseAnswer, answerText, keyText, type AnswerAdvice } from '../../shared/answers'
 import { Badge } from '../components/Badge'
 import { Button } from '../components/Button'
 import { ConfirmButton } from '../components/ConfirmButton'
@@ -200,6 +200,14 @@ function AnswerEditor({
   const [mark, setMark] = useState(answer.correct === null ? 'none' : answer.correct ? 'yes' : 'no')
   const [notes, setNotes] = useState(answer.notes ?? '')
 
+  // How close the student's answer came to the key, and what it was closest
+  // to. The grading ignores the case, the spacing and the dashes, so this is
+  // what tells the instructor that an answer was right for a sloppy reason.
+  const advice: AnswerAdvice = useMemo(
+    () => (question ? adviseAnswer(question, answer.value) : { match: 'none', suggestion: null }),
+    [question, answer.value]
+  )
+
   // The selected answer changes when another cell is clicked.
   useEffect(() => {
     setPoints(String(answer.pointsAwarded))
@@ -226,6 +234,20 @@ function AnswerEditor({
             <span className="res__editor-label">Right answer</span>
             <span className="res__editor-value">{keyText(question)}</span>
           </div>
+          {advice.match === 'loose' && (
+            <div className="res__editor-row res__editor-hint" data-testid="answer-loose">
+              <span className="res__editor-label">How it matched</span>
+              <span className="res__editor-value">
+                Right, but the case, the spacing or the dashes were different.
+              </span>
+            </div>
+          )}
+          {advice.suggestion && (
+            <div className="res__editor-row res__editor-hint" data-testid="answer-suggestion">
+              <span className="res__editor-label">Closest answer</span>
+              <span className="res__editor-value">{advice.suggestion}</span>
+            </div>
+          )}
         </>
       )}
 
@@ -484,6 +506,14 @@ export function ResultDetail({
                           const answer = answersByStudent.get(student.id)?.get(question.id)
                           const { state, mark } = cellState(answer)
                           const text = question ? answerText(question, answer?.value ?? null) : ''
+                          // The tooltip says how the answer matched, so the
+                          // reason for a mark is visible without opening it.
+                          const advice = question && answer ? adviseAnswer(question, answer.value) : null
+                          const tip = advice?.match === 'loose'
+                            ? `${text} - right, but the case, the spacing or the dashes differed`
+                            : advice?.suggestion
+                              ? `${text} - closest answer: ${advice.suggestion}`
+                              : text
                           return (
                             <td key={question.id}>
                               <button
@@ -491,7 +521,7 @@ export function ResultDetail({
                                 className={`res__cell res__cell--${state}${
                                   selected === answer?.id ? ' is-selected' : ''
                                 }`}
-                                title={text}
+                                title={tip}
                                 data-testid={`cell-${student.id}-${question.id}`}
                                 onClick={() => setSelected(answer?.id ?? null)}
                               >
