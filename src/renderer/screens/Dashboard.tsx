@@ -7,6 +7,7 @@ import { ConfirmButton } from '../components/ConfirmButton'
 import { EmptyState } from '../components/EmptyState'
 import { Icon } from '../components/Icon'
 import { Panel } from '../components/Panel'
+import { MemeTray } from '../memes/MemeTray'
 
 /** Payload a phone scans to find this server. */
 export function joinPayload(ip: string, port: number, pin: string): string {
@@ -231,6 +232,8 @@ export function Dashboard({
   const [quizzes, setQuizzes] = useState<QuizMeta[]>([])
   const [selectedQuiz, setSelectedQuiz] = useState('')
   const [startError, setStartError] = useState('')
+  /** The meme the instructor picks before the quiz starts. */
+  const [selectedMeme, setSelectedMeme] = useState<string | null>(null)
 
   useEffect(() => {
     let active = true
@@ -396,6 +399,11 @@ export function Dashboard({
               </ul>
             )}
           </Panel>
+
+          <MemeTray
+            selectedId={selectedMeme}
+            onSelect={(id) => setSelectedMeme(id || null)}
+          />
         </div>
       </div>
     </div>

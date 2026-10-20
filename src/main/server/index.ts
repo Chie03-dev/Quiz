@@ -1,6 +1,14 @@
 import Fastify from 'fastify'
 import websocket from '@fastify/websocket'
-import type { PhoneMessage, Quiz, QuizState, ServerInfo, StudentInfo } from '../../shared/types'
+import { readFile } from 'node:fs/promises'
+import type {
+  MemePopPayload,
+  PhoneMessage,
+  Quiz,
+  QuizState,
+  ServerInfo,
+  StudentInfo
+} from '../../shared/types'
 import { FIRST_PORT, MAX_PORT } from '../../shared/types'
 import { advertiseServer, type BonjourAdvertiser } from './mdns'
 import { listLanAddresses } from './network'
@@ -9,11 +17,22 @@ import { QuizSession, type SocketLike } from './session'
 /** Number of ports tried, from FIRST_PORT up to MAX_PORT inclusive. */
 const PORT_ATTEMPTS = MAX_PORT - FIRST_PORT + 1
 
+/**
+ * The meme files the HTTP asset route serves. The server only ever reads
+ * them; the store that owns them lives in the main process.
+ */
+export interface MemeAssetSource {
+  /** The meme behind a file name, or null when there is none. */
+  byFileName(fileName: string): { filePath: string; mime: string } | null
+}
+
 export interface QuizServerOptions {
   onStudentsChanged: (students: StudentInfo[]) => void
   onServerChanged: (info: ServerInfo) => void
   onQuizChanged: (state: QuizState) => void
   onLockChanged: (lockMode: boolean) => void
+  /** The meme tray, when the app has one open. */
+  memes?: MemeAssetSource
 }
 
 export interface QuizServer {
@@ -33,6 +52,10 @@ export interface QuizServer {
   pauseTimer(): boolean
   resumeTimer(): boolean
   adjustTimer(deltaMs: number): boolean
+  /** Pops a meme to the targeted students (everyone when unlisted). */
+  popMeme(payload: MemePopPayload, studentIds?: string[]): number
+  /** Clears the meme overlay on the targeted students. */
+  hideMeme(studentIds?: string[]): number
   /** Last mDNS failure, if any. mDNS is a convenience only, never required. */
   advertisementError(): string | null
   close(): Promise<void>
@@ -105,6 +128,26 @@ export async function startServer(opts: QuizServerOptions): Promise<QuizServer> 
     sock.on('error', () => session.handleClose(sock))
   })
 
+  // The meme images the phones download. The file name is validated by the
+  // store before anything touches the filesystem, so this route cannot be
+  // walked out of the meme folder.
+  app.get('/memes/:file', async (req, reply) => {
+    const file = String((req.params as { file?: string }).file ?? '')
+    const asset = opts.memes?.byFileName(file)
+    if (!asset) return reply.code(404).send('Not found')
+    let bytes: Buffer
+    try {
+      bytes = await readFile(asset.filePath)
+    } catch {
+      return reply.code(404).send('Not found')
+    }
+    return reply
+      .header('Content-Type', asset.mime)
+      .header('Content-Length', bytes.length)
+      .header('Cache-Control', 'public, max-age=31536000, immutable')
+      .send(bytes)
+  })
+
   session.start()
 
   // Listen on all interfaces; fall back to the next free port when taken.
@@ -168,6 +211,12 @@ export async function startServer(opts: QuizServerOptions): Promise<QuizServer> 
     },
     adjustTimer(deltaMs: number) {
       return session.adjustTimer(deltaMs)
+    },
+    popMeme(payload: MemePopPayload, studentIds?: string[]) {
+      return session.broadcastMeme(payload, studentIds)
+    },
+    hideMeme(studentIds?: string[]) {
+      return session.broadcastMemeHide(studentIds)
     },
     async close() {
       session.stop()

@@ -1,5 +1,6 @@
 import { randomInt, randomUUID } from 'node:crypto'
 import type {
+  MemePopPayload,
   PauseReason,
   Quiz,
   QuizState,
@@ -403,6 +404,35 @@ export class QuizSession {
     if (student.socket) this.send(student.socket, { t: 'kick', d: {} })
     this.remove(student)
     return true
+  }
+
+  // --- meme pops (instructor commands, IPC-only) ---
+
+  /**
+   * Sends a meme pop to the targeted students. Without a target list (or with
+   * an empty one) every connected student gets it; otherwise only the listed
+   * students who are connected. Returns how many sockets received it.
+   */
+  broadcastMeme(payload: MemePopPayload, studentIds?: string[]): number {
+    return this.sendTo({ t: 'meme_pop', d: payload }, studentIds)
+  }
+
+  /** Clears the meme overlay on the targeted students. */
+  broadcastMemeHide(studentIds?: string[]): number {
+    return this.sendTo({ t: 'meme_hide', d: {} }, studentIds)
+  }
+
+  /** Sends one message to the listed students, or to everyone when unlisted. */
+  private sendTo(msg: ServerMessage, studentIds?: string[]): number {
+    const wanted = studentIds && studentIds.length > 0 ? new Set(studentIds) : null
+    let sent = 0
+    for (const student of this.students.values()) {
+      if (!student.socket) continue
+      if (wanted && !wanted.has(student.id)) continue
+      this.send(student.socket, msg)
+      sent++
+    }
+    return sent
   }
 
   private remove(student: Student): void {

@@ -257,6 +257,12 @@ export interface StateSnapshot {
   quiz: QuizState
   /** Step 3: when on, focus_lost pauses the student. Always true in a fresh session. */
   lockMode: boolean
+  /**
+   * The last meme pop, or null when none was ever sent. Small on purpose:
+   * the snapshot is pushed on every answer, so the meme *list* never rides
+   * along with it - the tray loads it through memes:list() instead.
+   */
+  meme: MemeState | null
 }
 
 /** Error codes defined in docs/protocol.md. */
@@ -270,6 +276,71 @@ export type ServerErrorCode =
   | 'UNKNOWN_QUESTION'
   | 'PAUSED'
   | 'FINISHED'
+
+// --- memes: the instructor's jumpscare tray (see docs/protocol.md, "Meme pop") ---
+
+/** How long a popped meme stays on a student's screen. */
+export const MEME_DURATION_MS = 3000
+/** The shortest and longest pop the server accepts. */
+export const MEME_MIN_DURATION_MS = 500
+export const MEME_MAX_DURATION_MS = 15_000
+/** The two image types the app stores and serves. */
+export type MemeMime = 'image/jpeg' | 'image/png'
+
+/** One meme in the instructor's tray. */
+export interface MemeInfo {
+  id: string
+  name: string
+  mime: MemeMime
+  width: number
+  height: number
+  byteSize: number
+  /** data: URL thumbnail for the tray grid (the CSP allows data: images). */
+  thumb: string
+  createdAt: number
+}
+
+/** What the renderer hands to the main process for one upload. */
+export interface MemeSavePayload {
+  name: string
+  mime: MemeMime
+  width: number
+  height: number
+  /** The compressed image bytes. */
+  bytes: Uint8Array
+  /** data: URL thumbnail, produced by the renderer. */
+  thumb: string
+}
+
+export type MemeSaveResult = { ok: true; meme: MemeInfo } | { ok: false; error: string }
+
+/**
+ * The phone-facing payload of a meme pop. Exactly these six fields: the
+ * check script asserts that nothing else (no file name, no local path)
+ * ever reaches a phone.
+ */
+export interface MemePopPayload {
+  memeId: string
+  /** Relative path on the quiz server, e.g. "/memes/<file>". */
+  path: string
+  mime: MemeMime
+  width: number
+  height: number
+  durationMs: number
+}
+
+/** What the instructor's own screen shows about the last pop. */
+export interface MemeState {
+  memeId: string
+  /** Server timestamp of the pop. */
+  at: number
+  /** Student ids it went to; empty means every connected student. */
+  targets: string[]
+  /** True while the meme is still meant to be showing. */
+  active: boolean
+}
+
+export type MemePopResult = { ok: true; sent: number } | { ok: false; error: string }
 
 // --- Windows firewall (see src/main/firewall.ts) ---
 
@@ -408,6 +479,16 @@ export interface TimeUpdateMessage {
   id?: string
   d: { endsAt: number; serverTime: number; paused: boolean }
 }
+export interface MemePopMessage {
+  t: 'meme_pop'
+  id?: string
+  d: MemePopPayload
+}
+export interface MemeHideMessage {
+  t: 'meme_hide'
+  id?: string
+  d: Record<string, never>
+}
 export type ServerMessage =
   | JoinedMessage
   | ErrorMessage
@@ -421,3 +502,5 @@ export type ServerMessage =
   | LockMessage
   | FinishedMessage
   | TimeUpdateMessage
+  | MemePopMessage
+  | MemeHideMessage

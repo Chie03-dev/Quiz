@@ -118,6 +118,15 @@ async function main(): Promise<void> {
     await click(cdp, 'nav-dashboard')
     await sleep(400)
     await cdp.shot('4-dashboard')
+
+    // The meme tray at the bottom of the dashboard column.
+    await cdp.eval(`(() => {
+      const el = document.querySelector('.shell__content')
+      if (el) el.scrollTop = el.scrollHeight
+      return true
+    })()`)
+    await sleep(400)
+    await cdp.shot('5-memes')
   } finally {
     cdp.close()
   }

@@ -179,6 +179,13 @@ function main(): void {
       console.log(`[${args.name}] lock is now ${msg.d.on ? 'ON' : 'OFF'}`)
     } else if (msg.t === 'finished') {
       console.log(`[${args.name}] finished`)
+    } else if (msg.t === 'meme_pop') {
+      console.log(
+        `[${args.name}] meme_pop: ${msg.d.memeId} ${msg.d.mime} ${msg.d.width}x${msg.d.height} ` +
+          `for ${msg.d.durationMs} ms at ${msg.d.path}`
+      )
+    } else if (msg.t === 'meme_hide') {
+      console.log(`[${args.name}] meme_hide`)
     }
   })
 

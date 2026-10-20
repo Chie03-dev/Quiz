@@ -127,6 +127,37 @@ async function waitFor<T>(fn: () => Promise<T | null | undefined>, ms = 15_000):
   throw new Error('timed out')
 }
 
+/**
+ * A phone on the other end of the wire: it joins the running app and records
+ * every server message, so the checks can assert what a phone really gets.
+ */
+class Watcher {
+  readonly ws: WebSocket
+  readonly msgs: any[] = []
+
+  constructor(ip: string, port: number) {
+    this.ws = new WebSocket(`ws://${ip}:${port}/ws`)
+    this.ws.on('message', (raw) => this.msgs.push(JSON.parse(raw.toString())))
+  }
+
+  async open(): Promise<void> {
+    await new Promise<void>((res, rej) => this.ws.once('open', res).once('error', rej))
+  }
+
+  join(pin: string, name: string, deviceToken: string): void {
+    this.ws.send(JSON.stringify({ t: 'join', d: { pin, name, deviceToken } }))
+  }
+
+  /** The next message of a type that arrives after `from`. */
+  async next(t: string, from: number, ms = 10_000): Promise<any> {
+    return waitFor(async () => this.msgs.slice(from).find((m) => m.t === t) ?? null, ms)
+  }
+
+  close(): void {
+    this.ws.close()
+  }
+}
+
 async function main(): Promise<void> {
   const cdp = await Cdp.attach()
   const kids: ChildProcess[] = []
@@ -210,6 +241,13 @@ async function main(): Promise<void> {
       'two fresh students are connected'
     )
     log(!(await isDisabled(cdp, 'start-quiz')), 'Start quiz is clickable once students are connected')
+
+    // A phone on the wire: it joins now, so it is in the lobby with the others.
+    const watcher = new Watcher('127.0.0.1', port)
+    await watcher.open()
+    watcher.join(freshPin, 'MemeWatcher', 'meme-watcher')
+    await watcher.next('joined', 0)
+
     log(await clickByTestId(cdp, 'start-quiz'), 'the Start quiz button is clickable')
     log(await hasTestId(cdp, 'start-quiz-confirm'), 'Start quiz asks for confirmation before starting')
     log(await clickByTestId(cdp, 'start-quiz-confirm'), 'the confirmation button starts the quiz')
@@ -223,6 +261,80 @@ async function main(): Promise<void> {
     log(totalQuestions > 0, `the running view lists the questions (${totalQuestions})`)
     const countdown = await textByTestId(cdp, 'countdown')
     log(!!countdown && countdown.length > 0, `the running view shows a countdown (${countdown})`)
+
+    // --- the meme tray ---
+    log(await hasTestId(cdp, 'meme-panel'), 'the meme tray is on the live screen')
+    const thumbsBefore = await cdp.eval<number>(
+      `document.querySelectorAll('.memes__thumb').length`
+    )
+
+    // Uploading an image goes through the renderer compression pipeline,
+    // which npm run check cannot reach.
+    const doc = await cdp.send('DOM.getDocument')
+    const input = await cdp.send('DOM.querySelector', {
+      nodeId: doc.root.nodeId,
+      selector: '[data-testid="meme-file-input"]'
+    })
+    await cdp.send('DOM.setFileInputFiles', {
+      files: [resolve('scripts', 'fixtures', 'meme-sample.png')],
+      nodeId: input.nodeId
+    })
+    const uploaded = await waitFor(async () => {
+      const n = await cdp.eval<number>(`document.querySelectorAll('.memes__thumb').length`)
+      return n > thumbsBefore ? n : null
+    })
+    log(uploaded > thumbsBefore, `uploading an image adds it to the tray (${uploaded})`)
+
+    const thumbSrcs = await waitFor(async () => {
+      const srcs = await cdp.eval<string[]>(
+        `Array.from(document.querySelectorAll('.memes__thumb')).map((el) => el.getAttribute('src') || '')`
+      )
+      return srcs.length > 0 && srcs.every((src) => src.startsWith('data:')) ? srcs : null
+    })
+    log(thumbSrcs.length > 0, `every tray thumbnail is a data URL (${thumbSrcs.length})`)
+
+    const popIds = await cdp.eval<string[]>(
+      `Array.from(document.querySelectorAll('[data-testid^="pop-"]'))
+         .map((el) => el.getAttribute('data-testid') || '')
+         .filter((id) => !id.startsWith('pop-student-'))`
+    )
+    log(popIds.length === uploaded, `every meme has a pop button (${popIds.length})`)
+
+    const beforePop = watcher.msgs.length
+    log(await clickByTestId(cdp, popIds[popIds.length - 1]), 'the pop button was clicked')
+    const pop = await watcher.next('meme_pop', beforePop)
+    log(!!pop, 'the phone receives a meme_pop')
+    log(
+      Object.keys(pop.d).sort().join(',') === 'durationMs,height,memeId,mime,path,width',
+      'the pop payload carries exactly the documented fields'
+    )
+    log(typeof pop.d.path === 'string' && pop.d.path.startsWith('/memes/'), 'the pop path is relative')
+    log(pop.d.mime === 'image/jpeg' || pop.d.mime === 'image/png', 'the pop carries an image mime type')
+    const asset = await fetch(`http://127.0.0.1:${port}${pop.d.path}`)
+    log(asset.status === 200, 'the meme image is served over plain HTTP')
+    log(
+      (asset.headers.get('content-type') ?? '').startsWith('image/'),
+      'the asset route serves the stored image type'
+    )
+    log(await hasTestId(cdp, 'meme-overlay'), 'the instructor sees the meme on their own screen')
+    log(await hasTestId(cdp, 'meme-dismiss'), 'the dismiss button appears while a meme is showing')
+    log(await clickByTestId(cdp, 'meme-dismiss'), 'the dismiss button was clicked')
+    const hide = await watcher.next('meme_hide', beforePop)
+    log(!!hide, 'the phone receives a meme_hide')
+
+    // Clean up: the uploaded meme is deleted again, so the profile stays tidy.
+    const memeId = popIds[popIds.length - 1].replace(/^pop-/, '')
+    log(await clickByTestId(cdp, `delete-meme-${memeId}`), 'the delete button was found and clicked')
+    log(
+      await clickByTestId(cdp, `delete-meme-confirm-${memeId}`),
+      'the delete confirmation was clicked'
+    )
+    const removed = await waitFor(async () => {
+      const n = await cdp.eval<number>(`document.querySelectorAll('.memes__thumb').length`)
+      return n < uploaded ? { n } : null
+    })
+    log(removed.n < uploaded, 'the deleted meme leaves the tray')
+    watcher.close()
 
     // Cara answers every question as soon as quiz_start arrives.
     const answered = await waitFor(async () => {

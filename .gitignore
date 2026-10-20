@@ -9,6 +9,9 @@ dist/
 
 screen*.png
 *.png
+# The meme tray ships a sample image and the UI check uploads a fixture.
+!resources/sample-meme.png
+!scripts/fixtures/meme-sample.png
 
 server-info.json
 .fake-student-token.json
