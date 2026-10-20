@@ -1,6 +1,6 @@
 {
   "name": "quiz-instructor",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "LAN quiz instructor console - run quizzes from the phones in the room",
   "main": "./out/main/index.js",
   "author": "Quiz",
@@ -27,6 +27,7 @@
     "fast-xml-parser": "^5.11.2",
     "fastify": "^5.2.1",
     "jszip": "^3.10.2",
+    "pdf-parse": "^2.4.5",
     "qrcode": "^1.5.4",
     "ws": "^8.18.0"
   },

@@ -56,7 +56,7 @@ published for every version:
 | `QuizInstructor-<version>-setup.exe` | An installer. It puts the app in `%LOCALAPPDATA%\Programs\Quiz Instructor` and leaves a shortcut on the desktop. No admin rights, no Program Files. **Use this one.** |
 | `QuizInstructor-<version>-portable.exe` | The app in a single file, unpacked to a temporary folder on every start. Nothing is installed. |
 
-**Latest release: [v0.2.2](https://github.com/Chie03-dev/Quiz/releases/tag/v0.2.2)**.
+**Latest release: [v0.2.3](https://github.com/Chie03-dev/Quiz/releases/tag/v0.2.3)**.
 
 Prefer the installer: the portable build unpacks itself into a new folder on
 every run, so Windows treats it as a new program each time and may ask about
@@ -66,7 +66,8 @@ the firewall again and again. The installer keeps one stable path.
 
 | Version | What it brings |
 | --- | --- |
-| **v0.2.2** | **The case, the spaces and the dashes do not count.** A written answer is compared without them, so `tokyo` is right for a key of `Tokyo` and `e mail` is right for `e-mail`. The score sheet says when an answer only matched because of that, and suggests the closest answer when a student was nearly right. An enumeration also counts the same answer only once now. |
+| **v0.2.3** | **The importer reads a printed exam.** A Word document or PDF with unnumbered questions and choices without letters now comes in as questions with their choices - a paper with no answer key comes in as drafts, with one clear note instead of thirty warnings. PDFs are supported too, and a section name is no longer read out of a sentence ("A **connection** between two tables" is not a *Connect* section). |
+| v0.2.2 | **The case, the spaces and the dashes do not count.** A written answer is compared without them, so `tokyo` is right for a key of `Tokyo` and `e mail` is right for `e-mail`. The score sheet says when an answer only matched because of that, and suggests the closest answer when a student was nearly right. An enumeration also counts the same answer only once now. |
 | v0.2.1 | **Phones connect, first time.** The app now asks at startup when Windows is blocking the quiz server, and the dashboard always shows the firewall state instead of only when something is wrong. The check works on non-English Windows (it used to read every rule as "unknown" there, so the fix was never offered). The manual commands and `setup-firewall.bat` are shipped with the app. Plus an installer build with a stable path. |
 | v0.2.0 | **Results and score sheet.** Every finished session is saved and scored for you: a question list with the right answer and how many students got it, and a students x questions grid. Click any cell to change the points, the mark or add a note. Grading covers all eight question types, with partial credit for multi-part ones. |
 | v0.1.0 | The first portable build: quiz library, quiz editor, live session with counts only, and the meme tray. |
@@ -112,6 +113,63 @@ a draft release (`.github/workflows/release.yml`).
    same device token keeps its original student identity.
 
 Answer keys are never sent to phones.
+
+## Importing a quiz
+
+**Quizzes** -> **Import…** reads a paper you already have: a Word document
+(`.docx`), a PDF, a Markdown file (`.md`) or an exported quiz (`.json`).
+
+### A printed exam
+
+Most exam papers are printed for a student, not for a program: the questions
+are not numbered, the choices carry no letters and the answer key is not in
+the file at all. The importer reads that shape:
+
+- a line that asks something - it ends with a question mark, or with a colon
+  and reads like a sentence - is a **question**;
+- the lines under it, up to the next question, are its **choices**, four of
+  them usually;
+- a choice that prints its letter (`A.`) keeps that letter, and one that does
+  not is given the next free letter. A paper that mixes both reads right;
+- a heading such as `MULTIPLE CHOICE` sets the question type; without one the
+  questions are read as multiple choice, which is what a printed paper is.
+
+So a Word document with thirty unnumbered questions comes in as thirty
+questions with their four choices each.
+
+### The answer keys
+
+A key is read from, in this order:
+
+- a **marked** choice or answer - bold, underlined or highlighted. The style is
+  detected across the file, and the import dialog can pin it if the paper uses
+  more than one;
+- an **`Answer:` line** under the question ("Answer: B", or the text of the
+  choice);
+- an **Answer Key** section at the end of the document.
+
+**A paper without a key comes in without one.** The questions arrive as
+drafts, and the import says so once:
+
+> This file holds no answer keys, so the correct answer was not determined for
+> any of the 30 questions. They were imported without one - set the correct
+> answer in the editor before running the quiz.
+
+A question without a key is a draft, and a quiz with a draft cannot be
+started, so nothing runs with a missing answer. Set the keys in the editor
+and the questions turn ready.
+
+### What cannot be read
+
+- **A scan.** A PDF that is a photograph of a paper holds no text; the import
+  says so instead of bringing in an empty quiz. The same goes for an image
+  file.
+- **A table of choices.** A printed table of choices is read as a table, not
+  as choices. Write the choices on their own lines, or keep the table for a
+  matching or connect question, which is what tables are for.
+
+The import report lists every question that came out and every warning, so a
+paper that did not read the way you expected says what it did with it.
 
 ## Windows firewall
 

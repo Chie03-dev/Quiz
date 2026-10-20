@@ -9,6 +9,7 @@ import type { QuizImport } from '../quizFormat'
 import { parseQuizJson } from '../quizFormat'
 import { extractDocx } from './docx'
 import { extractMarkdown } from './markdown'
+import { extractPdf } from './pdf'
 import type { AnswerMarking, ParseWarning } from './parser'
 import { parseBlocks } from './parser'
 import { describeError, ImportError, MAX_FILE_BYTES } from './errors'
@@ -61,9 +62,14 @@ export async function importQuizFile(filePath: string, markStyle: AnswerMarking 
       const { quiz, warnings } = parseBlocks(blocks, { markStyle })
       return { ok: true, quiz, warnings }
     }
+    if (ext === '.pdf') {
+      const blocks = await extractPdf(filePath)
+      const { quiz, warnings } = parseBlocks(blocks, { markStyle })
+      return { ok: true, quiz, warnings }
+    }
     return {
       ok: false,
-      error: `unsupported file type${ext ? ` ${ext}` : ''}; use .docx, .md, .markdown or .json`
+      error: `unsupported file type${ext ? ` ${ext}` : ''}; use .docx, .pdf, .md, .markdown or .json`
     }
   } catch (err) {
     return { ok: false, error: describeError(err) }
