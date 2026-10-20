@@ -20,8 +20,8 @@ import {
   asNumber,
   asPairMap,
   asProblemKey,
-  normalizeText,
-  normalizeTight
+  answersMatch,
+  compareAnswers
 } from '../../shared/answers'
 
 /**
@@ -65,6 +65,10 @@ const UNGRADED: GradeOutcome = { correct: null, pointsAwarded: 0 }
  * credit: the points are split evenly over the parts that are right. The
  * `correct` flag is only true when every part is right, so a half-right
  * answer shows up as wrong with points on it.
+ *
+ * A written answer is compared without its case, its spacing and its dashes,
+ * so "E Mail" is right for a key of "e-mail" and "PARIS" is right for "Paris".
+ * The instructor sees the mark in the score sheet and can change it by hand.
  */
 export function gradeAnswer(question: GradableQuestion, value: AnswerValue | null): GradeOutcome {
   const points = question.points
@@ -84,7 +88,9 @@ export function gradeAnswer(question: GradableQuestion, value: AnswerValue | nul
     case 'identification': {
       const accepted = asAcceptedList(question.key)
       if (accepted.length === 0 || typeof value !== 'string') return UNGRADED
-      const correct = accepted.some((a) => normalizeText(a) === normalizeText(value))
+      // The case, the spacing and the dashes do not count: a student who
+      // writes "E Mail" for a key of "e-mail" has the right answer.
+      const correct = answersMatch(accepted, value)
       return { correct, pointsAwarded: correct ? points : 0 }
     }
     case 'fillin': {
@@ -93,7 +99,7 @@ export function gradeAnswer(question: GradableQuestion, value: AnswerValue | nul
       let hits = 0
       blanks.forEach((accepted, i) => {
         const given = typeof value[i] === 'string' ? (value[i] as string) : ''
-        if (accepted.some((a) => normalizeText(a) === normalizeText(given))) hits++
+        if (answersMatch(accepted, given)) hits++
       })
       return {
         correct: hits === blanks.length,
@@ -106,8 +112,18 @@ export function gradeAnswer(question: GradableQuestion, value: AnswerValue | nul
       const expected = typeof question.data.count === 'number' && question.data.count > 0
         ? question.data.count
         : accepted.length
-      const known = new Set(accepted.map(normalizeText))
-      const hits = value.filter((v) => typeof v === 'string' && known.has(normalizeText(v))).length
+      // Every accepted answer can only be claimed once. A student who types
+      // "red, red, red" for three colours has named one colour, and without
+      // this the same answer would be counted three times.
+      const pool = [...accepted]
+      let hits = 0
+      for (const given of value) {
+        if (typeof given !== 'string') continue
+        const index = pool.findIndex((a) => compareAnswers(given, a) !== 'none')
+        if (index < 0) continue
+        pool.splice(index, 1)
+        hits++
+      }
       const earned = Math.min(hits, expected)
       return {
         correct: earned >= expected,
@@ -138,9 +154,7 @@ export function gradeAnswer(question: GradableQuestion, value: AnswerValue | nul
         const correct = Math.abs(given - expected) <= tolerance
         return { correct, pointsAwarded: correct ? points : 0 }
       }
-      const correct =
-        normalizeText(key.answer) === normalizeText(value) ||
-        normalizeTight(key.answer) === normalizeTight(value)
+      const correct = answersMatch([key.answer], value)
       return { correct, pointsAwarded: correct ? points : 0 }
     }
     default:

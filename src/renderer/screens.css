@@ -1207,6 +1207,18 @@
   gap: var(--sp-1);
 }
 
+/* The hint under the answers: how the answer matched, or what it was closest to. */
+.res__editor-hint {
+  padding: var(--sp-2) var(--sp-3);
+  border-left: 2px solid var(--ui-accent);
+  border-radius: 0 var(--r-sm) var(--r-sm) 0;
+  background: var(--ui-surface-2);
+}
+
+.res__editor-hint .res__editor-value {
+  color: var(--ui-text);
+}
+
 .res__editor-label {
   color: var(--ui-text-muted);
   font-size: var(--fs-xs);

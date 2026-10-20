@@ -129,10 +129,13 @@ const setInput = (cdp: Cdp, testId: string, value: string): Promise<boolean> =>
  * Starts a fake student against the running app.
  * tsx is invoked directly (not via npm) so no shell is needed.
  */
-function joinStudent(name: string, pin: string, ip: string, port: number, answer = false): ChildProcess {
+function joinStudent(name: string, pin: string, ip: string, port: number, answer = false, text?: string): ChildProcess {
   const tsx = resolve('node_modules', '.bin', process.platform === 'win32' ? 'tsx.cmd' : 'tsx')
   const argv = ['scripts/fake-student.ts', '--pin', pin, '--name', name, '--ip', ip, '--port', String(port)]
   if (answer) argv.push('--answer')
+  // The written questions get this text, so a test can type the answer in the
+  // wrong case on purpose.
+  if (text !== undefined) argv.push('--text', text)
   return spawn(tsx, argv, { stdio: 'ignore', shell: process.platform === 'win32' })
 }
 
@@ -253,7 +256,9 @@ async function main(): Promise<void> {
 
     // --- two students join, then the quiz runs ---
     const freshPin = fresh.server.pin
-    kids.push(joinStudent('Cara', freshPin, selectedIp, port, true))
+    // Cara answers every question as soon as quiz_start arrives. The written
+    // answers are typed in lower case, so the key "Tokyo" has to count.
+    kids.push(joinStudent('Cara', freshPin, selectedIp, port, true, 'tokyo'))
     kids.push(joinStudent('Dan', freshPin, selectedIp, port))
     const joined2 = await waitFor(async () => {
       const s = await readUi(cdp)
@@ -417,6 +422,42 @@ async function main(): Promise<void> {
     )
     const listedQuestions = await cdp.eval<number>(`document.querySelectorAll('.res__question').length`)
     log(listedQuestions === totalQuestions, `the question list shows every question (${listedQuestions})`)
+
+    // --- an answer typed in the wrong case is still right ---
+    // The third column is the identification question, whose key is "Tokyo".
+    const looseCell = await cdp.eval<{ mark: string; classes: string; testId: string } | null>(
+      `(() => {
+         const cells = Array.from(document.querySelectorAll('[data-testid^="cell-"]'))
+         const cell = cells.find((c) => {
+           const text = c.querySelector('.res__cell-text')
+           return text &&
+             text.textContent.trim().toLowerCase() === 'tokyo' &&
+             c.parentElement.cellIndex === 3
+         })
+         if (!cell) return null
+         return {
+           mark: cell.querySelector('.res__cell-mark').textContent.trim(),
+           classes: cell.className,
+           testId: cell.getAttribute('data-testid')
+         }
+       })()`
+    )
+    log(looseCell?.mark === '✓', 'an answer typed in lower case still counts as right')
+    log(
+      (looseCell?.classes ?? '').includes('res__cell--ok'),
+      'the cell of the lower case answer is marked right'
+    )
+    if (looseCell) {
+      await clickByTestId(cdp, looseCell.testId)
+      let hinted = false
+      try {
+        await waitFor(async () => ((await hasTestId(cdp, 'answer-loose')) ? true : null))
+        hinted = true
+      } catch {
+        hinted = false
+      }
+      log(hinted, 'the editor says the answer matched only because of the case')
+    }
 
     // --- marking an answer by hand ---
     log(await clickByTestIdPrefix(cdp, 'cell-'), 'a cell of the score sheet was clicked')
