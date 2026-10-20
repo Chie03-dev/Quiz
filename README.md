@@ -56,7 +56,7 @@ published for every version:
 | `QuizInstructor-<version>-setup.exe` | An installer. It puts the app in `%LOCALAPPDATA%\Programs\Quiz Instructor` and leaves a shortcut on the desktop. No admin rights, no Program Files. **Use this one.** |
 | `QuizInstructor-<version>-portable.exe` | The app in a single file, unpacked to a temporary folder on every start. Nothing is installed. |
 
-**Latest release: [v0.2.4](https://github.com/Chie03-dev/Quiz/releases/tag/v0.2.4)**.
+**Latest release: [v0.2.5](https://github.com/Chie03-dev/Quiz/releases/tag/v0.2.5)**.
 
 Prefer the installer: the portable build unpacks itself into a new folder on
 every run, so Windows treats it as a new program each time and may ask about
@@ -66,7 +66,8 @@ the firewall again and again. The installer keeps one stable path.
 
 | Version | What it brings |
 | --- | --- | --- |
-| **v0.2.4** | **The score sheet fits the screen.** The table of students x questions sat in a narrow column and always scrolled sideways. It now has the width, the questions are shown a page at a time, and the student column and the total stay put. A compact switch fits twice as many questions on a page. |
+| **v0.2.5** | **The mark is where you clicked.** The editor for an answer sat at the end of the page, so clicking a wrong answer meant scrolling down to find it. It is now a drawer at the bottom of the screen: it opens where you are, says who and which question, and closes with Escape. |
+| v0.2.4 | **The score sheet fits the screen.** The table of students x questions sat in a narrow column and always scrolled sideways. It now has the width, the questions are shown a page at a time, and the student column and the total stay put. A compact switch fits twice as many questions on a page. |
 | v0.2.3 | **The importer reads a printed exam.** A Word document or PDF with unnumbered questions and choices without letters now comes in as questions with their choices - a paper with no answer key comes in as drafts, with one clear note instead of thirty warnings. PDFs are supported too, and a section name is no longer read out of a sentence ("A **connection** between two tables" is not a *Connect* section). |
 | v0.2.2 | **The case, the spaces and the dashes do not count.** A written answer is compared without them, so `tokyo` is right for a key of `Tokyo` and `e mail` is right for `e-mail`. The score sheet says when an answer only matched because of that, and suggests the closest answer when a student was nearly right. An enumeration also counts the same answer only once now. |
 | v0.2.1 | **Phones connect, first time.** The app now asks at startup when Windows is blocking the quiz server, and the dashboard always shows the firewall state instead of only when something is wrong. The check works on non-English Windows (it used to read every rule as "unknown" there, so the fix was never offered). The manual commands and `setup-firewall.bat` are shipped with the app. Plus an installer build with a stable path. |
@@ -458,6 +459,12 @@ Every finished session is saved as a **result session** and scored for you.
 - **Marking by hand**: click any cell to change the points, the mark
   (correct / wrong / not graded) and a note. The student's total follows, and
   the cell is flagged as no longer auto-graded.
+- **The editor is a drawer at the bottom of the screen.** It used to sit at the
+  end of the page, so clicking a cell meant scrolling down to find it. Now it
+  slides in over the bottom of the window, with the question and both answers
+  on the left and the points, the mark and the note on the right. It says who
+  and which question it is (`Cara - Q4`), Escape closes it, and the page keeps
+  room under the last row of the sheet so it can still be reached.
 - **Grading rules** (all overridable): mcq on the option id, true/false on the
   boolean, identification on the accepted answers, fill-in blank by blank,
   enumeration on the accepted items, matching and connect pair by pair, and
