@@ -40,6 +40,10 @@ const api = {
   firewallStatus: (): Promise<FirewallStatus> => ipcRenderer.invoke('firewall:status'),
   /** Triggers the UAC prompt. Only ever called from an explicit instructor click. */
   firewallInstall: (): Promise<FirewallInstallResult> => ipcRenderer.invoke('firewall:install'),
+  /** The netsh commands, one per line, to run by hand as administrator. */
+  firewallManual: (): Promise<string[]> => ipcRenderer.invoke('firewall:manual'),
+  /** Opens the folder holding setup-firewall.bat. False when it is not there. */
+  firewallOpenSetup: (): Promise<boolean> => ipcRenderer.invoke('firewall:openSetup'),
   // --- step 4: quiz library ---
   listQuizzes: (): Promise<QuizMeta[]> => ipcRenderer.invoke('lib:list'),
   getQuiz: (id: string): Promise<StoredQuiz | null> => ipcRenderer.invoke('lib:get', id),

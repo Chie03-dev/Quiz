@@ -1,5 +1,5 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
-import { promises as fs } from 'node:fs'
+import { existsSync, promises as fs } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { extname, join } from 'node:path'
 import type {
@@ -22,9 +22,9 @@ import type {
   StoredQuiz,
   StudentInfo
 } from '../shared/types'
-import { MEME_DURATION_MS } from '../shared/types'
+import { MEME_DURATION_MS, PORT_RANGE } from '../shared/types'
 import { startServer, type QuizServer } from './server'
-import { checkFirewallRules, installFirewallRules } from './firewall'
+import { checkFirewallRules, installFirewallRules, buildInstallCommands, FIREWALL_RULES, FIREWALL_SETUP_FILE } from './firewall'
 import { openAppData, runtimeQuizForStart, type MemeStore, type QuizLibrary, type ResultsStore } from './db'
 import { buildSessionSnapshot } from './results/session'
 import { MemeAssets, MEME_DIR_NAME, MEME_MAX_BYTES, buildPopPayload, seedSampleMeme } from './memes/store'
@@ -75,6 +75,81 @@ const snapshot = (): StateSnapshot | null =>
 function pushState(): void {
   const state = snapshot()
   if (state && win && !win.isDestroyed()) win.webContents.send('state:changed', state)
+}
+
+/**
+ * Where setup-firewall.bat lives.
+ *
+ * In a packaged build it is an extra resource next to the app.asar, so the
+ * folder is the resources folder. While developing it sits in the project
+ * folder. Returns null when the file is not there at all, so the caller can
+ * say so instead of opening the wrong folder.
+ */
+function firewallSetupPath(): string | null {
+  const candidates = [
+    join(process.resourcesPath, FIREWALL_SETUP_FILE),
+    join(app.getAppPath(), FIREWALL_SETUP_FILE)
+  ]
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return candidate
+  }
+  return null
+}
+
+/**
+ * Opens the manual setup file in the file manager, so the instructor can run
+ * it as administrator when the app could not raise its own prompt.
+ */
+function openFirewallSetup(): boolean {
+  const file = firewallSetupPath()
+  if (!file) return false
+  shell.showItemInFolder(file)
+  return true
+}
+
+/**
+ * Asks the instructor, once at startup, whether the firewall may be opened.
+ *
+ * Without this the only sign that a phone cannot connect is a notice on the
+ * dashboard, which is easy to miss - and a phone that cannot connect looks
+ * like a broken app rather than a blocked port. The prompt is skipped when
+ * the rules are already there, and "Not now" changes nothing: the dashboard
+ * still offers the button.
+ */
+async function promptForFirewallSetup(): Promise<void> {
+  if (process.platform !== 'win32') return
+  const status = await checkFirewallRules()
+  if (!status.supported || status.missing.length === 0) return
+
+  // Wait for the window, so the prompt is not hidden behind it.
+  if (win && !win.isVisible()) {
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, 4000)
+      win?.once('ready-to-show', () => {
+        clearTimeout(timer)
+        resolve()
+      })
+    })
+  }
+
+  const options = {
+    type: 'warning' as const,
+    title: 'Phones cannot connect yet',
+    message: 'Phones cannot connect to this PC yet.',
+    detail:
+      `Windows Firewall is blocking the quiz server on ports ${PORT_RANGE}, so phones on the ` +
+      'same Wi-Fi cannot join. Windows will ask for permission to change this. ' +
+      'You can change your mind later from the dashboard.',
+    buttons: ['Allow phones to connect', 'Not now'],
+    defaultId: 0,
+    cancelId: 1,
+    noLink: true
+  }
+  const { response } = win
+    ? await dialog.showMessageBox(win, options)
+    : await dialog.showMessageBox(options)
+  if (response !== 0) return
+  await installFirewallRules()
 }
 
 /**
@@ -398,6 +473,11 @@ function registerIpc(): void {
   // Reading the firewall needs no admin; installing always comes from a click.
   ipcMain.handle('firewall:status', () => checkFirewallRules())
   ipcMain.handle('firewall:install', () => installFirewallRules())
+  // The same commands, one per line, so the instructor can run them by hand
+  // when the app could not raise its own prompt.
+  ipcMain.handle('firewall:manual', () => buildInstallCommands(FIREWALL_RULES))
+  // Opens the folder that holds setup-firewall.bat.
+  ipcMain.handle('firewall:openSetup', () => openFirewallSetup())
 
   // --- memes: the instructor's jumpscare tray ---
 
@@ -585,6 +665,10 @@ app.whenReady().then(async () => {
   }
   registerIpc()
   await boot()
+  // Asked once, after the window is up, so the prompt is not the first thing
+  // on screen. It never blocks the app: "Not now" just leaves the dashboard
+  // notice in place.
+  void promptForFirewallSetup()
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) void createWindow()
   })

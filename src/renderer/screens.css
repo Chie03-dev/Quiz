@@ -750,6 +750,50 @@
   background: var(--ui-surface-2);
 }
 
+/* The quiet state: the firewall is fine, and it says so. */
+.fw--ready {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  border-color: var(--ui-ok);
+  background: var(--ui-ok-soft);
+}
+
+.fw__dot {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--ui-ok);
+}
+
+.fw__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.fw__manual {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding-top: var(--sp-2);
+  border-top: 1px solid var(--ui-border);
+}
+
+.fw__code {
+  margin: 0;
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r-sm);
+  background: var(--ui-bg);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
 .fw__title {
   font-weight: var(--fw-medium);
 }

@@ -21,15 +21,20 @@ const LAST_QUIZ_KEY = 'quiz.lastUsedQuizId'
 const OK_HIDE_MS = 4000
 
 /**
- * Firewall notice. Only shown when Windows is missing the rules; on other
- * platforms firewallStatus reports supported:false and this renders nothing.
+ * The firewall state of this PC, and the way out of it.
+ *
+ * The state is always on screen, not only when something is wrong: a feature
+ * that only appears when it fails is a feature nobody knows exists. When the
+ * rules are missing the app asks for permission, and the manual commands are
+ * one click away for the machines where that prompt never comes.
  */
-function FirewallNotice(): React.JSX.Element | null {
+function FirewallStatus(): React.JSX.Element | null {
   const [supported, setSupported] = useState<boolean | null>(null)
   const [missing, setMissing] = useState<string[]>([])
   const [unknown, setUnknown] = useState<string[]>([])
   const [busy, setBusy] = useState(false)
   const [result, setResult] = useState<FirewallInstallResult | null>(null)
+  const [manual, setManual] = useState<string[] | null>(null)
 
   const refresh = useCallback(() => {
     window.quiz
@@ -42,8 +47,13 @@ function FirewallNotice(): React.JSX.Element | null {
       .catch(() => setSupported(false))
   }, [])
 
-  // Checked when the dashboard opens.
+  // Checked when the dashboard opens, and again whenever the window comes
+  // back: the startup prompt steals the focus while it installs the rules.
   useEffect(refresh, [refresh])
+  useEffect(() => {
+    window.addEventListener('focus', refresh)
+    return () => window.removeEventListener('focus', refresh)
+  }, [refresh])
 
   // Clear the green message after a few seconds.
   useEffect(() => {
@@ -53,31 +63,6 @@ function FirewallNotice(): React.JSX.Element | null {
   }, [result])
 
   if (supported !== true) return null
-
-  // netsh said something we could not interpret. Say so rather than guessing
-  // either way: claiming the rules are missing would send the instructor to
-  // install something they already have.
-  if (unknown.length > 0) {
-    return (
-      <div className="fw fw--unknown" role="status">
-        <div className="fw__title">Could not read the Windows firewall rules, so their state is unknown.</div>
-        <div className="fw__detail">
-          Check them with <code>netsh advfirewall firewall show rule name=&quot;Quiz LAN Server&quot;</code>{' '}
-          in a Command Prompt — see the README.
-        </div>
-      </div>
-    )
-  }
-
-  if (result === 'installed') {
-    return (
-      <div className="fw fw--ok" role="status">
-        <div className="fw__title">Phones can connect.</div>
-      </div>
-    )
-  }
-
-  if (missing.length === 0) return null
 
   const install = (): void => {
     setBusy(true)
@@ -96,6 +81,53 @@ function FirewallNotice(): React.JSX.Element | null {
       })
   }
 
+  const showManual = (): void => {
+    void window.quiz.firewallManual().then(setManual)
+  }
+
+  // The state could not be read. It may well be fine, but the instructor has
+  // to be able to act anyway: without a button here there is nowhere to go.
+  if (unknown.length > 0) {
+    return (
+      <div className="fw fw--unknown" role="status">
+        <div className="fw__title">Could not read the Windows firewall rules, so their state is unknown.</div>
+        <div className="fw__detail">
+          Phones may not be able to connect. You can set the rules up anyway - it only adds them
+          when they are missing.
+        </div>
+        <div className="fw__actions">
+          <Button variant="secondary" onClick={install} disabled={busy}>
+            {busy ? 'Waiting for Windows permission…' : 'Set up the firewall'}
+          </Button>
+          <Button variant="ghost" size="sm" onClick={showManual}>
+            Do it manually
+          </Button>
+        </div>
+        {manual && <ManualFirewall commands={manual} />}
+      </div>
+    )
+  }
+
+  if (result === 'installed') {
+    return (
+      <div className="fw fw--ok" role="status">
+        <div className="fw__title">Phones can connect.</div>
+      </div>
+    )
+  }
+
+  if (missing.length === 0) {
+    return (
+      <div className="fw fw--ready" role="status">
+        <span className="fw__dot" aria-hidden="true" />
+        <span className="fw__detail">Firewall: ready, phones can connect.</span>
+        <Button variant="ghost" size="sm" onClick={refresh}>
+          Check again
+        </Button>
+      </div>
+    )
+  }
+
   return (
     <div className="fw" role="alert">
       <div className="fw__title">
@@ -106,12 +138,52 @@ function FirewallNotice(): React.JSX.Element | null {
       )}
       {result === 'failed' && (
         <div className="fw__detail">
-          That did not work. Run <code>setup-firewall.bat</code> as administrator instead — see the README.
+          That did not work. Run <code>setup-firewall.bat</code> as administrator instead - it is
+          next to the app.
         </div>
       )}
-      <Button variant="secondary" onClick={install} disabled={busy}>
-        {busy ? 'Waiting for Windows permission…' : 'Allow phones to connect'}
-      </Button>
+      <div className="fw__actions">
+        <Button variant="secondary" onClick={install} disabled={busy}>
+          {busy ? 'Waiting for Windows permission…' : 'Allow phones to connect'}
+        </Button>
+        <Button variant="ghost" size="sm" onClick={showManual}>
+          Do it manually
+        </Button>
+      </div>
+      {manual && <ManualFirewall commands={manual} />}
+    </div>
+  )
+}
+
+/**
+ * The manual way out: the exact commands, and the file that runs them.
+ *
+ * Shown when the app could not raise its own prompt, which happens when the
+ * machine is managed by policy and no one may elevate.
+ */
+function ManualFirewall({ commands }: { commands: string[] }): React.JSX.Element {
+  const [setupPath, setSetupPath] = useState<boolean | null>(null)
+
+  const openSetup = (): void => {
+    void window.quiz.firewallOpenSetup().then(setSetupPath)
+  }
+
+  return (
+    <div className="fw__manual">
+      <div className="fw__detail">
+        Open PowerShell as administrator and run these two lines:
+      </div>
+      <pre className="fw__code" data-testid="firewall-commands">
+        {commands.join('\n')}
+      </pre>
+      <div className="fw__actions">
+        <Button variant="ghost" size="sm" onClick={openSetup}>
+          Show setup-firewall.bat
+        </Button>
+        {setupPath === false && (
+          <span className="fw__detail">setup-firewall.bat is not next to this app.</span>
+        )}
+      </div>
     </div>
   )
 }
@@ -302,7 +374,7 @@ export function Dashboard({
       <div className="dash__columns">
         <Panel title="Join this session" actions={<Badge tone="accent">PIN {pin}</Badge>}>
           <div className="ed" style={{ gap: 'var(--sp-4)' }}>
-            <FirewallNotice />
+            <FirewallStatus />
 
             <div className="join__pin">
               <span className="join__pin-value" data-testid="session-pin">

@@ -1,6 +1,6 @@
 {
   "name": "quiz-instructor",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "LAN quiz instructor console - run quizzes from the phones in the room",
   "main": "./out/main/index.js",
   "author": "Quiz",
@@ -72,6 +72,10 @@
       {
         "from": "resources/sample-meme.png",
         "to": "sample-meme.png"
+      },
+      {
+        "from": "setup-firewall.bat",
+        "to": "setup-firewall.bat"
       }
     ],
     "asarUnpack": [
@@ -85,10 +89,26 @@
           "arch": [
             "x64"
           ]
+        },
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
         }
       ],
-      "icon": "build/icon.ico",
+      "icon": "build/icon.ico"
+    },
+    "portable": {
       "artifactName": "QuizInstructor-${version}-portable.${ext}"
+    },
+    "nsis": {
+      "artifactName": "QuizInstructor-${version}-setup.${ext}",
+      "oneClick": true,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
     }
   }
 }
