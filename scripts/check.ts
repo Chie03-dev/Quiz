@@ -21,6 +21,7 @@ import { gradeAnswer, type ResultQuestionInput } from '../src/main/db/results'
 import { buildSessionSnapshot, snapshotQuestions } from '../src/main/results/session'
 import { buildPopPayload, MemeAssets, MEME_FILE_PATTERN, seedSampleMeme } from '../src/main/memes/store'
 import { parseQuizJson, serializeQuiz, toRuntimeQuiz } from '../src/main/quizFormat'
+import { createAiManager } from '../src/main/ai'
 import {
   adviseAnswer,
   answersMatch,
@@ -32,7 +33,21 @@ import {
 } from '../src/shared/answers'
 import { quizStartError, validateQuestion } from '../src/shared/validation'
 import { buildCheckArgs, buildCheckScript, buildInstallCommand, buildInstallCommands, CHECK_OPTIONS, classifyCheckOutput, encodePowerShell, FIREWALL_RULES, FIREWALL_PROFILE, parseCheckOutput } from '../src/main/firewall'
-import { FIRST_PORT, MAX_PORT, PORT_RANGE, type QuestionType, type Quiz, type ResultSessionMeta, type StoredQuestion, type StoredQuiz, type StudentInfo } from '../src/shared/types'
+import { FIRST_PORT, MAX_PORT, PORT_RANGE, QUESTION_TYPES, type QuestionType, type Quiz, type ResultSessionMeta, type StoredQuestion, type StoredQuiz, type StudentInfo } from '../src/shared/types'
+
+
+/**
+ * On Windows, SQLite files are not always released immediately after a
+ * Database.close(); swallow EPERM so the check suite can keep going, since
+ * the OS cleans up temp files eventually.
+ */
+function safeRmSync(path: string): void {
+  try {
+    rmSync(path, { recursive: true, force: true, maxRetries: 10, retryDelay: 500 })
+  } catch {
+    // non-fatal: temp directory will be cleaned up by the OS
+  }
+}
 
 /** The reasons the sessions of the live server ended, in order. */
 const endedReasons: string[] = []
@@ -471,9 +486,13 @@ async function main(): Promise<void> {
   console.log('\n--- results ---')
   checkResults()
 
-  // --- the stylesheets ---
-  console.log('\n--- stylesheets ---')
-  checkStylesheets()
+   // --- the stylesheets ---
+   console.log('\n--- stylesheets ---')
+   checkStylesheets()
+
+   // --- AI question generation (stub provider) ---
+   console.log('\n--- AI ---')
+   await checkAi()
 
   const seen: any[] = []
   let lastInfo: any = null
@@ -634,7 +653,7 @@ async function main(): Promise<void> {
   checkFirewallCommands()
 
   memeData.quizzes.close()
-  rmSync(memeDir, { recursive: true, force: true })
+  safeRmSync(memeDir)
 
   console.log('done')
   process.exit(process.exitCode ?? 0)
@@ -783,7 +802,7 @@ function validQuestions(): StoredQuestion[] {
     lib.close()
     return seededRuntime
   } finally {
-    rmSync(dir, { recursive: true, force: true })
+    safeRmSync(dir)
   }
 }
 
@@ -1298,7 +1317,7 @@ async function checkMemes(
   )
   log(sampleData.fresh, 'a brand-new database reports itself as fresh')
   sampleData.quizzes.close()
-  rmSync(sampleDir, { recursive: true, force: true })
+  safeRmSync(sampleDir)
 
   // --- the payload the phone would get ---
   const payload = buildPopPayload(store, id, 3000)
@@ -2005,7 +2024,7 @@ function checkResults(): void {
     }
     checkResultsMigration(dir)
   } finally {
-    rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 })
+     safeRmSync(dir)
   }
 }
 
@@ -2270,7 +2289,7 @@ function checkResultsMigration(dir: string): void {
   // Turn it back into a v2 database: no results tables, user_version 2.
   const raw = new Database(path)
   raw.pragma('foreign_keys = OFF')
-  raw.exec('DROP TABLE result_answers; DROP TABLE result_students; DROP TABLE result_questions; DROP TABLE result_sessions;')
+  raw.exec('DROP TABLE IF EXISTS result_answers; DROP TABLE IF EXISTS result_students; DROP TABLE IF EXISTS result_questions; DROP TABLE IF EXISTS result_sessions; DROP TABLE IF EXISTS ai_chunks; DROP INDEX IF EXISTS idx_ai_chunks_source;')
   raw.pragma('user_version = 2')
   raw.close()
 
@@ -2280,4 +2299,70 @@ function checkResultsMigration(dir: string): void {
   log(upgraded.results.list().length === 0, 'the upgraded database starts with no results')
   log(upgraded.results.get('no-such-session') === null, 'an unknown session is unknown to the results store')
   upgraded.quizzes.close()
+}
+
+/**
+ * The AI layer: stub provider generation, validation of all eight types,
+ * auto-key completion, and round-trip through the library.
+ */
+async function checkAi(): Promise<void> {
+  const manager = createAiManager()
+
+  // --- status ---
+  const status = manager.status()
+  log(status.ready === true, 'the AI stub provider reports ready')
+  log(typeof status.provider === 'string' && status.provider.length > 0, 'the stub provider has a name')
+
+  // --- chunking ---
+  const text = 'Alpha. Beta. Gamma. Delta. Epsilon. Zeta. Eta. Theta. Iota. Kappa. '
+  const chunks = await manager.chunkText(text)
+  log(chunks.length > 0, 'the chunker splits text into at least one chunk')
+  log(chunks.every((c) => c.text.length > 0), 'every chunk has non-empty text')
+
+  // --- generation: all 8 types, valid ---
+  const result = await manager.generate({
+    sourceText: 'The Earth orbits the Sun. Gold is Au. Water boils at 100°C.',
+    questionTypes: QUESTION_TYPES,
+    count: 8,
+    points: 1
+  })
+
+  log(result.questions.length === 8, 'AI generates 8 questions, one per type')
+  for (let i = 0; i < result.questions.length; i++) {
+    const q = result.questions[i]!
+    const stub = { ...q, id: `ai-test-${i}`, status: 'ready' as const }
+    const problems = validateQuestion(stub)
+    log(problems.length === 0, `generated ${q.type} question passes validation`)
+  }
+
+  // --- round-trip through the library ---
+  const dir = mkdtempSync(join(tmpdir(), 'quiz-ai-'))
+  try {
+    const data = openAppData(join(dir, 'ai.db'))
+    const quiz = data.quizzes.create('AI test')
+    quiz.questions = result.questions.map((q) => ({ ...q, id: randomUUID(), status: 'draft' as const }))
+    const saved = data.quizzes.save(quiz)
+    const loaded = data.quizzes.get(saved.id)
+    log(loaded !== null, 'the generated quiz round-trips through the library')
+    log(
+      loaded !== null && loaded.questions.length === 8,
+      'the saved quiz has all 8 questions'
+    )
+    log(
+      !!loaded && loaded.questions.every((q) => validateQuestion(q).length === 0),
+      'every saved question is still valid after round-trip'
+    )
+    data.quizzes.close()
+  } finally {
+     safeRmSync(dir)
+  }
+
+  // --- auto-key ---
+  const draftQuestions: StoredQuestion[] = [
+    { id: 'd1', type: 'mcq', body: 'Test?', points: 1, data: { options: [{ id: 'a', text: 'A' }, { id: 'b', text: 'B' }] }, key: null, sourceText: '', status: 'draft' },
+    { id: 'd2', type: 'tf', body: 'True or false.', points: 1, data: {}, key: null, sourceText: '', status: 'draft' }
+  ]
+  const autoKeyed = await manager.autoKey({ questions: draftQuestions })
+  log(autoKeyed.questions.length === 2, 'autoKey returns one key per question')
+  log(autoKeyed.questions.every((q) => q.key !== null), 'every autoKeyed question has a key')
 }

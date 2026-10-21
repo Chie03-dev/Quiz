@@ -121,7 +121,7 @@ export function App(): React.JSX.Element {
     content = (
       <QuizLibrary
         onBack={() => setView({ name: 'dashboard' })}
-        onOpen={(quizId) => setView({ name: 'editor', quizId })}
+        onOpen={(quizId, report) => setView({ name: 'editor', quizId, importReport: report ?? null })}
       />
     )
   } else if (view.name === 'results') {

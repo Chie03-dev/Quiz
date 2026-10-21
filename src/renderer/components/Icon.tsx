@@ -28,8 +28,9 @@ export type IconName =
   | 'unlock'
   | 'chevron-down'
   | 'chevron-up'
-  | 'zap'
-  | 'image'
+   | 'zap'
+   | 'image'
+   | 'sparkle'
 
 const PATHS: Record<IconName, ReactNode> = {
   dashboard: (
@@ -121,6 +122,11 @@ const PATHS: Record<IconName, ReactNode> = {
       <rect x="3" y="4" width="18" height="16" rx="2" />
       <circle cx="8.5" cy="9.5" r="1.5" />
       <path d="m4 17 5-5 4 4 2-2 5 4" />
+    </>
+  ),
+  sparkle: (
+    <>
+      <path d="M12 3l2.5 7.5H22l-5 4 1.5 7.5-6-4-6 4 1.5-7.5z" />
     </>
   )
 }

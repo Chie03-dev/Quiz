@@ -10,6 +10,7 @@ import type {
   MemeSavePayload,
   MemeSaveResult,
   MemeState,
+  QuestionType,
   QuizState,
   ResultEndReason,
   ResultOperationResult,
@@ -20,9 +21,10 @@ import type {
   StartQuizResult,
   StateSnapshot,
   StoredQuiz,
+  StoredQuestion,
   StudentInfo
 } from '../shared/types'
-import { MEME_DURATION_MS, PORT_RANGE } from '../shared/types'
+import { MEME_DURATION_MS, PORT_RANGE, QUESTION_TYPES } from '../shared/types'
 import { startServer, type QuizServer } from './server'
 import { checkFirewallRules, installFirewallRules, buildInstallCommands, FIREWALL_RULES, FIREWALL_SETUP_FILE } from './firewall'
 import { openAppData, runtimeQuizForStart, type MemeStore, type QuizLibrary, type ResultsStore } from './db'
@@ -30,12 +32,21 @@ import { buildSessionSnapshot } from './results/session'
 import { MemeAssets, MEME_DIR_NAME, MEME_MAX_BYTES, buildPopPayload, seedSampleMeme } from './memes/store'
 import { parseQuizJson, serializeQuiz } from './quizFormat'
 import { describeError, importQuizFile } from './import'
+import { createAiManager } from './ai'
+import type { AiManager } from './ai'
+import type {
+  AiStatus,
+  GenerateOptions,
+  AutoKeyOptions,
+  AutoKeyResult
+} from './ai/types'
 
 let win: BrowserWindow | null = null
 let server: QuizServer | null = null
 let library: QuizLibrary | null = null
 let memeStore: MemeStore | null = null
 let resultsStore: ResultsStore | null = null
+let aiManager: AiManager | null = null
 let memeAssets: MemeAssets | null = null
 let latestStudents: StudentInfo[] = []
 let latestServer: ServerInfo | null = null
@@ -606,6 +617,101 @@ function registerIpc(): void {
     if (state.status === 'lobby') return null
     return persistResults(state.endReason)
   })
+
+  // --- step 5: AI question generation ---
+
+  ipcMain.handle('ai:status', (): AiStatus => {
+    if (!aiManager) return { ready: false, provider: 'none', model: 'none' }
+    return aiManager.status()
+  })
+
+  ipcMain.handle('ai:selectFile', async () => {
+    if (!win) return null
+    const result = await dialog.showOpenDialog(win, {
+      title: 'Select a source file',
+      properties: ['openFile'],
+      filters: [
+        { name: 'All supported', extensions: ['docx', 'pdf', 'md', 'markdown', 'txt'] },
+        { name: 'Word', extensions: ['docx'] },
+        { name: 'PDF', extensions: ['pdf'] },
+        { name: 'Markdown', extensions: ['md', 'markdown'] },
+        { name: 'Text', extensions: ['txt'] }
+      ]
+    })
+    if (result.canceled || !result.filePaths[0]) return null
+    return result.filePaths[0]
+  })
+
+  ipcMain.handle('ai:readFile', async (_event, filePath: unknown): Promise<string> => {
+    if (typeof filePath !== 'string' || !aiManager) return ''
+    try {
+      return await aiManager.extractText(filePath)
+    } catch {
+      return ''
+    }
+  })
+
+  ipcMain.handle('ai:generate', async (_event, opts: unknown): Promise<ImportQuizResult> => {
+    if (!library || !aiManager) return { ok: false, error: 'The AI provider is not available.' }
+    try {
+      if (!opts || typeof opts !== 'object') return { ok: false, error: 'Invalid generation options.' }
+      const o = opts as { sourceText?: string; questionTypes?: string[]; count?: number; points?: number }
+      const sourceText = typeof o.sourceText === 'string' ? o.sourceText : ''
+      const questionTypes = Array.isArray(o.questionTypes) ? o.questionTypes.filter((t): t is QuestionType => typeof t === 'string' && QUESTION_TYPES.includes(t as QuestionType)) : []
+      const count = typeof o.count === 'number' && o.count > 0 ? o.count : 5
+      const points = typeof o.points === 'number' && o.points > 0 ? o.points : 1
+
+      const result = await aiManager.generate({ sourceText, questionTypes, count, points })
+
+      const quiz = library.create('AI generated quiz')
+      quiz.questions = result.questions.map((q) => ({
+        ...q,
+        id: randomUUID(),
+        status: 'draft' as const
+      }))
+      const saved = library.save(quiz)
+
+      return {
+        ok: true,
+        report: {
+          id: saved.id,
+          title: saved.title,
+          questionCount: saved.questions.length,
+          warnings: [],
+          questions: saved.questions.map((q) => ({
+            id: q.id,
+            type: q.type,
+            body: q.body,
+            sourceText: q.sourceText
+          }))
+        }
+      }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+
+  ipcMain.handle('ai:autoKey', async (_event, input: unknown): Promise<AutoKeyResult> => {
+    if (!aiManager) return { questions: [] }
+    try {
+      if (!input || typeof input !== 'object') return { questions: [] }
+      const o = input as { questions?: unknown; sourceText?: string }
+      if (!Array.isArray(o.questions)) return { questions: [] }
+      const questions = o.questions.filter((q): q is StoredQuestion =>
+        q && typeof q === 'object' &&
+        typeof (q as { type?: unknown }).type === 'string' &&
+        QUESTION_TYPES.includes((q as { type: string }).type as QuestionType)
+      )
+      const opts: AutoKeyOptions = {
+        questions: questions as StoredQuestion[],
+        sourceText: typeof o.sourceText === 'string' ? o.sourceText : undefined
+      }
+      return aiManager.autoKey(opts)
+    } catch (err) {
+      console.error('ai:autoKey failed:', err)
+      return { questions: [] }
+    }
+  })
 }
 
 /** The student ids of a targeted pop; undefined means every student. */
@@ -642,6 +748,7 @@ app.whenReady().then(async () => {
   library = data.quizzes
   memeStore = data.memes
   resultsStore = data.results
+  aiManager = createAiManager()
   memeAssets = new MemeAssets(memeStore, join(userData, MEME_DIR_NAME))
   memeAssets.ensure()
   // The sample meme is seeded on a brand-new profile only, next to the
