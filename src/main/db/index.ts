@@ -7,11 +7,13 @@ import { toRuntimeQuiz } from '../quizFormat'
 import { QuizLibrary } from './library'
 import { MemeStore } from './memes'
 import { ResultsStore } from './results'
+import { AiChunkStore } from './aiChunks'
 import { migrate } from './schema'
 
 export { QuizLibrary } from './library'
 export { MemeStore } from './memes'
 export { ResultsStore } from './results'
+export { AiChunkStore } from './aiChunks'
 export { SCHEMA_VERSION } from './schema'
 
 /**
@@ -41,6 +43,7 @@ export interface AppData {
   quizzes: QuizLibrary
   memes: MemeStore
   results: ResultsStore
+  ai: AiChunkStore
   /** True when the database file was brand new: the sample data is seeded then. */
   fresh: boolean
 }
@@ -57,8 +60,9 @@ export function openAppData(filePath: string): AppData {
   const quizzes = new QuizLibrary(db)
   const memes = new MemeStore(db)
   const results = new ResultsStore(db)
+  const ai = new AiChunkStore(db)
   if (fresh) quizzes.seedSampleQuiz()
-  return { quizzes, memes, results, fresh }
+  return { quizzes, memes, results, ai, fresh }
 }
 
 /** The quiz library alone; kept for the test scripts and older call sites. */

@@ -8,6 +8,7 @@ import type {
   MemePopResult,
   MemeSavePayload,
   MemeSaveResult,
+  QuestionType,
   QuizMeta,
   ResultOperationResult,
   ResultSessionDetail,
@@ -16,7 +17,8 @@ import type {
   SaveResultAnswerInput,
   StartQuizResult,
   StateSnapshot,
-  StoredQuiz
+  StoredQuiz,
+  StoredQuestion
 } from '../shared/types'
 
 // The renderer never talks to the server directly; everything goes through here.
@@ -84,9 +86,27 @@ const api = {
   updateResultAnswer: (input: SaveResultAnswerInput): Promise<ResultOperationResult> =>
     ipcRenderer.invoke('results:updateAnswer', input),
   /** Saves the running session as it stands. */
-  saveCurrentResult: (): Promise<ResultSessionMeta | null> =>
-    ipcRenderer.invoke('results:createFromCurrent'),
-  onStateChanged: (cb: (state: StateSnapshot) => void): (() => void) => {
+   saveCurrentResult: (): Promise<ResultSessionMeta | null> =>
+     ipcRenderer.invoke('results:createFromCurrent'),
+   // --- AI question generation ---
+   /** Whether the AI provider is ready and which one it is. */
+   aiStatus: (): Promise<{ ready: boolean; provider: string; model: string }> =>
+     ipcRenderer.invoke('ai:status'),
+   /** Opens a file dialog for a source document; returns the path or null. */
+   aiSelectFile: (): Promise<string | null> => ipcRenderer.invoke('ai:selectFile'),
+   /** Reads text from a .docx, .pdf, .md, or .txt file. */
+   aiReadFile: (filePath: string): Promise<string> => ipcRenderer.invoke('ai:readFile', filePath),
+   /** Generates questions from source text; creates a new quiz in the library. */
+   aiGenerate: (opts: {
+     sourceText: string
+     questionTypes: QuestionType[]
+     count: number
+     points: number
+   }): Promise<ImportQuizResult> => ipcRenderer.invoke('ai:generate', opts),
+   /** Fills in missing answer keys for the given questions. */
+   aiAutoKey: (questions: StoredQuestion[]): Promise<StoredQuestion[]> =>
+     ipcRenderer.invoke('ai:autoKey', { questions }),
+   onStateChanged: (cb: (state: StateSnapshot) => void): (() => void) => {
     const listener = (_e: unknown, state: StateSnapshot): void => cb(state)
     ipcRenderer.on('state:changed', listener)
     return () => ipcRenderer.removeListener('state:changed', listener)

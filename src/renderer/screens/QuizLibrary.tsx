@@ -6,6 +6,7 @@ import { ConfirmButton } from '../components/ConfirmButton'
 import { EmptyState } from '../components/EmptyState'
 import { Icon } from '../components/Icon'
 import { Panel } from '../components/Panel'
+import { AiGenerateDialog } from '../AiGenerateDialog'
 
 /** Minutes shown for a time limit stored in seconds. */
 const minutes = (sec: number): string => {
@@ -87,10 +88,11 @@ export function QuizLibrary({
   onOpen
 }: {
   onBack: () => void
-  onOpen: (id: string) => void
+  onOpen: (id: string, importReport?: ImportQuizReport) => void
 }): React.JSX.Element {
   const [quizzes, setQuizzes] = useState<QuizMeta[] | null>(null)
   const [error, setError] = useState('')
+  const [showAiDialog, setShowAiDialog] = useState(false)
 
   const refresh = useCallback(() => {
     void window.quiz.listQuizzes().then(setQuizzes)
@@ -162,6 +164,9 @@ export function QuizLibrary({
         title="Your quizzes"
         actions={
           <>
+            <Button variant="secondary" icon={<Icon name="sparkle" />} onClick={() => setShowAiDialog(true)}>
+              Generate with AI
+            </Button>
             <Button variant="secondary" icon={<Icon name="upload" />} onClick={importQuiz}>
               Import…
             </Button>
@@ -203,6 +208,17 @@ export function QuizLibrary({
           Back to dashboard
         </Button>
       </div>
+
+      <AiGenerateDialog
+        open={showAiDialog}
+        onClose={() => setShowAiDialog(false)}
+        onGenerated={(report) => {
+          setShowAiDialog(false)
+          setImportReport(report)
+          onOpen(report.id, report)
+          refresh()
+        }}
+      />
 
     </div>
   )

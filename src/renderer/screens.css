@@ -3,6 +3,74 @@
  * only arrange them.
  */
 
+/* --- AI dialog ------------------------------------------------------- */
+
+.ai__overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.72);
+  z-index: 100;
+  padding: var(--sp-4);
+}
+
+.ai__dialog {
+  max-width: 640px;
+  width: 100%;
+  max-height: 80vh;
+  overflow: auto;
+}
+
+.ai__panel {
+  width: 100%;
+}
+
+.ai__content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+}
+
+.ai__source {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.ai__types {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.ai__type-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: var(--sp-2);
+}
+
+.ai__type-check {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  cursor: pointer;
+}
+
+.ai__controls {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--sp-3);
+}
+
+.ai__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--sp-2);
+  margin-top: var(--sp-2);
+}
+
 /* --- dashboard ------------------------------------------------------ */
 
 .dash {

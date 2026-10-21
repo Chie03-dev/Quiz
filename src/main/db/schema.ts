@@ -5,7 +5,7 @@ import type { Database } from 'better-sqlite3'
  * whenever a table changes; migrations run in order inside a transaction so
  * an existing library upgrades without losing data.
  */
-export const SCHEMA_VERSION = 3
+export const SCHEMA_VERSION = 4
 
 const MIGRATIONS: string[] = [
   // 1: the step-4 quiz library.
@@ -92,8 +92,20 @@ const MIGRATIONS: string[] = [
   );
   CREATE INDEX idx_result_students_session ON result_students(session_id);
   CREATE INDEX idx_result_questions_session ON result_questions(session_id);
-  CREATE INDEX idx_result_answers_session ON result_answers(session_id);
-  CREATE INDEX idx_result_answers_student_q ON result_answers(student_id, question_id);
+   CREATE INDEX idx_result_answers_session ON result_answers(session_id);
+   CREATE INDEX idx_result_answers_student_q ON result_answers(student_id, question_id);
+   `,
+  // 4: the AI chunk cache for RAG (retrieval-augmented generation).
+  `
+  CREATE TABLE ai_chunks (
+    id TEXT PRIMARY KEY,
+    source_ref TEXT NOT NULL,
+    chunk_index INTEGER NOT NULL,
+    text TEXT NOT NULL,
+    tokens INTEGER NOT NULL,
+    created_at INTEGER NOT NULL
+  );
+  CREATE INDEX idx_ai_chunks_source ON ai_chunks(source_ref, chunk_index);
   `
 ]
 

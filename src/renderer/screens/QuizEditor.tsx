@@ -155,18 +155,27 @@ export function QuizEditor({
     patch((q) => ({ ...q, questions: [...q.questions, newQuestion(type)] }))
   }
 
-  const save = (): void => {
-    void window.quiz.saveQuiz(quiz).then((result) => {
-      if (result.ok) {
-        setQuiz(result.quiz)
-        setDirty(false)
-        setSaved(true)
-        setError('')
-      } else {
-        setError(result.error)
-      }
-    })
-  }
+   const save = (): void => {
+     void window.quiz.saveQuiz(quiz).then((result) => {
+       if (result.ok) {
+         setQuiz(result.quiz)
+         setDirty(false)
+         setSaved(true)
+         setError('')
+       } else {
+         setError(result.error)
+       }
+     })
+   }
+
+   const autoKey = (): void => {
+     void window.quiz.aiAutoKey(quiz.questions).then((questions) => {
+       if (questions.length > 0) {
+         patch((q) => ({ ...q, questions }))
+         setSaved(false)
+       }
+     })
+   }
 
   const back = (): void => {
     if (dirty && !window.confirm('Discard unsaved changes?')) return
@@ -279,6 +288,9 @@ export function QuizEditor({
           Back to library
         </Button>
         {dirty ? <Badge tone="warn">Unsaved changes</Badge> : saved ? <Badge tone="ok">Saved</Badge> : null}
+        <Button variant="secondary" size="sm" icon={<Icon name="sparkle" />} onClick={autoKey}>
+          Auto-select answers
+        </Button>
         <Button variant="primary" testId="save-quiz" onClick={save}>
           Save
         </Button>
