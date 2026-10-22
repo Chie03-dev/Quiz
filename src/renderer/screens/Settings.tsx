@@ -127,6 +127,7 @@ export function Settings(): React.JSX.Element {
   }
 
   const activeModel = models.find((m) => m.active) ?? null
+  const searchModel = models.find((m) => m.kind === 'embedding' && m.downloaded) ?? null
 
   return (
     <div className="settings-page">
@@ -162,6 +163,7 @@ export function Settings(): React.JSX.Element {
                 <p className="settings-model-desc">{model.description}</p>
                 <div className="settings-model-meta">
                   <Badge tone="neutral">{formatSize(model.sizeBytes)}</Badge>
+                  {model.kind === 'embedding' && <Badge tone="teal">Search model</Badge>}
                   {model.downloaded && <Badge tone="ok">Downloaded</Badge>}
                   {model.active && <Badge tone="accent">Active</Badge>}
                 </div>
@@ -176,7 +178,7 @@ export function Settings(): React.JSX.Element {
               </div>
 
               <div className="settings-model-actions">
-                {model.downloaded && !model.active && (
+                {model.downloaded && !model.active && model.kind !== 'embedding' && (
                   <Button
                     size="sm"
                     variant="primary"
@@ -266,6 +268,25 @@ export function Settings(): React.JSX.Element {
             </Button>
           </div>
         </div>
+      </section>
+
+      <section className="settings-section">
+        <h2>How the questions are found</h2>
+        <p className="settings-subtitle">
+          The chapter is cut into pieces, and the questions are written from the pieces that are
+          spread over the whole chapter - not only from its first pages. Every answer is looked up
+          in the piece it came from, so a question that is not about the text does not get in.
+        </p>
+        <div className="settings-model-meta">
+          <Badge tone={searchModel ? 'ok' : 'neutral'}>
+            {searchModel ? 'Search by words and meaning' : 'Search by words'}
+          </Badge>
+        </div>
+        <p className="settings-note">
+          {searchModel
+            ? 'The small search model is downloaded, so the app also finds the passages that mean the same thing as the question.'
+            : 'Download the small search model above to let the app find the passages that mean the same as the question, not only the ones with the same words.'}
+        </p>
       </section>
     </div>
   )

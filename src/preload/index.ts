@@ -102,6 +102,8 @@ const api = {
   /** Generates questions from source text; creates a new quiz in the library. */
   aiGenerate: (opts: {
     sourceText: string
+    filePath?: string
+    topic?: string
     questionTypes: QuestionType[]
     count: number
     points: number

@@ -586,7 +586,11 @@ async function main(): Promise<void> {
     const modelCards = await cdp.eval<number>(
       `document.querySelectorAll('[data-testid^="settings-model-"]').length`
     )
-    log(modelCards === 3, `the settings screen lists every catalog model (${modelCards})`)
+    const catalog = await cdp.eval<number>(`window.quiz.aiModels().then((m) => m.length)`)
+    log(
+      modelCards === catalog,
+      `the settings screen lists every catalog model (${modelCards} of ${catalog})`
+    )
     log(await hasTestId(cdp, 'settings-builtin'), 'the built-in generator is offered')
     log(
       await hasTestId(cdp, 'settings-download-qwen2.5-0.5b-instruct-q4'),

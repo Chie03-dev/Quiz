@@ -40,6 +40,21 @@ import {
 } from '../src/main/ai/ggufProvider'
 import { splitFacts } from '../src/main/ai/prompts'
 import {
+  chunkDocument,
+  blocksToDocBlocks,
+  contentWords,
+  estimateTokens,
+  splitSentences,
+  MAX_CHILD_TOKENS
+} from '../src/main/ai/rag/chunking'
+import {
+  maximalMarginalRelevance,
+  reciprocalRankFusion,
+  assembleContext,
+  spread
+} from '../src/main/ai/rag/retrieval'
+import { cosineSimilarity, toBlob, fromBlob } from '../src/main/db/aiChunks'
+import {
   adviseAnswer,
   answersMatch,
   compareAnswers,
@@ -514,6 +529,11 @@ async function main(): Promise<void> {
     // --- AI model registry ---
     console.log('\n--- AI models ---')
     await checkAiModels()
+
+    // --- the retrieval ---
+    console.log('\n--- retrieval ---')
+    await checkRag()
+
 
   const seen: any[] = []
   let lastInfo: any = null
@@ -2310,7 +2330,7 @@ function checkResultsMigration(dir: string): void {
   // Turn it back into a v2 database: no results tables, user_version 2.
   const raw = new Database(path)
   raw.pragma('foreign_keys = OFF')
-  raw.exec('DROP TABLE IF EXISTS result_answers; DROP TABLE IF EXISTS result_students; DROP TABLE IF EXISTS result_questions; DROP TABLE IF EXISTS result_sessions; DROP TABLE IF EXISTS ai_chunks; DROP INDEX IF EXISTS idx_ai_chunks_source;')
+  raw.exec('DROP TABLE IF EXISTS result_answers; DROP TABLE IF EXISTS result_students; DROP TABLE IF EXISTS result_questions; DROP TABLE IF EXISTS result_sessions; DROP TABLE IF EXISTS ai_chunks; DROP TABLE IF EXISTS ai_fts; DROP TABLE IF EXISTS ai_vectors; DROP INDEX IF EXISTS idx_ai_chunks_source;')
   raw.pragma('user_version = 2')
   raw.close()
 
@@ -2386,6 +2406,191 @@ async function checkAi(): Promise<void> {
   const autoKeyed = await manager.autoKey({ questions: draftQuestions })
   log(autoKeyed.questions.length === 2, 'autoKey returns one key per question')
   log(autoKeyed.questions.every((q) => q.key !== null), 'every autoKeyed question has a key')
+}
+
+/**
+ * The retrieval: cutting a document into pieces, searching it by words,
+ * putting two rankings together and picking passages that are not all the
+ * same.
+ */
+async function checkRag(): Promise<void> {
+  // --- cutting a document ---
+  const run = (text: string, bold = false) => ({
+    text,
+    bold,
+    underline: false,
+    highlight: false
+  })
+  const paragraph = (text: string) => ({ kind: 'paragraph' as const, runs: [run(text)] })
+  const blocks = blocksToDocBlocks([
+    { kind: 'paragraph', heading: 1, runs: [run('1. Introduction', true)] },
+    paragraph(
+      'Photosynthesis turns water and carbon dioxide into sugar and oxygen. Chlorophyll absorbs the light of the sun. The energy of the light is stored in the sugar. The oxygen is given back to the air through the stomata of the leaf.'
+    ),
+    paragraph(
+      'The sugar is carried through the plant to the parts that need it. The phloem does this work. The leaves are the kitchens of the plant. The roots bring the water up from the soil. Every part of the plant eats what the leaves make.'
+    ),
+    { kind: 'paragraph', heading: 1, runs: [run('2. Meiosis', true)] },
+    paragraph(
+      'Meiosis halves the number of chromosomes in a cell. It happens in two divisions. The first division separates the homologous chromosomes. The second division separates the sister chromatids. The result is four cells with half the chromosomes.'
+    ),
+    paragraph(
+      'Meiosis makes the gametes. A gamete has one set of chromosomes. When two gametes meet, they fuse. The new cell has two sets of chromosomes again. That is fertilization.'
+    )
+  ])
+
+  const chunks = chunkDocument(blocks)
+  const parents = chunks.filter((chunk) => chunk.kind === 'parent')
+  const children = chunks.filter((chunk) => chunk.kind === 'child')
+
+  log(parents.length >= 2, `a document becomes parent chunks (${parents.length})`)
+  log(children.length >= 4, `a document becomes child chunks (${children.length})`)
+  log(
+    children.every((child) => child.parentId !== ''),
+    'every child knows the parent it belongs to'
+  )
+  log(
+    parents.some((parent) => parent.heading === '1. Introduction'),
+    'a chunk keeps the heading it sits under'
+  )
+  log(
+    parents.some((parent) => parent.heading === '2. Meiosis'),
+    'the second section has its own heading'
+  )
+  log(
+    children.every((child) => child.text.length < 400),
+    'a child chunk is a part of the document, not the whole document'
+  )
+  log(
+    children.every((child) => child.tokens <= MAX_CHILD_TOKENS + 40),
+    'a child chunk stays small enough to search in'
+  )
+  log(estimateTokens('four words go here') > 0, 'the size of a text is estimated')
+
+  const sentences = splitSentences('One sentence. Two sentences. Three sentences.')
+  log(sentences.length === 3, `a text is cut into sentences (${sentences.length})`)
+  log(
+    contentWords('The chloroplasts in the leaves').includes('chloroplasts'),
+    'the words that matter are found'
+  )
+  log(
+    !contentWords('The chloroplasts in the leaves').includes('the'),
+    'the words that say nothing are left out'
+  )
+
+  // --- the index and the search by words ---
+  const dir = mkdtempSync(join(tmpdir(), 'quiz-rag-'))
+  try {
+    const data = openAppData(join(dir, 'rag.db'))
+    const index = data.ai
+    const sourceRef = 'file:chapter1.docx'
+    index.replace(sourceRef, chunks)
+
+    log(index.has(sourceRef), 'a source is in the index')
+    const hits = index.searchWords(sourceRef, 'meiosis chromosomes')
+    log(hits.length > 0, 'the search finds a chunk by its words')
+    log(
+      hits.length > 0 && hits[0].chunk.text.toLowerCase().includes('meiosis'),
+      'the best hit is the chunk with the words'
+    )
+    log(
+      index.searchWords(sourceRef, 'nothing here at all').length === 0,
+      'a search without a hit finds nothing'
+    )
+    log(index.list(sourceRef).length === chunks.length, 'every chunk comes back from the index')
+
+    // The vectors of a chunk.
+    index.replaceVectors(sourceRef, new Map([[children[0].id, [0.1, 0.2, 0.3]]]))
+    log(index.hasVectors(sourceRef), 'the vectors of a source are stored')
+    const vectors = index.vectors(sourceRef)
+    log(
+      vectors.length === 1 && Math.abs(vectors[0].vector[2] - 0.3) < 0.0001,
+      'a vector comes back the way it went in'
+    )
+    log(
+      Math.abs(cosineSimilarity([1, 0, 0], [1, 0, 0]) - 1) < 0.0001,
+      'the same vectors are one'
+    )
+    log(
+      Math.abs(cosineSimilarity([1, 0, 0], [0, 1, 0])) < 0.0001,
+      'two different vectors are not alike'
+    )
+    log(
+      fromBlob(toBlob([0.5, -0.25])).length === 2,
+      'a vector survives the trip through bytes'
+    )
+
+    data.quizzes.close()
+  } finally {
+    safeRmSync(dir)
+  }
+
+  // --- putting two rankings together ---
+  const first = [
+    { chunk: { id: 'a', text: 'alpha' } as never, score: 1, rank: 1, source: 'bm25' as const },
+    { chunk: { id: 'b', text: 'beta' } as never, score: 0.5, rank: 2, source: 'bm25' as const }
+  ]
+  const second = [
+    { chunk: { id: 'b', text: 'beta' } as never, score: 1, rank: 1, source: 'dense' as const },
+    { chunk: { id: 'c', text: 'gamma' } as never, score: 0.5, rank: 2, source: 'dense' as const }
+  ]
+  const fused = reciprocalRankFusion([first, second])
+  log(fused.length === 3, 'the two rankings are put together')
+  log(fused[0]?.chunk.id === 'b', 'the chunk both searches found comes first')
+
+  // --- picking passages that are not all the same ---
+  const candidates = [
+    {
+      chunk: { id: '1', text: 'photosynthesis in the leaves' } as never,
+      score: 1,
+      rank: 1,
+      source: 'bm25' as const
+    },
+    {
+      chunk: { id: '2', text: 'photosynthesis in the leaves' } as never,
+      score: 0.9,
+      rank: 2,
+      source: 'bm25' as const
+    },
+    {
+      chunk: { id: '3', text: 'meiosis halves the chromosomes' } as never,
+      score: 0.8,
+      rank: 3,
+      source: 'bm25' as const
+    }
+  ]
+  const picked = maximalMarginalRelevance(candidates, 2)
+  log(picked.length === 2, 'as many passages are picked as wanted')
+  log(
+    picked[0]?.chunk.id === '1' && picked[1]?.chunk.id === '3',
+    'the second pick is not a copy of the first'
+  )
+
+  // --- the passage the model reads ---
+  const passage = {
+    text: 'The leaf makes sugar out of light, water and carbon dioxide.',
+    heading: '2. Photosynthesis',
+    chunkId: 'c1',
+    focus: 'The leaf makes sugar out of light, water and carbon dioxide.',
+    score: 1
+  }
+  const context = assembleContext(passage)
+  log(context.includes('2. Photosynthesis'), 'the passage keeps its heading')
+  log(context.includes('carbon dioxide'), 'the passage holds the text that is read')
+
+  // --- the passages are spread over the document ---
+  const many = Array.from({ length: 12 }, (_, i) => ({
+    ...children[i % children.length],
+    id: `chunk-${i}`,
+    text: `${children[i % children.length].text} (part ${i})`
+  }))
+  const parentMap = new Map(parents.map((parent) => [parent.id, parent]))
+  const spreadOut = spread(many, 3, parentMap)
+  log(spreadOut.length === 3, 'as many passages are spread out as wanted')
+  log(
+    new Set(spreadOut.map((entry) => entry.focus)).size === 3,
+    'the spread passages are about different sentences'
+  )
 }
 
 /**
