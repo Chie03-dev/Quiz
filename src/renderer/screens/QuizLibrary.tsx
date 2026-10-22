@@ -8,6 +8,12 @@ import { Icon } from '../components/Icon'
 import { Panel } from '../components/Panel'
 import { AiGenerateDialog } from '../AiGenerateDialog'
 
+/**
+ * The "Generate with AI" flow is temporarily hidden while it is being made
+ * reliable. Flip this to `true` to restore the button and the generator dialog.
+ */
+const SHOW_GENERATE_WITH_AI = false
+
 /** Minutes shown for a time limit stored in seconds. */
 const minutes = (sec: number): string => {
   const m = sec / 60
@@ -164,14 +170,16 @@ export function QuizLibrary({
         title="Your quizzes"
         actions={
           <>
-            <Button
-              variant="secondary"
-              icon={<Icon name="sparkle" />}
-              testId="ai-open"
-              onClick={() => setShowAiDialog(true)}
-            >
-              Generate with AI
-            </Button>
+            {SHOW_GENERATE_WITH_AI && (
+              <Button
+                variant="secondary"
+                icon={<Icon name="sparkle" />}
+                testId="ai-open"
+                onClick={() => setShowAiDialog(true)}
+              >
+                Generate with AI
+              </Button>
+            )}
             <Button variant="secondary" icon={<Icon name="upload" />} onClick={importQuiz}>
               Import…
             </Button>
@@ -214,16 +222,18 @@ export function QuizLibrary({
         </Button>
       </div>
 
-      <AiGenerateDialog
-        open={showAiDialog}
-        onClose={() => setShowAiDialog(false)}
-        onGenerated={(report) => {
-          setShowAiDialog(false)
-          setImportReport(report)
-          onOpen(report.id, report)
-          refresh()
-        }}
-      />
+      {SHOW_GENERATE_WITH_AI && (
+        <AiGenerateDialog
+          open={showAiDialog}
+          onClose={() => setShowAiDialog(false)}
+          onGenerated={(report) => {
+            setShowAiDialog(false)
+            setImportReport(report)
+            onOpen(report.id, report)
+            refresh()
+          }}
+        />
+      )}
 
     </div>
   )

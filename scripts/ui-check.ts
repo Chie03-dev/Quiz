@@ -579,18 +579,21 @@ async function main(): Promise<void> {
     })
     log(gone.still === false, 'the deleted session leaves the results list')
 
-    // --- the AI dialog tells the wait before it starts ---
+    // --- the AI dialog tells the wait before it starts (hidden while buggy) ---
     log(await clickByTestId(cdp, 'nav-quizzes'), 'the quizzes screen is reachable from the sidebar')
-    await waitFor(async () => ((await hasTestId(cdp, 'ai-open')) ? true : null))
-    log(await clickByTestId(cdp, 'ai-open'), 'the AI dialog can be opened')
-    await waitFor(async () => ((await hasTestId(cdp, 'ai-estimate')) ? true : null))
-    const estimate = await textByTestId(cdp, 'ai-estimate')
-    log(
-      !!estimate && estimate.includes('for 5 questions'),
-      `the dialog says how long the wait will be (${estimate ?? 'nothing'})`
-    )
-    log(await hasTestId(cdp, 'ai-generate'), 'the generate button is offered')
-    log(await clickByTestId(cdp, 'ai-cancel'), 'the AI dialog can be closed again')
+    if (await hasTestId(cdp, 'ai-open')) {
+      log(await clickByTestId(cdp, 'ai-open'), 'the AI dialog can be opened')
+      await waitFor(async () => ((await hasTestId(cdp, 'ai-estimate')) ? true : null))
+      const estimate = await textByTestId(cdp, 'ai-estimate')
+      log(
+        !!estimate && estimate.includes('for 5 questions'),
+        `the dialog says how long the wait will be (${estimate ?? 'nothing'})`
+      )
+      log(await hasTestId(cdp, 'ai-generate'), 'the generate button is offered')
+      log(await clickByTestId(cdp, 'ai-cancel'), 'the AI dialog can be closed again')
+    } else {
+      console.log('  · skip: Generate with AI is hidden')
+    }
 
     // --- the settings screen and the model registry ---
     log(await clickByTestId(cdp, 'nav-settings'), 'the settings screen is reachable from the sidebar')

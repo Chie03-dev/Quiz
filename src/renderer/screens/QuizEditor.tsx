@@ -9,6 +9,15 @@ import { EmptyState } from '../components/EmptyState'
 import { Icon } from '../components/Icon'
 import { Panel } from '../components/Panel'
 
+/** How long a run takes, as "45 s" or "2 min 10 s". */
+function formatDuration(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds <= 0) return '0 s'
+  if (seconds < 60) return `${Math.round(seconds)} s`
+  const minutes = Math.floor(seconds / 60)
+  const rest = Math.round(seconds % 60)
+  return rest === 0 ? `${minutes} min` : `${minutes} min ${rest} s`
+}
+
 /** One question card: status badge, problems, move/delete, and its form. */
 function QuestionCard({
   question,
@@ -86,6 +95,9 @@ export function QuizEditor({
   const [dirty, setDirty] = useState(false)
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState('')
+  const [autoKeying, setAutoKeying] = useState(false)
+  const [autoKeyError, setAutoKeyError] = useState('')
+  const [autoKeyElapsed, setAutoKeyElapsed] = useState(0)
 
   useEffect(() => {
     let active = true
@@ -106,6 +118,15 @@ export function QuizEditor({
       active = false
     }
   }, [quizId])
+
+  // The clock of an auto-key run: it ticks while the model is filling answers,
+  // so the instructor can tell the button is working instead of hung.
+  useEffect(() => {
+    if (!autoKeying) return
+    const started = Date.now()
+    const timer = setInterval(() => setAutoKeyElapsed(Date.now() - started), 500)
+    return () => clearInterval(timer)
+  }, [autoKeying])
 
   const update = useCallback((next: StoredQuiz) => {
     setQuiz(next)
@@ -168,14 +189,27 @@ export function QuizEditor({
      })
    }
 
-   const autoKey = (): void => {
-     void window.quiz.aiAutoKey(quiz.questions).then((questions) => {
-       if (questions.length > 0) {
-         patch((q) => ({ ...q, questions }))
-         setSaved(false)
-       }
-     })
-   }
+    const autoKey = (): void => {
+      setAutoKeying(true)
+      setAutoKeyError('')
+      void window.quiz
+        .aiAutoKey(quiz.questions)
+        .then((result) => {
+          setAutoKeying(false)
+          if (result.error) {
+            setAutoKeyError(result.error)
+          } else if (result.questions.length > 0) {
+            patch((q) => ({ ...q, questions: result.questions }))
+            setSaved(false)
+          } else {
+            setAutoKeyError('No answers could be auto-selected.')
+          }
+        })
+        .catch((err) => {
+          setAutoKeying(false)
+          setAutoKeyError(err instanceof Error ? err.message : String(err))
+        })
+    }
 
   const back = (): void => {
     if (dirty && !window.confirm('Discard unsaved changes?')) return
@@ -288,13 +322,35 @@ export function QuizEditor({
           Back to library
         </Button>
         {dirty ? <Badge tone="warn">Unsaved changes</Badge> : saved ? <Badge tone="ok">Saved</Badge> : null}
-        <Button variant="secondary" size="sm" icon={<Icon name="sparkle" />} onClick={autoKey}>
-          Auto-select answers
+        <Button
+          variant="secondary"
+          size="sm"
+          icon={<Icon name="sparkle" />}
+          onClick={autoKey}
+          disabled={autoKeying}
+          testId="auto-key"
+        >
+          {autoKeying ? 'Auto-selecting…' : 'Auto-select answers'}
         </Button>
         <Button variant="primary" testId="save-quiz" onClick={save}>
           Save
         </Button>
       </div>
+
+      {autoKeying && (
+        <div className="ai__progress" data-testid="auto-key-progress">
+          <div className="ai__progress-bar">
+            <div className="ai__progress-fill" style={{ width: '100%' }} />
+          </div>
+          <p className="ai__progress-count">
+            Auto-selecting answers for {quiz.questions.length} question{quiz.questions.length === 1 ? '' : 's'}…
+          </p>
+          <p className="ai__progress-time">
+            {formatDuration(Math.round(autoKeyElapsed / 1000))} elapsed
+          </p>
+        </div>
+      )}
+      {autoKeyError && <p className="ui-error">{autoKeyError}</p>}
     </div>
   )
 }

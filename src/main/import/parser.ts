@@ -44,6 +44,10 @@ const TF_INLINE = /\b(true)\s*(?:\/|or|\|)\s*(false)\b/i
 const POINTS_RE = /\((\d+)\s*(?:points?|pts?)\b[^)]*\)/i
 const COUNT_RE = /\(\s*(\d+)\s*\)/
 const KEY_LINE = /^\s*(\d+)\s*[.:\-]\s*(.+)$/
+/** A whole answer-key line that packs several "N. X" tokens, e.g. "1. B 2. C 3. A". */
+const COMPACT_KEY_LINE = /^\s*\d+\s*[.:]\s*\S+(?:\s+\d+\s*[.:]\s*\S+)+\s*$/u
+/** One "N. X" token inside a compact answer-key line. */
+const KEY_TOKEN = /(\d+)\s*[.:]\s*(\S+)/g
 
 const TIME_LIMIT_RE = /^time\s+limit\b\s*[:\-]?\s*(\d+)\s*(minutes?|mins?|seconds?|secs?)/i
 
@@ -99,6 +103,9 @@ const SECTION_TYPES: { re: RegExp; type: QuestionType }[] = [
   // "or", never "/": a question prints "True / False" as its own answer line.
   { re: /^true\s+or\s+false\b/i, type: 'tf' },
   { re: /^identification\b/i, type: 'identification' },
+  // "Part B: Short Answer" is a printed exam's identification section; anchored
+  // on the end so a stem that merely starts with "short answer:" is not swallowed.
+  { re: /^short\s*answer(s)?\s*[:\-]?\s*$/i, type: 'identification' },
   { re: /^fill\s*in\s*the\s*blanks?\b/i, type: 'fillin' },
   { re: /^enumeration\b/i, type: 'enumeration' },
   { re: /^problem\s*solving\b/i, type: 'problem' },
@@ -122,6 +129,7 @@ function matchSection(raw: string, isHeading = false): SectionHit | null {
   let t = raw.trim().replace(/[:\s]+$/, '')
   t = t.replace(/^[IVXivx]{1,6}\s*[.)]\s*/, '') // optional roman prefix
   t = t.replace(/^[A-Za-z]\s*[.)]\s*/, '') // optional letter prefix
+  t = t.replace(/^part\s+[A-Za-z]\s*[:\-]?\s*/i, '') // optional "Part A:" section label
   const points = t.match(POINTS_RE)
   const name = t.replace(/\([^)]*\)/g, ' ').replace(/\s+/g, ' ').trim()
   if (!name) return null
@@ -987,6 +995,14 @@ export function parseBlocks(blocks: Block[], options: ParseOptions = {}): ParseR
     if (mode === 'key') {
       const km = trimmed.match(KEY_LINE)
       if (km) {
+        // A compact one-line answer key: "1. B 2. C 3. A ..." packs several
+        // answers onto one line instead of one-per-line.
+        if (COMPACT_KEY_LINE.test(trimmed)) {
+          for (const m of trimmed.matchAll(KEY_TOKEN)) {
+            keyEntries.push({ type: keyType, number: Number(m[1]), value: (m[2] ?? '').trim() })
+          }
+          continue
+        }
         keyEntries.push({ type: keyType, number: Number(km[1]), value: km[2].trim() })
         continue
       }

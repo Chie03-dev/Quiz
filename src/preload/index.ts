@@ -111,7 +111,7 @@ const api = {
     points: number
   }): Promise<ImportQuizResult> => ipcRenderer.invoke('ai:generate', opts),
   /** Fills in missing answer keys for the given questions. */
-  aiAutoKey: (questions: StoredQuestion[]): Promise<StoredQuestion[]> =>
+  aiAutoKey: (questions: StoredQuestion[]): Promise<{ questions: StoredQuestion[]; error?: string }> =>
     ipcRenderer.invoke('ai:autoKey', { questions }),
   /** How long a run of questions takes, so the screen can show an estimate. */
   aiTiming: (): Promise<AiTiming> => ipcRenderer.invoke('ai:timing'),
