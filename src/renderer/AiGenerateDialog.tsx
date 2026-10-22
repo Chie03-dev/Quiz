@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import type { ImportQuizReport, QuestionType } from '../shared/types'
+import { useEffect, useState } from 'react'
+import type { AiStatus, ImportQuizReport, QuestionType } from '../shared/types'
 import { QUESTION_TYPES } from '../shared/types'
 import { TYPE_LABELS } from './QuestionForms'
 import { Badge } from './components/Badge'
@@ -17,12 +17,31 @@ const TYPE_OPTIONS = QUESTION_TYPES.map((t) => ({ value: t, label: TYPE_LABELS[t
 
 export function AiGenerateDialog({ open, onClose, onGenerated }: AiGenerateDialogProps): React.JSX.Element | null {
   const [sourceText, setSourceText] = useState('')
+  // The text of a chosen file. It is far too long for the box, so it is kept
+  // apart and only its size is shown.
+  const [fileText, setFileText] = useState('')
   const [sourceFile, setSourceFile] = useState<string | null>(null)
   const [selectedTypes, setSelectedTypes] = useState<QuestionType[]>(['mcq', 'tf'])
   const [count, setCount] = useState(5)
   const [points, setPoints] = useState(1)
   const [status, setStatus] = useState<'idle' | 'loading' | 'error'>('idle')
   const [error, setError] = useState('')
+  const [engine, setEngine] = useState<AiStatus | null>(null)
+
+  // The badge says which engine answers, so it has to be asked each time.
+  useEffect(() => {
+    if (!open) return
+    let active = true
+    window.quiz
+      .aiStatus()
+      .then((s) => {
+        if (active) setEngine(s)
+      })
+      .catch(() => undefined)
+    return () => {
+      active = false
+    }
+  }, [open])
 
   const toggleType = (type: QuestionType): void => {
     const index = selectedTypes.indexOf(type)
@@ -35,11 +54,17 @@ export function AiGenerateDialog({ open, onClose, onGenerated }: AiGenerateDialo
 
   const selectFile = async (): Promise<void> => {
     const path = await window.quiz.aiSelectFile()
-    if (path) {
-      setSourceFile(path)
-      const text = await window.quiz.aiReadFile(path)
-      if (text) setSourceText(text)
+    if (!path) return
+    setError('')
+    setSourceFile(path)
+    const text = await window.quiz.aiReadFile(path)
+    if (text.trim()) {
+      setFileText(text)
+      return
     }
+    // The file has no text the AI can read; the path is no use as a source.
+    setFileText('')
+    setError('This file has no readable text. A Word document or a PDF with text in it works.')
   }
 
   const generate = async (): Promise<void> => {
@@ -47,7 +72,9 @@ export function AiGenerateDialog({ open, onClose, onGenerated }: AiGenerateDialo
       setError('Select at least one question type.')
       return
     }
-    if (!sourceText.trim() && !sourceFile) {
+    // The file and the pasted text are both used, the file first.
+    const text = [fileText, sourceText].filter((part) => part.trim().length > 0).join('\n\n')
+    if (!text.trim()) {
       setError('Provide source text or select a file.')
       return
     }
@@ -55,7 +82,7 @@ export function AiGenerateDialog({ open, onClose, onGenerated }: AiGenerateDialo
     setError('')
 
     const result = await window.quiz.aiGenerate({
-      sourceText: sourceText || (sourceFile ? `Source: ${sourceFile}` : ''),
+      sourceText: text,
       questionTypes: selectedTypes,
       count: Math.max(1, Math.min(50, count)),
       points: Math.max(1, points)
@@ -93,7 +120,11 @@ export function AiGenerateDialog({ open, onClose, onGenerated }: AiGenerateDialo
       <div className="ai__dialog" onClick={(e) => e.stopPropagation()}>
         <Panel
           title="Generate questions with AI"
-          actions={<Badge tone="neutral">Stub provider</Badge>}
+          actions={
+            <Badge tone={engine?.provider === 'gguf' ? 'ok' : 'neutral'}>
+              {engine?.provider === 'gguf' ? engine.model : 'Built-in generator'}
+            </Badge>
+          }
         >
           <div className="ai__content">
             <div className="ai__source">
@@ -110,6 +141,12 @@ export function AiGenerateDialog({ open, onClose, onGenerated }: AiGenerateDialo
               <Button variant="secondary" size="sm" icon={<Icon name="upload" />} onClick={selectFile}>
                 {sourceFile ? sourceFile : 'Choose a file…'}
               </Button>
+              {fileText && (
+                <p className="ai__file-note">
+                  {fileText.length.toLocaleString()} characters of the file are read and used with your
+                  text.
+                </p>
+              )}
             </div>
 
             <div className="ai__types">

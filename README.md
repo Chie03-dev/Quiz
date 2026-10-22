@@ -449,6 +449,46 @@ left sidebar, and screens rendered inside it. A screen never replaces the shell.
 - **`LiveSession.tsx`** - the running and ended views.
 - **`Results.tsx`** - the saved sessions (list) and the score sheet of one
   session (detail).
+- **`Settings.tsx`** - the offline AI models: what is downloaded, what answers,
+  where the models live, and which llama.cpp binary runs them.
+
+### Offline AI models
+
+The *Generate with AI* action in the library and *Auto-select answers* in the
+editor both work offline. The **Settings** screen decides what answers them.
+
+- **The catalog** holds three GGUF models (Qwen2.5 0.5B, Qwen2.5 1.5B and
+  Phi-3 Mini). A model is downloaded once, with a progress bar, and stays on
+  the machine; nothing is sent anywhere.
+- **The chosen model answers from then on.** Picking one switches the AI layer
+  over right away - no restart. Deleting the active model goes back to the
+  built-in generator.
+- **The built-in generator** is always there. It is deterministic, writes
+  template questions and never fails, so the app keeps working when no model is
+  installed.
+- **A downloaded model runs through llama.cpp**, which is not bundled. Point
+  the app at your `llama-cli` executable in the settings screen (leave the
+  field empty to use `llama-cli` from the system path). While no binary is
+  found, the settings screen says so and the built-in generator takes over.
+- **The models live in `%APPDATA%\quiz-instructor\models`**, next to a small
+  file that remembers the choice, so it survives a restart.
+- **A question has to be about your text.** The answer is looked up in the
+  text, word for word; a question whose answer is not in there is left out,
+  and so is a question that only repeats the text or asks about the same
+  thing twice. The screen says how many questions were left out, so a short
+  text gives fewer questions than you asked for.
+- **Every question is about a different fact.** The text is split into its
+  sentences and every question is asked about another one, so five questions
+  do not all ask about the same sentence.
+- **The same text gives the same questions.** The model runs with a fixed
+  seed, so you get the same quiz again after a restart.
+- **Read the questions before the quiz.** A small model is a helper, not an
+  examiner: it writes the questions, you decide whether they are right.
+- **A chapter can be the source.** The *Generate with AI* dialog takes a Word
+  document, a PDF, a Markdown file or a plain text file, and reads the text out
+  of it - the same readers the quiz importer uses. The text of a PDF is put
+  back into sentences first, so a sentence that was broken over three lines is
+  one fact again.
 
 ### Results
 

@@ -8,11 +8,12 @@
 import WebSocket from 'ws'
 import { createServer } from 'node:net'
 import { randomUUID } from 'node:crypto'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import Database from 'better-sqlite3'
+import JSZip from 'jszip'
 import { startServer } from '../src/main/server'
 import { isValidAnswer, toPublicQuestions } from '../src/main/server/quizRun'
 import { SAMPLE_QUIZ } from '../src/main/sampleQuiz'
@@ -21,7 +22,23 @@ import { gradeAnswer, type ResultQuestionInput } from '../src/main/db/results'
 import { buildSessionSnapshot, snapshotQuestions } from '../src/main/results/session'
 import { buildPopPayload, MemeAssets, MEME_FILE_PATTERN, seedSampleMeme } from '../src/main/memes/store'
 import { parseQuizJson, serializeQuiz, toRuntimeQuiz } from '../src/main/quizFormat'
-import { createAiManager } from '../src/main/ai'
+import { createAiManager, AVAILABLE_MODELS, ModelStore } from '../src/main/ai'
+import { AiManager } from '../src/main/ai/manager'
+import { extractTextFromPath } from '../src/main/ai/textExtract'
+import {
+  GgufProvider,
+  extractJsonArray,
+  isQuestion,
+  isCopy,
+  sharesWithSource,
+  groundedAnswer,
+  sameFact,
+  containsPhrase,
+  mentionsText,
+  repeatsTheQuestion,
+  numberInBody
+} from '../src/main/ai/ggufProvider'
+import { splitFacts } from '../src/main/ai/prompts'
 import {
   adviseAnswer,
   answersMatch,
@@ -490,9 +507,13 @@ async function main(): Promise<void> {
    console.log('\n--- stylesheets ---')
    checkStylesheets()
 
-   // --- AI question generation (stub provider) ---
-   console.log('\n--- AI ---')
-   await checkAi()
+    // --- AI question generation (stub provider) ---
+    console.log('\n--- AI ---')
+    await checkAi()
+
+    // --- AI model registry ---
+    console.log('\n--- AI models ---')
+    await checkAiModels()
 
   const seen: any[] = []
   let lastInfo: any = null
@@ -2365,4 +2386,220 @@ async function checkAi(): Promise<void> {
   const autoKeyed = await manager.autoKey({ questions: draftQuestions })
   log(autoKeyed.questions.length === 2, 'autoKey returns one key per question')
   log(autoKeyed.questions.every((q) => q.key !== null), 'every autoKeyed question has a key')
+}
+
+/**
+ * The model registry: listing, the active model, the engine path, and the
+ * fallback to the built-in generator when llama.cpp is missing.
+ */
+async function checkAiModels(): Promise<void> {
+  const dir = mkdtempSync(join(tmpdir(), 'quiz-models-'))
+  try {
+    const store = new ModelStore(dir)
+
+    const models = store.listModels()
+    log(models.length === AVAILABLE_MODELS.length, 'the model list holds every catalog model')
+    log(models.every((m) => m.downloaded === false), 'no model is downloaded in a fresh folder')
+    log(models.every((m) => m.active === false), 'no model is active in a fresh folder')
+
+    const first = models[0]!
+    log(!store.setActiveModel(first.id), 'a model that is not downloaded cannot be activated')
+    log(store.getActiveModel() === null, 'the active model stays empty')
+
+    // Pretend the download happened.
+    writeFileSync(store.modelPath(first.id)!, 'fake model bytes')
+    log(store.isDownloaded(first.id), 'a model file on disk counts as downloaded')
+
+    log(store.setActiveModel(first.id), 'a downloaded model can be activated')
+    log(store.getActiveModel() === first.id, 'the active model is remembered')
+    log(store.activeConfig().provider === 'gguf', 'the active model becomes the provider')
+    log(store.listModels().find((m) => m.id === first.id)?.active === true, 'the list marks the active model')
+
+    // The engine path round-trips.
+    log(store.getEnginePath() === null, 'no engine is set at first')
+    log(store.setEnginePath('C:\\llama\\llama-cli.exe'), 'the engine path is stored')
+    log(store.getEnginePath() === 'C:\\llama\\llama-cli.exe', 'the engine path is read back')
+    store.setEnginePath(null)
+    log(store.getEnginePath() === null, 'the engine path can be cleared')
+
+    // Deleting the active model falls back to the built-in generator.
+    log(store.deleteModel(first.id), 'the model file is deleted')
+    log(!store.isDownloaded(first.id), 'the deleted model is gone')
+    log(store.getActiveModel() === null, 'deleting the active model clears the choice')
+
+    // A provider without a model file is not ready, and the manager falls back.
+    const provider = new GgufProvider({ modelPath: join(dir, 'missing.gguf'), modelName: 'Test model' })
+    const providerStatus = provider.status()
+    log(providerStatus.ready === false, 'a model without its file is not ready')
+    log(
+      typeof providerStatus.note === 'string' && providerStatus.note.length > 0,
+      'the status says why the model cannot answer'
+    )
+
+    const manager = new AiManager(provider)
+    const managerStatus = manager.status()
+    log(managerStatus.ready === true, 'the manager keeps working with the built-in generator')
+    log(managerStatus.provider === 'stub', 'the manager reports the built-in generator')
+
+    const generated = await manager.generate({
+      sourceText: 'Gold is Au.',
+      questionTypes: ['mcq'],
+      count: 1,
+      points: 1
+    })
+    log(generated.questions.length === 1, 'the fallback generator still answers')
+
+    // The JSON the model writes is picked out of whatever it says.
+    const parsed = extractJsonArray('noise [ {"a": 1} ] trailing')
+    log(Array.isArray(parsed) && parsed.length === 1, 'a JSON list is found in the model output')
+    log(extractJsonArray('no json here') === null, 'text without a JSON list gives nothing')
+    log(extractJsonArray('[{"broken": ]') === null, 'broken JSON gives nothing')
+
+    // The binary echoes the prompt, so the answer has to be picked out of the
+    // noise: the last list that stands on its own, not an inner list of it.
+    const echoed = extractJsonArray(
+      'prompt: use ["chlorophyll"] as the key\n```json\n[\n  "a",\n  ["carbon dioxide"],\n  true\n]\n```\n[ Prompt: 221 t/s ]'
+    )
+    log(
+      Array.isArray(echoed) && echoed.length === 3 && echoed[1] !== undefined,
+      'the outer list of the answer is taken, not the inner one'
+    )
+    const lastList = extractJsonArray('first [1] then [2, 3] then [ Prompt: 1 t/s ]')
+    log(
+      Array.isArray(lastList) && lastList.length === 2 && lastList[1] === 3,
+      'the last list that parses is the answer'
+    )
+
+    // --- the guards that keep a wrong question out of the quiz ---
+    const source =
+      'my name is alchie im 23 years old. im 6ft tall and 95 kilos. i live in arizona and my favorate color is blue'
+
+    log(isQuestion('What is the favorite color?'), 'a question is recognised as a question')
+    log(!isQuestion('The person lives in arizona.'), 'a statement is not a question')
+    log(isQuestion('Which planet is known as the Red Planet?'), 'a which-question is recognised')
+
+    log(
+      isCopy('my name is alchie im 23 years old. im 6ft tall and 95 kilos.', source),
+      'a body that repeats the source is a copy'
+    )
+    log(!isCopy('What is the favorite color of the person?', source), 'a real question is not a copy')
+
+    log(
+      sharesWithSource('The person lives in arizona.', source),
+      'a statement that the source also says is accepted'
+    )
+    log(
+      !sharesWithSource('Water boils at 100 degrees Celsius at sea level.', source),
+      'a statement about something else is refused'
+    )
+
+    const mcqData = {
+      options: [
+        { id: 'a', text: 'blue' },
+        { id: 'b', text: 'red' }
+      ]
+    }
+    log(
+      groundedAnswer('mcq', 'a', mcqData, source),
+      'a multiple choice answer the text says is accepted'
+    )
+    log(
+      !groundedAnswer('mcq', 'b', mcqData, source),
+      'a multiple choice answer the text never says is refused'
+    )
+    log(
+      groundedAnswer('identification', ['blue'], {}, source),
+      'an identification answer the text says is accepted'
+    )
+    log(
+      !groundedAnswer('identification', ['chlorophyll'], {}, source),
+      'an identification answer the text never says is refused'
+    )
+    log(
+      !groundedAnswer('identification', ['blue', 'chlorophyll'], {}, source),
+      'an identification answer with one made-up word is refused'
+    )
+    log(
+      groundedAnswer('fillin', [['23']], { blanks: 1 }, source),
+      'a fill-in answer the text says is accepted'
+    )
+    log(
+      !groundedAnswer('fillin', [['Au']], { blanks: 1 }, source),
+      'a fill-in answer the text never says is refused'
+    )
+
+    // --- the text of notes is often one long sentence ---
+    const runOn =
+      'My name is Luel i live in dipolog Im filipino i dont like chocolate im 4.9 ft tall i weigh 50 kilos and i like roblox i dont like valorant im at college i go to school only every weekdays and i like tomatoes'
+    const facts = splitFacts(runOn)
+    log(facts.length >= 8, `a text without full stops is split into facts (${facts.length})`)
+    log(
+      facts.some((f) => f.toLowerCase().includes('dipolog')),
+      'the facts keep the words of the text'
+    )
+    log(
+      splitFacts('First fact here. Second fact here.').length === 2,
+      'a text with full stops is split at the full stops'
+    )
+
+    log(numberInBody('Which two things does the author like?') === 2, 'a question names a number')
+    log(numberInBody('Which three things does the author like?') === 3, 'a number word is read')
+    log(numberInBody('What is the name?') === null, 'a question without a number says so')
+
+    log(
+      repeatsTheQuestion('i like roblox', 'I like ___'),
+      'an answer that repeats the question is noticed'
+    )
+    log(!repeatsTheQuestion('roblox', 'I like ___'), 'an answer that fills the blank is kept')
+
+    log(containsPhrase(['my', 'name', 'is', 'alchie'], ['name', 'is']), 'a phrase is found')
+    log(!containsPhrase(['my', 'name', 'is', 'alchie'], ['alch']), 'a part of a word is not a word')
+    log(mentionsText(source, 'blue'), 'a word of the text is mentioned')
+    log(!mentionsText(source, 'blueish'), 'a longer word is not mentioned')
+
+    log(
+      sameFact('What is the favorite color of the person?', 'my favorite color is blue'),
+      'two questions about the same fact are recognised'
+    )
+    log(
+      !sameFact('Where does Luel live?', 'Luel weighs 50 kilos'),
+      'two questions about different facts are not the same'
+    )
+
+    // --- a Word document has to give its text to the AI ---
+    const docxDir = mkdtempSync(join(tmpdir(), 'quiz-docx-'))
+    try {
+      const zip = new JSZip()
+      zip.file(
+        'word/document.xml',
+        `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>
+<w:p><w:r><w:t>Photosynthesis is the process where plants use sunlight.</w:t></w:r></w:p>
+<w:p><w:r><w:t>Chlorophyll absorbs the light in the leaf.</w:t></w:r></w:p>
+</w:body></w:document>`
+      )
+      const buffer = await zip.generateAsync({ type: 'nodebuffer' })
+      const docxPath = join(docxDir, 'chapter1.docx')
+      writeFileSync(docxPath, buffer)
+
+      const docxText = await extractTextFromPath(docxPath)
+      log(
+        docxText.includes('Photosynthesis is the process where plants use sunlight.'),
+        'a Word document gives its text to the AI'
+      )
+      log(
+        docxText.includes('Chlorophyll absorbs the light in the leaf.'),
+        'every paragraph of a Word document is read'
+      )
+
+      const txtPath = join(docxDir, 'notes.txt')
+      writeFileSync(txtPath, 'Gold is Au. Water boils at 100 degrees.', 'utf8')
+      const txtText = await extractTextFromPath(txtPath)
+      log(txtText.includes('Gold is Au.'), 'a text file gives its text to the AI')
+    } finally {
+      safeRmSync(docxDir)
+    }
+  } finally {
+    safeRmSync(dir)
+  }
 }
