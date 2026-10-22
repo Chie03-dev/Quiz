@@ -649,3 +649,30 @@ export interface AiStatus {
   /** Why the AI layer fell back to another engine, when it did. */
   note?: string
 }
+
+/** How far the generation has come, so the screen can show a bar. */
+export interface GenerateProgress {
+  /** The questions that are ready. */
+  done: number
+  /** The questions that were asked for. */
+  total: number
+  /** The questions the model wrote, kept or not. */
+  made: number
+  /** How long the run has taken, in milliseconds. */
+  elapsedMs: number
+}
+
+/**
+ * How long a run of questions takes.
+ *
+ * The app measures the last run and keeps the average, so the instructor
+ * sees how long the next one will take before it starts.
+ */
+export interface AiTiming {
+  /** The seconds a question takes, measured over the runs so far. */
+  secondsPerQuestion: number
+  /** The seconds the model needs before it answers the first question. */
+  startUpSeconds: number
+  /** How many runs were measured. */
+  runs: number
+}

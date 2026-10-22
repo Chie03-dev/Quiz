@@ -1,5 +1,11 @@
-import { useEffect, useState } from 'react'
-import type { AiStatus, ImportQuizReport, QuestionType } from '../shared/types'
+import { useEffect, useMemo, useState } from 'react'
+import type {
+  AiStatus,
+  AiTiming,
+  GenerateProgress,
+  ImportQuizReport,
+  QuestionType
+} from '../shared/types'
 import { QUESTION_TYPES } from '../shared/types'
 import { TYPE_LABELS } from './QuestionForms'
 import { Badge } from './components/Badge'
@@ -15,6 +21,15 @@ interface AiGenerateDialogProps {
 
 const TYPE_OPTIONS = QUESTION_TYPES.map((t) => ({ value: t, label: TYPE_LABELS[t] }))
 
+/** How long a run takes, as "45 s" or "2 min 10 s". */
+function formatDuration(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds <= 0) return '0 s'
+  if (seconds < 60) return `${Math.round(seconds)} s`
+  const minutes = Math.floor(seconds / 60)
+  const rest = Math.round(seconds % 60)
+  return rest === 0 ? `${minutes} min` : `${minutes} min ${rest} s`
+}
+
 export function AiGenerateDialog({ open, onClose, onGenerated }: AiGenerateDialogProps): React.JSX.Element | null {
   const [sourceText, setSourceText] = useState('')
   // The text of a chosen file. It is far too long for the box, so it is kept
@@ -28,6 +43,17 @@ export function AiGenerateDialog({ open, onClose, onGenerated }: AiGenerateDialo
   const [status, setStatus] = useState<'idle' | 'loading' | 'error'>('idle')
   const [error, setError] = useState('')
   const [engine, setEngine] = useState<AiStatus | null>(null)
+  // How long the last run took, so the wait can be judged.
+  const [timing, setTiming] = useState<AiTiming | null>(null)
+  // How far the run that is going on has come.
+  const [progress, setProgress] = useState<GenerateProgress | null>(null)
+  const [elapsedMs, setElapsedMs] = useState(0)
+  // Set when questions were left out: the dialog stays open and says why.
+  const [notice, setNotice] = useState<{
+    report: ImportQuizReport
+    made: number
+    asked: number
+  } | null>(null)
 
   // The badge says which engine answers, so it has to be asked each time.
   useEffect(() => {
@@ -43,6 +69,45 @@ export function AiGenerateDialog({ open, onClose, onGenerated }: AiGenerateDialo
       active = false
     }
   }, [open])
+
+  // The estimate of the wait, and the progress of the run.
+  useEffect(() => {
+    if (!open) return
+    let active = true
+    setProgress(null)
+    setElapsedMs(0)
+    window.quiz
+      .aiTiming()
+      .then((t) => {
+        if (active) setTiming(t)
+      })
+      .catch(() => undefined)
+    const off = window.quiz.onGenerateProgress((p) => {
+      if (active) setProgress(p)
+    })
+    return () => {
+      active = false
+      off()
+    }
+  }, [open])
+
+  // The clock of the run: it ticks while the questions are written.
+  useEffect(() => {
+    if (status !== 'loading') return
+    const started = Date.now()
+    const timer = setInterval(() => setElapsedMs(Date.now() - started), 500)
+    return () => clearInterval(timer)
+  }, [status])
+
+  const asked = Math.max(1, Math.min(50, count))
+
+  // How long the run will take: the start-up of the model plus the time the
+  // questions themselves take.
+  const estimateMs = useMemo(() => {
+    const perQuestion = timing?.secondsPerQuestion ?? 6
+    const startUp = timing?.startUpSeconds ?? 10
+    return (startUp + asked * perQuestion) * 1000
+  }, [timing, asked])
 
   const toggleType = (type: QuestionType): void => {
     const index = selectedTypes.indexOf(type)
@@ -82,19 +147,29 @@ export function AiGenerateDialog({ open, onClose, onGenerated }: AiGenerateDialo
     }
     setStatus('loading')
     setError('')
+    setNotice(null)
+    setProgress(null)
+    setElapsedMs(0)
 
     const result = await window.quiz.aiGenerate({
       sourceText: text,
       filePath: sourceFile ?? undefined,
       topic: topic.trim(),
       questionTypes: selectedTypes,
-      count: Math.max(1, Math.min(50, count)),
+      count: asked,
       points: Math.max(1, points)
     })
 
     if (result.ok && 'report' in result && result.report) {
+      const report = result.report
       setStatus('idle')
-      onGenerated(result.report)
+      // Not every question held up: the dialog stays open and says why, so
+      // the count is never quietly smaller than what was asked for.
+      if (report.questionCount < asked) {
+        setNotice({ report, made: report.questionCount, asked })
+        return
+      }
+      onGenerated(report)
       onClose()
     } else if (result.ok && 'quiz' in result) {
       setStatus('idle')
@@ -117,10 +192,16 @@ export function AiGenerateDialog({ open, onClose, onGenerated }: AiGenerateDialo
     }
   }
 
+  const loading = status === 'loading'
+  const percent = progress && progress.total > 0
+    ? Math.min(100, Math.round((progress.done / progress.total) * 100))
+    : 0
+  const remainingMs = Math.max(0, estimateMs - elapsedMs)
+
   if (!open) return null
 
   return (
-    <div className="ai__overlay" onClick={onClose}>
+    <div className="ai__overlay" onClick={loading ? undefined : onClose}>
       <div className="ai__dialog" onClick={(e) => e.stopPropagation()}>
         <Panel
           title="Generate questions with AI"
@@ -189,9 +270,13 @@ export function AiGenerateDialog({ open, onClose, onGenerated }: AiGenerateDialo
                   type="number"
                   min={1}
                   max={50}
+                  data-testid="ai-count"
                   value={count}
                   onChange={(e) => setCount(Math.max(1, Math.min(50, Number(e.target.value) || 1)))}
                 />
+                <span className="ai__estimate" data-testid="ai-estimate">
+                  ≈ {formatDuration(estimateMs / 1000)} for {asked} question{asked === 1 ? '' : 's'}
+                </span>
               </label>
               <label className="ui-field">
                 <span className="ui-field__label">Points per question</span>
@@ -206,15 +291,61 @@ export function AiGenerateDialog({ open, onClose, onGenerated }: AiGenerateDialo
               </label>
             </div>
 
+            {loading && (
+              <div className="ai__progress" data-testid="ai-progress">
+                <div className="ai__progress-bar">
+                  <div className="ai__progress-fill" style={{ width: `${percent}%` }} />
+                </div>
+                <p className="ai__progress-count" data-testid="ai-progress-count">
+                  {progress
+                    ? `${progress.done} of ${progress.total} questions`
+                    : 'Starting the model…'}
+                </p>
+                <p className="ai__progress-time" data-testid="ai-progress-time">
+                  {formatDuration(elapsedMs / 1000)} elapsed
+                  {remainingMs > 0 ? ` · about ${formatDuration(remainingMs / 1000)} left` : ''}
+                </p>
+              </div>
+            )}
+
+            {notice && (
+              <div className="ai__notice" data-testid="ai-notice">
+                <p className="ai__notice-title">
+                  {notice.made} of {notice.asked} questions were made.
+                </p>
+                {notice.report.warnings[0]?.message && (
+                  <p className="ai__notice-body">{notice.report.warnings[0].message}</p>
+                )}
+                <Button
+                  variant="primary"
+                  testId="ai-notice-close"
+                  onClick={() => {
+                    onGenerated(notice.report)
+                    onClose()
+                  }}
+                >
+                  Show the questions
+                </Button>
+              </div>
+            )}
+
             {error && <p className="ui-error">{error}</p>}
 
             <div className="ai__actions">
-              <Button variant="ghost" onClick={onClose}>
+              <Button variant="ghost" testId="ai-cancel" onClick={onClose} disabled={loading}>
                 Cancel
               </Button>
-              <Button variant="primary" icon={<Icon name="sparkle" />} onClick={generate} disabled={status === 'loading'}>
-                {status === 'loading' ? 'Generating…' : 'Generate'}
-              </Button>
+              {notice ? null : (
+                <Button
+                  variant="primary"
+                  icon={<Icon name="sparkle" />}
+                  onClick={generate}
+                  disabled={loading}
+                  testId="ai-generate"
+                >
+                  {loading ? 'Generating…' : 'Generate'}
+                </Button>
+              )}
             </div>
           </div>
         </Panel>

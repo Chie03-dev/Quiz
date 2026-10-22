@@ -4,8 +4,13 @@ import { get as httpGet, type ClientRequest, type IncomingMessage } from 'node:h
 import { get as httpsGet } from 'node:https'
 import { URL } from 'node:url'
 
-import type { DownloadProgress, DownloadResult, ModelInfo } from '../../shared/types'
+import type { AiTiming, DownloadProgress, DownloadResult, ModelInfo } from '../../shared/types'
 import type { ModelConfig } from './types'
+
+/** The seconds a question takes before anything was measured. */
+export const DEFAULT_SECONDS_PER_QUESTION = 6
+/** The seconds the model needs before it answers the first question. */
+export const DEFAULT_START_UP_SECONDS = 10
 
 /** The catalog of models the app knows how to download. */
 export const AVAILABLE_MODELS: Omit<ModelInfo, 'downloaded'>[] = [
@@ -53,6 +58,18 @@ export const AVAILABLE_MODELS: Omit<ModelInfo, 'downloaded'>[] = [
       'https://huggingface.co/CompendiumLabs/bge-small-en-v1.5-gguf/resolve/main/bge-small-en-v1.5-q4_k_m.gguf',
     version: 'q4_k_m',
     kind: 'embedding'
+  },
+  {
+    id: 'bge-m3-q4',
+    name: 'BGE M3 (multilingual, Q4_K_M)',
+    description:
+      'About 438 MB. The multilingual search model: it also finds the passages that mean the same as the question in languages other than English, including Tagalog. Optional; the app searches by words without it.',
+    sizeBytes: 438_000_000,
+    fileName: 'bge-m3-q4_k_m.gguf',
+    downloadUrl:
+      'https://huggingface.co/groonga/bge-m3-Q4_K_M-GGUF/resolve/main/bge-m3-q4_k_m.gguf',
+    version: 'q4_k_m',
+    kind: 'embedding'
   }
 ]
 
@@ -71,10 +88,16 @@ export class ModelStore {
   /** All known models with their download status. */
   listModels(): ModelInfo[] {
     const active = this.getActiveModel()
+    const activeEmbedPath = this.embeddingModelPath()
     return AVAILABLE_MODELS.map((m) => ({
       ...m,
       downloaded: this.isDownloaded(m.id),
-      active: active === m.id
+      active:
+        m.kind === 'embedding'
+          ? activeEmbedPath
+            ? join(this.modelsDir, m.fileName) === activeEmbedPath
+            : false
+          : active === m.id
     }))
   }
 
@@ -97,6 +120,34 @@ export class ModelStore {
     if (modelId !== null && !this.isDownloaded(modelId)) return false
     this.ensureDir()
     writeFileSync(this.activeModelFile(), JSON.stringify({ activeModel: modelId }, null, 2), 'utf8')
+    return true
+  }
+
+  /** The id of the search model the user picked, or null for the default. */
+  getActiveEmbeddingModel(): string | null {
+    const path = this.activeEmbeddingFile()
+    if (!existsSync(path)) return null
+    try {
+      const raw = statSync(path)
+      if (raw.size === 0) return null
+      const { activeEmbeddingModel } = JSON.parse(readFileSync(path, 'utf8')) as {
+        activeEmbeddingModel?: unknown
+      }
+      return typeof activeEmbeddingModel === 'string' ? activeEmbeddingModel : null
+    } catch {
+      return null
+    }
+  }
+
+  /** Remembers which search model to use (pass null to use the default). */
+  setActiveEmbeddingModel(modelId: string | null): boolean {
+    if (modelId !== null && !this.isDownloaded(modelId)) return false
+    this.ensureDir()
+    writeFileSync(
+      this.activeEmbeddingFile(),
+      JSON.stringify({ activeEmbeddingModel: modelId }, null, 2),
+      'utf8'
+    )
     return true
   }
 
@@ -184,6 +235,9 @@ export class ModelStore {
     if (this.getActiveModel() === modelId) {
       this.setActiveModel(null)
     }
+    if (this.getActiveEmbeddingModel() === modelId) {
+      this.setActiveEmbeddingModel(null)
+    }
     return true
   }
 
@@ -193,14 +247,79 @@ export class ModelStore {
   }
 
   /**
-   * The path of the model that turns text into vectors, or null when it is
-   * not downloaded. The app searches by words alone without it.
+   * The path of the model that turns text into vectors, or null when there is
+   * none. The user's choice is preferred; otherwise the downloaded search model
+   * is used. The app searches by words alone without it.
    */
   embeddingModelPath(): string | null {
-    const model = AVAILABLE_MODELS.find((m) => m.kind === 'embedding')
-    if (!model) return null
-    const path = join(this.modelsDir, model.fileName)
-    return existsSync(path) ? path : null
+    const ordered = AVAILABLE_MODELS.filter((m) => m.kind === 'embedding')
+    const active = this.getActiveEmbeddingModel()
+    const preferred = [
+      ...ordered.filter((m) => m.id === active),
+      ...ordered.filter((m) => m.id !== active)
+    ]
+    for (const model of preferred) {
+      const path = join(this.modelsDir, model.fileName)
+      if (existsSync(path)) return path
+    }
+    return null
+  }
+
+  /**
+   * How long a run of questions takes, as it was measured so far.
+   *
+   * The first run uses the defaults: six seconds per question and ten
+   * seconds of start-up for the model.
+   */
+  getTiming(): AiTiming {
+    const fallback: AiTiming = {
+      secondsPerQuestion: DEFAULT_SECONDS_PER_QUESTION,
+      startUpSeconds: DEFAULT_START_UP_SECONDS,
+      runs: 0
+    }
+    const path = this.timingFile()
+    if (!existsSync(path)) return fallback
+    try {
+      const raw = statSync(path)
+      if (raw.size === 0) return fallback
+      const parsed = JSON.parse(readFileSync(path, 'utf8')) as {
+        secondsPerQuestion?: unknown
+        startUpSeconds?: unknown
+        runs?: unknown
+      }
+      return {
+        secondsPerQuestion:
+          typeof parsed.secondsPerQuestion === 'number' && parsed.secondsPerQuestion > 0
+            ? parsed.secondsPerQuestion
+            : fallback.secondsPerQuestion,
+        startUpSeconds:
+          typeof parsed.startUpSeconds === 'number' && parsed.startUpSeconds >= 0
+            ? parsed.startUpSeconds
+            : fallback.startUpSeconds,
+        runs: typeof parsed.runs === 'number' && parsed.runs > 0 ? Math.floor(parsed.runs) : 0
+      }
+    } catch {
+      return fallback
+    }
+  }
+
+  /**
+   * Remembers how long the last run took, so the next estimate is closer to
+   * the truth. The average of all the runs so far is kept.
+   */
+  recordTiming(startUpSeconds: number, secondsPerQuestion: number): void {
+    if (!Number.isFinite(startUpSeconds) || !Number.isFinite(secondsPerQuestion)) return
+    if (secondsPerQuestion <= 0) return
+    const current = this.getTiming()
+    const runs = current.runs + 1
+    const seconds = (current.secondsPerQuestion * current.runs + secondsPerQuestion) / runs
+    const startUp = (current.startUpSeconds * current.runs + startUpSeconds) / runs
+    this.ensureDir()
+    writeFileSync(
+      this.timingFile(),
+      JSON.stringify({ secondsPerQuestion: seconds, startUpSeconds: startUp, runs }, null, 2),
+      'utf8'
+    )
   }
 
   /**
@@ -324,8 +443,16 @@ export class ModelStore {
     return join(this.modelsDir, 'active-model.json')
   }
 
+  private activeEmbeddingFile(): string {
+    return join(this.modelsDir, 'active-embedding-model.json')
+  }
+
   private engineFile(): string {
     return join(this.modelsDir, 'engine.json')
+  }
+
+  private timingFile(): string {
+    return join(this.modelsDir, 'timing.json')
   }
 
   private removeFile(path: string): void {

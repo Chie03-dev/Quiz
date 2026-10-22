@@ -33,7 +33,54 @@ const parser = new XMLParser({
 type XmlNode = Record<string, unknown>
 
 const isText = (n: XmlNode): boolean => typeof n['#text'] === 'string'
-const textOf = (n: XmlNode): string => (n['#text'] as string) ?? ''
+
+/**
+ * The XML entities of a Word file, decoded.
+ *
+ * Word writes an ampersand as `&amp;` and a quote as `&quot;`, and the
+ * parser is told to leave the entities alone, so the text is decoded here.
+ * Only the five entities XML defines and the numeric character references
+ * are decoded; an entity the document defines itself is left alone, because
+ * there is no DTD processing to look it up.
+ */
+export function decodeXmlEntities(text: string): string {
+  if (!text.includes('&')) return text
+  return text.replace(
+    /&(#x[0-9a-fA-F]+|#[0-9]+|amp|lt|gt|quot|apos);/g,
+    (match, entity: string) => {
+      if (entity.startsWith('#x')) return fromCodePoint(Number.parseInt(entity.slice(2), 16), match)
+      if (entity.startsWith('#')) return fromCodePoint(Number.parseInt(entity.slice(1), 10), match)
+      switch (entity) {
+        case 'amp':
+          return '&'
+        case 'lt':
+          return '<'
+        case 'gt':
+          return '>'
+        case 'quot':
+          return '"'
+        case 'apos':
+          return "'"
+        default:
+          return match
+      }
+    }
+  )
+}
+
+/** The character of a numeric reference, or the text itself when it is none. */
+function fromCodePoint(code: number, fallback: string): string {
+  if (!Number.isInteger(code) || code < 0 || code > 0x10ffff) return fallback
+  try {
+    return String.fromCodePoint(code)
+  } catch {
+    return fallback
+  }
+}
+
+/** The text of a node, with its entities decoded. */
+const textOf = (n: XmlNode): string =>
+  typeof n['#text'] === 'string' ? decodeXmlEntities(n['#text']) : ''
 
 /** Children of the element `tag` inside `n`, or null when absent. */
 function tagChildren(n: XmlNode, tag: string): XmlNode[] | null {

@@ -24,7 +24,7 @@ const TYPE_SHAPES: Record<
   },
   tf: {
     body:
-      'one short statement of at most 15 words about the source text that is either true or false. It must NOT be a question: no "?" at the end and no words like "what", "which", "who" or "how" at the start. It must NOT repeat the source text.',
+      'one short statement of at most 15 words about the source text that is either true or false. It must be a complete sentence ending with a period. It must NOT be a question: no "?" at the end and no words like "what", "which", "who" or "how" at the start. It must NOT repeat the source text.',
     data: '{} - an empty object',
     key: 'true or false, written as a JSON boolean',
     example:

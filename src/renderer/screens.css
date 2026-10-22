@@ -71,6 +71,68 @@
   gap: var(--sp-3);
 }
 
+/* How long the run will take, under the number of questions. */
+.ai__estimate {
+  color: var(--ui-text-muted);
+  font-size: var(--fs-sm);
+}
+
+/* The screen that shows how far the run has come. */
+.ai__progress {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: var(--sp-3) var(--sp-4);
+  background: var(--ui-surface-2);
+  border: 1px solid var(--ui-border);
+  border-radius: var(--r-md);
+}
+
+.ai__progress-bar {
+  height: 8px;
+  overflow: hidden;
+  background: var(--ui-surface-3);
+  border-radius: var(--r-full);
+}
+
+.ai__progress-fill {
+  height: 100%;
+  background: var(--ui-accent);
+  border-radius: var(--r-full);
+  transition: width 200ms ease;
+}
+
+.ai__progress-count {
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+}
+
+.ai__progress-time {
+  color: var(--ui-text-muted);
+  font-size: var(--fs-sm);
+}
+
+/* The questions that were left out, and why. */
+.ai__notice {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--sp-2);
+  padding: var(--sp-3) var(--sp-4);
+  background: var(--ui-amber-soft);
+  border: 1px solid var(--ui-amber);
+  border-radius: var(--r-md);
+}
+
+.ai__notice-title {
+  font-weight: var(--fw-medium);
+}
+
+.ai__notice-body {
+  color: var(--ui-text-muted);
+  font-size: var(--fs-sm);
+}
+
 .ai__actions {
   display: flex;
   justify-content: flex-end;

@@ -164,7 +164,12 @@ export function QuizLibrary({
         title="Your quizzes"
         actions={
           <>
-            <Button variant="secondary" icon={<Icon name="sparkle" />} onClick={() => setShowAiDialog(true)}>
+            <Button
+              variant="secondary"
+              icon={<Icon name="sparkle" />}
+              testId="ai-open"
+              onClick={() => setShowAiDialog(true)}
+            >
               Generate with AI
             </Button>
             <Button variant="secondary" icon={<Icon name="upload" />} onClick={importQuiz}>

@@ -22,7 +22,9 @@ import type {
   ModelInfo,
   DownloadResult,
   ModelProgress,
-  AiStatus
+  AiStatus,
+  AiTiming,
+  GenerateProgress
 } from '../shared/types'
 
 // The renderer never talks to the server directly; everything goes through here.
@@ -111,6 +113,14 @@ const api = {
   /** Fills in missing answer keys for the given questions. */
   aiAutoKey: (questions: StoredQuestion[]): Promise<StoredQuestion[]> =>
     ipcRenderer.invoke('ai:autoKey', { questions }),
+  /** How long a run of questions takes, so the screen can show an estimate. */
+  aiTiming: (): Promise<AiTiming> => ipcRenderer.invoke('ai:timing'),
+  /** Reports how far the generation has come. */
+  onGenerateProgress: (cb: (progress: GenerateProgress) => void): (() => void) => {
+    const listener = (_e: unknown, progress: GenerateProgress): void => cb(progress)
+    ipcRenderer.on('ai:generateProgress', listener)
+    return () => ipcRenderer.removeListener('ai:generateProgress', listener)
+  },
   // --- AI model management ---
   /** All known models with their download status. */
   aiModels: (): Promise<ModelInfo[]> => ipcRenderer.invoke('ai:models'),
@@ -123,6 +133,9 @@ const api = {
   /** Sets the active model (pass null to use the built-in generator). */
   aiSetModel: (modelId: string | null): Promise<boolean> =>
     ipcRenderer.invoke('ai:setModel', modelId),
+  /** Sets the active search/embedding model (pass null to use the default). */
+  aiSetEmbeddingModel: (modelId: string | null): Promise<boolean> =>
+    ipcRenderer.invoke('ai:setEmbeddingModel', modelId),
   /** Deletes a downloaded model file. */
   aiDeleteModel: (modelId: string): Promise<boolean> =>
     ipcRenderer.invoke('ai:deleteModel', modelId),

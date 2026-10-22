@@ -38,6 +38,7 @@ import { LazyEmbedder, LlamaEmbedder } from './ai/rag/embeddings'
 import type { AiManager } from './ai'
 import type {
   AiStatus,
+  AiTiming,
   GenerateOptions,
   AutoKeyOptions,
   AutoKeyResult
@@ -75,6 +76,11 @@ let latestLockMode = true
 let latestMeme: MemeState | null = null
 /** Clears the "a meme is showing" flag once its time is up. */
 let memeTimer: NodeJS.Timeout | null = null
+/**
+ * The run of questions that is going on, so the time it takes can be
+ * measured: the start-up is the time until the first question is ready.
+ */
+let activeRun: { startedAt: number; firstAt: number | null } | null = null
 
 const snapshot = (): StateSnapshot | null =>
   latestServer
@@ -634,6 +640,13 @@ function registerIpc(): void {
     return { modelsDir: modelStore.getModelsDir(), enginePath: modelStore.getEnginePath() }
   })
 
+  ipcMain.handle('ai:timing', (): AiTiming => {
+    if (!modelStore) {
+      return { secondsPerQuestion: 6, startUpSeconds: 10, runs: 0 }
+    }
+    return modelStore.getTiming()
+  })
+
   ipcMain.handle('ai:selectFile', async () => {
     if (!win) return null
     const result = await dialog.showOpenDialog(win, {
@@ -679,56 +692,63 @@ function registerIpc(): void {
       const count = typeof o.count === 'number' && o.count > 0 ? o.count : 5
       const points = typeof o.points === 'number' && o.points > 0 ? o.points : 1
 
-      const result = await aiManager.generate({
-        sourceText,
-        filePath,
-        topic,
-        questionTypes,
-        count,
-        points
-      })
-
-      if (result.error) return { ok: false, error: result.error }
-      if (result.questions.length === 0) {
-        return { ok: false, error: 'The AI did not write a single valid question.' }
-      }
-
-      const quiz = library.create('AI generated quiz')
-      quiz.questions = result.questions.map((q) => ({
-        ...q,
-        id: randomUUID(),
-        status: 'draft' as const
-      }))
-      const saved = library.save(quiz)
-
-      const warnings: { questionIndex: number | null; message: string }[] = []
-      if (result.dropped && result.dropped > 0) {
-        const reasons = (result.reasons ?? [])
-          .sort((a, b) => b.count - a.count)
-          .map((r) => `${r.count} because ${r.reason}`)
-          .join(', ')
-        warnings.push({
-          questionIndex: null,
-          message: `The model wrote ${result.written ?? result.dropped} questions. ${
-            result.dropped
-          } were left out${reasons ? ` (${reasons})` : ''}. Fewer question types give more questions.`
+      const startedAt = Date.now()
+      activeRun = { startedAt, firstAt: null }
+      try {
+        const result = await aiManager.generate({
+          sourceText,
+          filePath,
+          topic,
+          questionTypes,
+          count,
+          points
         })
-      }
+        rememberRunTiming(startedAt, activeRun?.firstAt ?? null, result.questions.length)
 
-      return {
-        ok: true,
-        report: {
-          id: saved.id,
-          title: saved.title,
-          questionCount: saved.questions.length,
-          warnings,
-          questions: saved.questions.map((q) => ({
-            id: q.id,
-            type: q.type,
-            body: q.body,
-            sourceText: q.sourceText
-          }))
+        if (result.error) return { ok: false, error: result.error }
+        if (result.questions.length === 0) {
+          return { ok: false, error: 'The AI did not write a single valid question.' }
         }
+
+        const quiz = library.create('AI generated quiz')
+        quiz.questions = result.questions.map((q) => ({
+          ...q,
+          id: randomUUID(),
+          status: 'draft' as const
+        }))
+        const saved = library.save(quiz)
+
+        const warnings: { questionIndex: number | null; message: string }[] = []
+        if (result.dropped && result.dropped > 0) {
+          const reasons = (result.reasons ?? [])
+            .sort((a, b) => b.count - a.count)
+            .map((r) => `${r.count} because ${r.reason}`)
+            .join(', ')
+          warnings.push({
+            questionIndex: null,
+            message: `The model wrote ${result.written ?? result.dropped} questions. ${
+              result.dropped
+            } were left out${reasons ? ` (${reasons})` : ''}. Fewer question types give more questions.`
+          })
+        }
+
+        return {
+          ok: true,
+          report: {
+            id: saved.id,
+            title: saved.title,
+            questionCount: saved.questions.length,
+            warnings,
+            questions: saved.questions.map((q) => ({
+              id: q.id,
+              type: q.type,
+              body: q.body,
+              sourceText: q.sourceText
+            }))
+          }
+        }
+      } finally {
+        activeRun = null
       }
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) }
@@ -801,7 +821,18 @@ function registerIpc(): void {
     return true
   })
 
-  ipcMain.handle('ai:selectEngine', async (): Promise<string | null> => {
+  ipcMain.handle('ai:setEmbeddingModel', (_event, modelId: unknown): boolean => {
+    if (!modelStore) return false
+    if (modelId !== null && typeof modelId !== 'string') return false
+    const changed = modelStore.setActiveEmbeddingModel(modelId)
+    if (!changed) return false
+    // The user swapped the search model: drop the running server so the next
+    // search starts the new one.
+    embedder?.stop()
+    return true
+  })
+
+   ipcMain.handle('ai:selectEngine', async (): Promise<string | null> => {
     if (!win) return null
     const result = await dialog.showOpenDialog(win, {
       title: 'Select the llama.cpp binary',
@@ -814,13 +845,28 @@ function registerIpc(): void {
 }
 
 /**
+ * Remembers how long a run of questions took, so the next estimate is
+ * closer to the truth.
+ *
+ * The start-up is the time until the first question was ready; the rest is
+ * the time the questions themselves took.
+ */
+function rememberRunTiming(startedAt: number, firstAt: number | null, questions: number): void {
+  if (!modelStore || questions <= 0) return
+  const elapsedMs = Date.now() - startedAt
+  const startUpMs = Math.min(elapsedMs, Math.max(0, (firstAt ?? startedAt) - startedAt))
+  const perQuestion = (elapsedMs - startUpMs) / 1000 / questions
+  if (!Number.isFinite(perQuestion) || perQuestion <= 0) return
+  modelStore.recordTiming(Math.min(120, startUpMs / 1000), perQuestion)
+}
+
+/**
  * The embedder for the search by meaning.
  *
  * It only works when the small embedding model and the llama.cpp server are
  * there; without them the app searches by words alone.
  */
-function createEmbedder(): LazyEmbedder {
-  return new LazyEmbedder(() => {
+function createEmbedder(): LazyEmbedder {  return new LazyEmbedder(() => {
     if (!modelStore) return null
     const modelPath = modelStore.embeddingModelPath()
     if (!modelPath) return null
@@ -867,14 +913,24 @@ app.whenReady().then(async () => {
   resultsStore = data.results
   modelStore = new ModelStore(join(userData, 'models'))
   embedder = createEmbedder()
-  aiManager = createAiManagerWithStore(modelStore, {
-    index: data.ai,
-    embedder,
-    corpus: async (opts) => {
-      if (opts.filePath) return fileBlocks(opts.filePath)
-      return textBlocks(opts.sourceText)
+  aiManager = createAiManagerWithStore(
+    modelStore,
+    {
+      index: data.ai,
+      embedder,
+      corpus: async (opts) => {
+        if (opts.filePath) return fileBlocks(opts.filePath)
+        return textBlocks(opts.sourceText)
+      }
+    },
+    (progress) => {
+      // The first question that is ready ends the start-up of the model.
+      if (activeRun && activeRun.firstAt === null && progress.done > 0) {
+        activeRun.firstAt = Date.now()
+      }
+      win?.webContents.send('ai:generateProgress', progress)
     }
-  })
+  )
   memeAssets = new MemeAssets(memeStore, join(userData, MEME_DIR_NAME))
   memeAssets.ensure()
   // The sample meme is seeded on a brand-new profile only, next to the

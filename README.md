@@ -477,6 +477,14 @@ editor both work offline. The **Settings** screen decides what answers them.
   and so is a question that only repeats the text or asks about the same
   thing twice. The screen says how many questions were left out, so a short
   text gives fewer questions than you asked for.
+- **A pair question needs real pairs.** Every item of a *matching* or
+  *connect* question has to be a phrase of the text, there have to be at
+  least two pairs, and a pair may not answer itself. A *problem* answer has
+  to be a phrase as well, not the passage again; a computed value such as
+  "46 chromosomes" is allowed.
+- **A question about a section is not a question.** "What does the
+  'Large Gametes' section describe?" asks about the layout of the document,
+  so it never reaches the quiz.
 - **Every question is about a different fact.** The text is split into its
   sentences and every question is asked about another one, so five questions
   do not all ask about the same sentence.
@@ -488,7 +496,8 @@ editor both work offline. The **Settings** screen decides what answers them.
   document, a PDF, a Markdown file or a plain text file, and reads the text out
   of it - the same readers the quiz importer uses. The text of a PDF is put
   back into sentences first, so a sentence that was broken over three lines is
-  one fact again.
+  one fact again. A Word document gives its text without the `&amp;` and
+  `&quot;` codes it stores.
 
 ### How the questions are found
 
@@ -516,6 +525,27 @@ setup does:
   field searches the chapter first and writes the questions from the passages
   it finds - "how the cells divide" gives questions about meiosis, even when
   meiosis is on page 40.
+- **The questions are written in batches.** The model is loaded again for
+  every call, so one call per question would spend all its time loading the
+  model. The app asks for up to eight questions at once, one group per
+  question type, and checks every answer against the passage that question
+  came from. A question that does not hold up is asked again with a nudge,
+  and the passages that are left over fill the last slots one at a time.
+
+### How long the wait is
+
+The dialog tells the wait before it starts, and shows how far the run has
+come while it goes on.
+
+- **The estimate comes from your own machine.** The app measures how long the
+  last run took and keeps the average (six seconds per question and ten
+  seconds of start-up until there is a measurement of your own), so the
+  estimate under the number of questions is the time your laptop needs.
+- **The progress is live.** The dialog shows how many of the questions are
+  ready, how long the run has taken and how much is left.
+- **A short count is not hidden.** When fewer questions hold up than were
+  asked for, the dialog stays open and says how many were made and why the
+  rest were left out.
 
 The search model (BGE small, about 25 MB) is optional: without it the app
 searches by words alone, which is enough for most chapters.
