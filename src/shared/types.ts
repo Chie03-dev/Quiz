@@ -598,3 +598,49 @@ export type ServerMessage =
   | TimeUpdateMessage
   | MemePopMessage
   | MemeHideMessage
+
+// --- offline AI models ---
+
+/** A model the app knows how to download and use. */
+export interface ModelInfo {
+  /** Stable identifier, e.g. "gemma-2b-q4". */
+  id: string
+  /** Human-readable name shown in the settings UI. */
+  name: string
+  /** Short description of what the model does. */
+  description: string
+  /** Approximate download size in bytes. */
+  sizeBytes: number
+  /** File name under the models directory once downloaded. */
+  fileName: string
+  /** URL the model is downloaded from. */
+  downloadUrl: string
+  /** Whether the model is currently downloaded and ready to use. */
+  downloaded: boolean
+  /** Semver-like identifier, e.g. "1" or "gemma-2b-q4-2024-08". */
+  version: string
+  /** Whether this model is the one the AI layer currently uses. */
+  active?: boolean
+}
+
+/** Download progress: 0..100. */
+export type DownloadProgress = { loaded: number; total: number; percent: number }
+
+/** Download progress of one model, so the screen knows which card to fill. */
+export type ModelProgress = DownloadProgress & { modelId: string }
+
+/** Outcome of a download attempt. */
+export type DownloadResult =
+  | { ok: true; modelId: string }
+  | { ok: false; error: string }
+
+/** Whether the AI layer can answer, and which engine answers. */
+export interface AiStatus {
+  ready: boolean
+  /** "stub" for the built-in generator, "gguf" for a downloaded model. */
+  provider: string
+  /** The model name shown to the instructor. */
+  model: string
+  /** Why the AI layer fell back to another engine, when it did. */
+  note?: string
+}

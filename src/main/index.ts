@@ -32,7 +32,7 @@ import { buildSessionSnapshot } from './results/session'
 import { MemeAssets, MEME_DIR_NAME, MEME_MAX_BYTES, buildPopPayload, seedSampleMeme } from './memes/store'
 import { parseQuizJson, serializeQuiz } from './quizFormat'
 import { describeError, importQuizFile } from './import'
-import { createAiManager } from './ai'
+import { createAiManagerWithStore, createProviderForStore, ModelStore, type ModelInfo, type DownloadResult } from './ai'
 import type { AiManager } from './ai'
 import type {
   AiStatus,
@@ -47,6 +47,7 @@ let library: QuizLibrary | null = null
 let memeStore: MemeStore | null = null
 let resultsStore: ResultsStore | null = null
 let aiManager: AiManager | null = null
+let modelStore: ModelStore | null = null
 let memeAssets: MemeAssets | null = null
 let latestStudents: StudentInfo[] = []
 let latestServer: ServerInfo | null = null
@@ -620,9 +621,14 @@ function registerIpc(): void {
 
   // --- step 5: AI question generation ---
 
-  ipcMain.handle('ai:status', (): AiStatus => {
+  ipcMain.handle('ai:status', async (): Promise<AiStatus> => {
     if (!aiManager) return { ready: false, provider: 'none', model: 'none' }
-    return aiManager.status()
+    return aiManager.refreshStatus()
+  })
+
+  ipcMain.handle('ai:info', (): { modelsDir: string; enginePath: string | null } => {
+    if (!modelStore) return { modelsDir: '', enginePath: null }
+    return { modelsDir: modelStore.getModelsDir(), enginePath: modelStore.getEnginePath() }
   })
 
   ipcMain.handle('ai:selectFile', async () => {
@@ -663,6 +669,11 @@ function registerIpc(): void {
 
       const result = await aiManager.generate({ sourceText, questionTypes, count, points })
 
+      if (result.error) return { ok: false, error: result.error }
+      if (result.questions.length === 0) {
+        return { ok: false, error: 'The AI did not write a single valid question.' }
+      }
+
       const quiz = library.create('AI generated quiz')
       quiz.questions = result.questions.map((q) => ({
         ...q,
@@ -671,13 +682,27 @@ function registerIpc(): void {
       }))
       const saved = library.save(quiz)
 
+      const warnings: { questionIndex: number | null; message: string }[] = []
+      if (result.dropped && result.dropped > 0) {
+        const reasons = (result.reasons ?? [])
+          .sort((a, b) => b.count - a.count)
+          .map((r) => `${r.count} because ${r.reason}`)
+          .join(', ')
+        warnings.push({
+          questionIndex: null,
+          message: `The model wrote ${result.written ?? result.dropped} questions. ${
+            result.dropped
+          } were left out${reasons ? ` (${reasons})` : ''}. Fewer question types give more questions.`
+        })
+      }
+
       return {
         ok: true,
         report: {
           id: saved.id,
           title: saved.title,
           questionCount: saved.questions.length,
-          warnings: [],
+          warnings,
           questions: saved.questions.map((q) => ({
             id: q.id,
             type: q.type,
@@ -711,6 +736,61 @@ function registerIpc(): void {
       console.error('ai:autoKey failed:', err)
       return { questions: [] }
     }
+  })
+
+  // --- AI model registry ---
+
+  ipcMain.handle('ai:models', (): ModelInfo[] => {
+    if (!modelStore) return []
+    return modelStore.listModels()
+  })
+
+  ipcMain.handle('ai:setModel', (_event, modelId: unknown): boolean => {
+    if (!modelStore || !aiManager) return false
+    if (modelId !== null && typeof modelId !== 'string') return false
+    const changed = modelStore.setActiveModel(modelId)
+    if (!changed) return false
+    // The chosen model answers from now on, without a restart.
+    aiManager.setProvider(createProviderForStore(modelStore))
+    return true
+  })
+
+  ipcMain.handle('ai:deleteModel', (_event, modelId: unknown): boolean => {
+    if (!modelStore || !aiManager) return false
+    if (typeof modelId !== 'string') return false
+    const deleted = modelStore.deleteModel(modelId)
+    if (!deleted) return false
+    // Deleting the active model falls back to the built-in generator.
+    aiManager.setProvider(createProviderForStore(modelStore))
+    return true
+  })
+
+  ipcMain.handle('ai:downloadModel', async (_event, modelId: unknown): Promise<DownloadResult> => {
+    if (!modelStore) return { ok: false, error: 'The model store is not initialized.' }
+    if (typeof modelId !== 'string') return { ok: false, error: 'Invalid model id.' }
+    return modelStore.downloadModel(modelId, (progress) => {
+      win?.webContents.send('ai:modelProgress', { modelId, ...progress })
+    })
+  })
+
+  ipcMain.handle('ai:setEngine', (_event, enginePath: unknown): boolean => {
+    if (!modelStore || !aiManager) return false
+    if (enginePath !== null && typeof enginePath !== 'string') return false
+    const saved = modelStore.setEnginePath(enginePath)
+    if (!saved) return false
+    aiManager.setProvider(createProviderForStore(modelStore))
+    return true
+  })
+
+  ipcMain.handle('ai:selectEngine', async (): Promise<string | null> => {
+    if (!win) return null
+    const result = await dialog.showOpenDialog(win, {
+      title: 'Select the llama.cpp binary',
+      properties: ['openFile'],
+      filters: [{ name: 'Executables', extensions: ['exe', 'bat', 'cmd'] }]
+    })
+    if (result.canceled || !result.filePaths[0]) return null
+    return result.filePaths[0]
   })
 }
 
@@ -748,7 +828,8 @@ app.whenReady().then(async () => {
   library = data.quizzes
   memeStore = data.memes
   resultsStore = data.results
-  aiManager = createAiManager()
+  modelStore = new ModelStore(join(userData, 'models'))
+  aiManager = createAiManagerWithStore(modelStore)
   memeAssets = new MemeAssets(memeStore, join(userData, MEME_DIR_NAME))
   memeAssets.ensure()
   // The sample meme is seeded on a brand-new profile only, next to the
@@ -780,5 +861,7 @@ app.on('before-quit', () => {
   library = null
   memeStore = null
   resultsStore = null
+  aiManager = null
+  modelStore = null
   memeAssets = null
 })

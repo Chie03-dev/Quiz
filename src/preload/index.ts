@@ -18,7 +18,11 @@ import type {
   StartQuizResult,
   StateSnapshot,
   StoredQuiz,
-  StoredQuestion
+  StoredQuestion,
+  ModelInfo,
+  DownloadResult,
+  ModelProgress,
+  AiStatus
 } from '../shared/types'
 
 // The renderer never talks to the server directly; everything goes through here.
@@ -86,27 +90,52 @@ const api = {
   updateResultAnswer: (input: SaveResultAnswerInput): Promise<ResultOperationResult> =>
     ipcRenderer.invoke('results:updateAnswer', input),
   /** Saves the running session as it stands. */
-   saveCurrentResult: (): Promise<ResultSessionMeta | null> =>
-     ipcRenderer.invoke('results:createFromCurrent'),
-   // --- AI question generation ---
-   /** Whether the AI provider is ready and which one it is. */
-   aiStatus: (): Promise<{ ready: boolean; provider: string; model: string }> =>
-     ipcRenderer.invoke('ai:status'),
-   /** Opens a file dialog for a source document; returns the path or null. */
-   aiSelectFile: (): Promise<string | null> => ipcRenderer.invoke('ai:selectFile'),
-   /** Reads text from a .docx, .pdf, .md, or .txt file. */
-   aiReadFile: (filePath: string): Promise<string> => ipcRenderer.invoke('ai:readFile', filePath),
-   /** Generates questions from source text; creates a new quiz in the library. */
-   aiGenerate: (opts: {
-     sourceText: string
-     questionTypes: QuestionType[]
-     count: number
-     points: number
-   }): Promise<ImportQuizResult> => ipcRenderer.invoke('ai:generate', opts),
-   /** Fills in missing answer keys for the given questions. */
-   aiAutoKey: (questions: StoredQuestion[]): Promise<StoredQuestion[]> =>
-     ipcRenderer.invoke('ai:autoKey', { questions }),
-   onStateChanged: (cb: (state: StateSnapshot) => void): (() => void) => {
+  saveCurrentResult: (): Promise<ResultSessionMeta | null> =>
+    ipcRenderer.invoke('results:createFromCurrent'),
+  // --- AI question generation ---
+  /** Whether the AI provider is ready and which one it is. */
+  aiStatus: (): Promise<AiStatus> => ipcRenderer.invoke('ai:status'),
+  /** Opens a file dialog for a source document; returns the path or null. */
+  aiSelectFile: (): Promise<string | null> => ipcRenderer.invoke('ai:selectFile'),
+  /** Reads text from a .docx, .pdf, .md, or .txt file. */
+  aiReadFile: (filePath: string): Promise<string> => ipcRenderer.invoke('ai:readFile', filePath),
+  /** Generates questions from source text; creates a new quiz in the library. */
+  aiGenerate: (opts: {
+    sourceText: string
+    questionTypes: QuestionType[]
+    count: number
+    points: number
+  }): Promise<ImportQuizResult> => ipcRenderer.invoke('ai:generate', opts),
+  /** Fills in missing answer keys for the given questions. */
+  aiAutoKey: (questions: StoredQuestion[]): Promise<StoredQuestion[]> =>
+    ipcRenderer.invoke('ai:autoKey', { questions }),
+  // --- AI model management ---
+  /** All known models with their download status. */
+  aiModels: (): Promise<ModelInfo[]> => ipcRenderer.invoke('ai:models'),
+  /** Where the models live and which llama.cpp binary is used. */
+  aiInfo: (): Promise<{ modelsDir: string; enginePath: string | null }> =>
+    ipcRenderer.invoke('ai:info'),
+  /** Downloads a model by id. */
+  aiDownloadModel: (modelId: string): Promise<DownloadResult> =>
+    ipcRenderer.invoke('ai:downloadModel', modelId),
+  /** Sets the active model (pass null to use the built-in generator). */
+  aiSetModel: (modelId: string | null): Promise<boolean> =>
+    ipcRenderer.invoke('ai:setModel', modelId),
+  /** Deletes a downloaded model file. */
+  aiDeleteModel: (modelId: string): Promise<boolean> =>
+    ipcRenderer.invoke('ai:deleteModel', modelId),
+  /** Points the app at a llama.cpp binary (pass null to use the default). */
+  aiSetEngine: (enginePath: string | null): Promise<boolean> =>
+    ipcRenderer.invoke('ai:setEngine', enginePath),
+  /** Opens a file dialog to pick the llama.cpp binary. */
+  aiSelectEngine: (): Promise<string | null> => ipcRenderer.invoke('ai:selectEngine'),
+  /** Reports how far a model download has come. */
+  onModelProgress: (cb: (progress: ModelProgress) => void): (() => void) => {
+    const listener = (_e: unknown, progress: ModelProgress): void => cb(progress)
+    ipcRenderer.on('ai:modelProgress', listener)
+    return () => ipcRenderer.removeListener('ai:modelProgress', listener)
+  },
+  onStateChanged: (cb: (state: StateSnapshot) => void): (() => void) => {
     const listener = (_e: unknown, state: StateSnapshot): void => cb(state)
     ipcRenderer.on('state:changed', listener)
     return () => ipcRenderer.removeListener('state:changed', listener)

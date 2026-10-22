@@ -7,6 +7,7 @@ import { LiveSession } from './screens/LiveSession'
 import { QuizLibrary } from './screens/QuizLibrary'
 import { QuizEditor } from './screens/QuizEditor'
 import { ResultDetail, Results } from './screens/Results'
+import { Settings } from './screens/Settings'
 
 /** Where the instructor is. The editor sits on top of the library. */
 type View =
@@ -15,6 +16,7 @@ type View =
   | { name: 'editor'; quizId: string; importReport?: ImportQuizReport | null }
   | { name: 'results' }
   | { name: 'result'; sessionId: string }
+  | { name: 'settings' }
 
 export function App(): React.JSX.Element {
   const [state, setState] = useState<StateSnapshot | null>(null)
@@ -93,11 +95,14 @@ export function App(): React.JSX.Element {
       ? 'quizzes'
       : view.name === 'results' || view.name === 'result'
         ? 'results'
-        : 'dashboard'
+        : view.name === 'settings'
+          ? 'settings'
+          : 'dashboard'
 
   const navigate = (next: ShellSection): void => {
     if (next === 'quizzes') setView({ name: 'library' })
     else if (next === 'results') setView({ name: 'results' })
+    else if (next === 'settings') setView({ name: 'settings' })
     else setView({ name: 'dashboard' })
   }
 
@@ -136,6 +141,10 @@ export function App(): React.JSX.Element {
     content = (
       <ResultDetail sessionId={view.sessionId} onBack={() => setView({ name: 'results' })} />
     )
+  } else if (view.name === 'settings') {
+    title = 'Settings'
+    subtitle = 'Configure your quiz library and AI provider.'
+    content = <Settings />
   } else {
     content = (
       <Dashboard

@@ -39,6 +39,13 @@
   gap: var(--sp-2);
 }
 
+.ai__file-note {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--ui-text-secondary);
+  line-height: 1.5;
+}
+
 .ai__types {
   display: flex;
   flex-direction: column;
@@ -1512,4 +1519,160 @@
   font-size: var(--fs-sm);
   word-break: break-word;
 }
+
+/* --- Settings page --------------------------------------------------- */
+
+.settings-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-6);
+}
+
+.settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.settings-section h2 {
+  margin: 0;
+  font-size: var(--fs-lg);
+  color: var(--ui-heading);
+}
+
+.settings-subtitle {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--ui-text-secondary);
+  line-height: 1.5;
+}
+
+.settings-loading {
+  font-size: var(--fs-sm);
+  color: var(--ui-text-secondary);
+}
+
+.settings-error {
+  font-size: var(--fs-sm);
+  color: var(--ui-danger);
+}
+
+.settings-models {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.settings-model-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--sp-3);
+  border: 1px solid var(--ui-border);
+  border-radius: var(--radius-md);
+  background: var(--ui-surface);
+  gap: var(--sp-3);
+}
+
+.settings-model-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+
+.settings-model-info h3 {
+  margin: 0;
+  font-size: var(--fs-md);
+  color: var(--ui-heading);
+}
+
+.settings-model-desc {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--ui-text-secondary);
+  line-height: 1.5;
+}
+
+.settings-model-meta {
+  display: flex;
+  gap: var(--sp-1);
+}
+
+.settings-model-actions {
+  display: flex;
+  gap: var(--sp-2);
+}
+
+.settings-stub-model {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--sp-3);
+  border: 1px solid var(--ui-border);
+  border-radius: var(--radius-md);
+  background: var(--ui-surface-alt);
+  gap: var(--sp-3);
+}
+
+.settings-status {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+}
+
+.settings-note {
+  font-size: var(--fs-sm);
+  color: var(--ui-text-secondary);
+  line-height: 1.5;
+}
+
+.settings-progress {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-top: var(--sp-1);
+}
+
+.settings-progress-bar {
+  flex: 1;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--ui-border);
+  overflow: hidden;
+}
+
+.settings-progress-fill {
+  height: 100%;
+  background: var(--ui-accent);
+  transition: width 120ms linear;
+}
+
+.settings-progress-label {
+  font-size: var(--fs-sm);
+  color: var(--ui-text-secondary);
+  min-width: 3ch;
+  text-align: right;
+}
+
+.settings-path {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--ui-text-secondary);
+  word-break: break-all;
+}
+
+.settings-engine {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--sp-3);
+  flex-wrap: wrap;
+}
+
+.settings-engine-field {
+  flex: 1;
+  min-width: 260px;
+}
+
 

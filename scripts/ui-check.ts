@@ -579,6 +579,44 @@ async function main(): Promise<void> {
     })
     log(gone.still === false, 'the deleted session leaves the results list')
 
+    // --- the settings screen and the model registry ---
+    log(await clickByTestId(cdp, 'nav-settings'), 'the settings screen is reachable from the sidebar')
+    // The model list comes over IPC, so the cards are not on screen instantly.
+    await waitFor(async () => ((await hasTestId(cdp, 'settings-model-qwen2.5-0.5b-instruct-q4')) ? true : null))
+    const modelCards = await cdp.eval<number>(
+      `document.querySelectorAll('[data-testid^="settings-model-"]').length`
+    )
+    log(modelCards === 3, `the settings screen lists every catalog model (${modelCards})`)
+    log(await hasTestId(cdp, 'settings-builtin'), 'the built-in generator is offered')
+    log(
+      await hasTestId(cdp, 'settings-download-qwen2.5-0.5b-instruct-q4'),
+      'a model that is not downloaded offers a download'
+    )
+    const engineText = await textByTestId(cdp, 'settings-status')
+    log(
+      !!engineText && engineText.includes('Built-in generator'),
+      `the settings screen names the engine that answers (${engineText ?? 'nothing'})`
+    )
+    log(await hasTestId(cdp, 'settings-engine-input'), 'the llama.cpp binary can be set')
+    log(
+      await setInput(cdp, 'settings-engine-input', 'C:\\llama\\llama-cli.exe'),
+      'the engine path is typed into the field'
+    )
+    log(await clickByTestId(cdp, 'settings-engine-save'), 'the engine path is saved')
+    await waitFor(async () => {
+      const value = await cdp.eval<string>(
+        `document.querySelector('[data-testid="settings-engine-input"]').value`
+      )
+      return value === 'C:\\llama\\llama-cli.exe' ? value : null
+    })
+    log(true, 'the saved engine path stays in the field')
+    log(await clickByTestId(cdp, 'settings-engine-save'), 'the engine path is saved again')
+    const afterEngine = await textByTestId(cdp, 'settings-status')
+    log(
+      !!afterEngine && afterEngine.includes('Built-in generator'),
+      'a missing llama.cpp binary falls back to the built-in generator'
+    )
+
     console.log('done')
   } finally {
     for (const k of kids) k.kill()
