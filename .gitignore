@@ -28,6 +28,7 @@ docs/
 .clinerules
 .clineignore
 .continue/
+.kilo/
 
 .vscode/
 .idea/

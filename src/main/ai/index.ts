@@ -4,7 +4,7 @@ import { ModelStore } from './modelStore'
 import { createProviderForStore } from './providerFactory'
 import type { ChunkIndex, Embedder } from './rag/types'
 import type { DocBlock } from './rag/chunking'
-import type { GenerateOptions } from './types'
+import type { GenerateOptions, GenerateProgress } from './types'
 
 export { AiManager } from './manager'
 export { StubProvider } from './provider'
@@ -46,9 +46,11 @@ export function createAiManagerWithStore(
     index: ChunkIndex
     embedder?: Embedder
     corpus: (opts: GenerateOptions) => Promise<DocBlock[]>
-  }
+  },
+  onProgress?: (progress: GenerateProgress) => void
 ): AiManager {
   const manager = new AiManager(createProviderForStore(store))
   if (rag) manager.setRetrieval(rag)
+  if (onProgress) manager.setProgress(onProgress)
   return manager
 }

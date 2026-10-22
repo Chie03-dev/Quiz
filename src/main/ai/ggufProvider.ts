@@ -44,7 +44,7 @@ const MAX_TOKENS = '2048'
 /** A question body longer than this is the passage, not a question. */
 const MAX_BODY_LENGTH = 300
 /** The seed the model is given, so the same text gives the same questions. */
-const DEFAULT_SEED = 42
+export const DEFAULT_SEED = 42
 /** How long the whole generation may take before it stops asking for more. */
 const MAX_GENERATE_MS = 240_000
 /** A true/false statement longer than this is a passage, not a statement. */
@@ -202,6 +202,13 @@ export class GgufProvider implements AiProvider {
     // question is written about it and nothing else is asked.
     if (opts.focus) {
       return this.generateAbout(opts, sourceText, opts.focus)
+    }
+
+    // With a list of focuses several questions are written in one call. The
+    // model is loaded again for every call, so one call per question is the
+    // expensive way to do this.
+    if (opts.focuses && opts.focuses.length > 0) {
+      return this.generateAboutFacts(opts, opts.focuses)
     }
 
     // One call per type: a small model mixes the types up when it may choose.
@@ -424,7 +431,7 @@ export class GgufProvider implements AiProvider {
       focus
     })
 
-    const run = await this.runModel(prompt)
+    const run = await this.runModel(prompt, undefined, opts.seed)
     if (!run.ok) return { questions: [], error: run.error }
 
     const parsed = extractJsonArray(run.output)
@@ -446,6 +453,71 @@ export class GgufProvider implements AiProvider {
 
     return {
       questions: kept,
+      written: parsed.length,
+      dropped: [...reasons.values()].reduce((sum, n) => sum + n, 0),
+      reasons: [...reasons.entries()].map(([reason, count]) => ({ reason, count }))
+    }
+  }
+
+  /**
+   * Writes one question per fact, in one call.
+   *
+   * The retrieval has already chosen the sentences, so the model is only
+   * asked for the questions. Every question says which fact it belongs to,
+   * so the caller can check it against the passage that fact came from and
+   * not against the whole chapter.
+   */
+  private async generateAboutFacts(
+    opts: GenerateOptions,
+    focuses: string[]
+  ): Promise<GenerateResult> {
+    const type = opts.questionTypes[0] ?? 'mcq'
+    const prompt = PROMPT_QUESTION_OF_TYPE({
+      sourceText: focuses.join('\n\n'),
+      type,
+      count: focuses.length,
+      points: opts.points,
+      facts: focuses,
+      hint: opts.hint
+    })
+
+    const run = await this.runModel(prompt, undefined, opts.seed)
+    if (!run.ok) return { questions: [], error: run.error }
+
+    const parsed = extractJsonArray(run.output)
+    if (!parsed) {
+      return { questions: [], error: `The model did not answer with a JSON list of ${type} questions.` }
+    }
+
+    // Which fact every question belongs to: by order first, by the words
+    // they share when the model wrote a different number of questions.
+    const assignment = assignFacts(parsed.map(bodyOf), focuses)
+
+    const kept: Omit<StoredQuestion, 'id' | 'status'>[] = []
+    const factIndexes: number[] = []
+    const reasons = new Map<string, number>()
+
+    parsed.forEach((item, index) => {
+      const factIndex = assignment[index]
+      if (factIndex < 0) {
+        const why = 'it did not belong to a fact of the text'
+        reasons.set(why, (reasons.get(why) ?? 0) + 1)
+        return
+      }
+      // The question is not grounded here: the caller checks it against the
+      // passage the fact came from, which knows more than the sentence.
+      const result = this.buildQuestion(item, type, opts.points, focuses[factIndex], false)
+      if (result.draft) {
+        kept.push(result.draft)
+        factIndexes.push(factIndex)
+        return
+      }
+      reasons.set(result.why, (reasons.get(result.why) ?? 0) + 1)
+    })
+
+    return {
+      questions: kept,
+      factIndexes,
       written: parsed.length,
       dropped: [...reasons.values()].reduce((sum, n) => sum + n, 0),
       reasons: [...reasons.entries()].map(([reason, count]) => ({ reason, count }))
@@ -490,7 +562,8 @@ export class GgufProvider implements AiProvider {
     item: unknown,
     wanted: QuestionType,
     points: number,
-    sourceText: string
+    sourceText: string,
+    ground = true
   ): { draft: DraftQuestion | null; why: string } {
     if (!item || typeof item !== 'object' || Array.isArray(item)) {
       return { draft: null, why: 'it was not a question at all' }
@@ -509,6 +582,11 @@ export class GgufProvider implements AiProvider {
     // A model that copies the template leaves the placeholder in the text.
     if (body.includes('<') || body.includes('>')) {
       return { draft: null, why: 'it left a placeholder in the question' }
+    }
+    // A question that names a section of the document asks about the layout
+    // of the text, not about what it says.
+    if (namesASection(body)) {
+      return { draft: null, why: 'it asked about a section instead of about the text' }
     }
     // A question is a sentence, not the passage it came from.
     if (body.length > MAX_BODY_LENGTH) {
@@ -531,6 +609,11 @@ export class GgufProvider implements AiProvider {
       // The statement has to be about the text, not about the example.
       if (!sharesWithSource(body, sourceText)) {
         return { draft: null, why: 'it was not about your text' }
+      }
+      // A real statement is a full sentence; a bare phrase copied from the text
+      // is not a quiz question on it.
+      if (!body.endsWith('.')) {
+        return { draft: null, why: 'it was a phrase, not a statement' }
       }
     }
 
@@ -588,7 +671,7 @@ export class GgufProvider implements AiProvider {
         body,
         points: this.readPoints(record.points, points),
         data,
-        key: groundedAnswer(type, key, data, sourceText, body) ? key : null,
+        key: ground && !groundedAnswer(type, key, data, sourceText, body) ? null : key,
         sourceText: sourceText.slice(0, 200)
       },
       why: 'the answer was not in your text'
@@ -688,7 +771,7 @@ export class GgufProvider implements AiProvider {
         const to = type === 'matching' ? data.right ?? [] : data.answers ?? []
         const map = this.readPairMap(value)
         if (!map) return null
-        return this.alignPairMap(map, from, to)
+        return alignPairMap(map, from, to)
       }
     }
   }
@@ -841,37 +924,6 @@ export class GgufProvider implements AiProvider {
     return Object.keys(out).length > 0 ? out : null
   }
 
-  /** Lines a model map up with the items it wrote, by position when needed. */
-  private alignPairMap(
-    map: Record<string, string>,
-    from: Choice[],
-    to: Choice[]
-  ): Record<string, string> | null {
-    const toIds = to.map((c) => c.id)
-    const known = new Set(toIds)
-    const mapKeys = Object.keys(map)
-
-    const resolve = (value: string): string | null => {
-      if (known.has(value)) return value
-      const index = Number(value)
-      if (Number.isInteger(index) && index >= 0 && index < toIds.length) return toIds[index]
-      const letter = LETTERS.indexOf(value.toLowerCase())
-      if (letter >= 0 && letter < toIds.length) return toIds[letter]
-      return null
-    }
-
-    const aligned: Record<string, string> = {}
-    const keysMatch = from.every((c) => map[c.id] !== undefined)
-    from.forEach((item, index) => {
-      const raw = keysMatch ? map[item.id] : map[mapKeys[index]]
-      if (raw === undefined) return
-      const resolved = resolve(raw)
-      if (resolved) aligned[item.id] = resolved
-    })
-
-    return Object.keys(aligned).length === from.length ? aligned : null
-  }
-
   /** The llama.cpp binary to run, or null when the configured one is missing. */
   private binary(): string | null {
     const configured = this.opts.enginePath?.trim()
@@ -882,7 +934,8 @@ export class GgufProvider implements AiProvider {
   /** Sends one prompt to the model and returns what it wrote. */
   private async runModel(
     prompt: string,
-    temperature?: number
+    temperature?: number,
+    seed?: number
   ): Promise<{ ok: true; output: string } | { ok: false; error: string }> {
     const binary = this.binary()
     if (!binary) {
@@ -908,7 +961,7 @@ export class GgufProvider implements AiProvider {
           // The same text gives the same questions; the second try uses a
           // different temperature, so it comes out differently.
           '--seed',
-          String(this.opts.seed ?? DEFAULT_SEED),
+          String(seed ?? this.opts.seed ?? DEFAULT_SEED),
           '-st',
           '--no-display-prompt'
         ],
@@ -996,6 +1049,51 @@ export class GgufProvider implements AiProvider {
       })
     })
   }
+}
+
+/**
+ * Lines a model map up with the items it wrote, by position when needed.
+ *
+ * A pair that answers itself is refused: the prompt and the answer are the
+ * same words, so the question asks nothing. One pair is not a matching
+ * question either.
+ */
+export function alignPairMap(
+  map: Record<string, string>,
+  from: Choice[],
+  to: Choice[]
+): Record<string, string> | null {
+  const toIds = to.map((c) => c.id)
+  const known = new Set(toIds)
+  const mapKeys = Object.keys(map)
+
+  const resolve = (value: string): string | null => {
+    if (known.has(value)) return value
+    const index = Number(value)
+    if (Number.isInteger(index) && index >= 0 && index < toIds.length) return toIds[index]
+    const letter = LETTERS.indexOf(value.toLowerCase())
+    if (letter >= 0 && letter < toIds.length) return toIds[letter]
+    return null
+  }
+
+  const aligned: Record<string, string> = {}
+  const keysMatch = from.every((c) => map[c.id] !== undefined)
+  from.forEach((item, index) => {
+    const raw = keysMatch ? map[item.id] : map[mapKeys[index]]
+    if (raw === undefined) return
+    const resolved = resolve(raw)
+    if (!resolved) return
+    const target = to.find((choice) => choice.id === resolved)
+    if (!target) return
+    // A pair that answers itself is not a question.
+    if (normalizeText(item.text) === normalizeText(target.text)) return
+    aligned[item.id] = resolved
+  })
+
+  // Every item has to be paired, and one pair is not a matching question.
+  if (Object.keys(aligned).length !== from.length) return null
+  if (Object.keys(aligned).length < 2) return null
+  return aligned
 }
 
 /** A list with one entry is the entry itself, as far as a key is concerned. */
@@ -1121,6 +1219,21 @@ export function isShortAnswer(text: string): boolean {
 }
 
 /**
+ * True when the body names a section of the document, like "the 'Large
+ * Gametes (Ova)' section". Such a question is about the layout of the text
+ * and not about what the text says, so it is left out.
+ */
+export function namesASection(body: string): boolean {
+  // "the 'Large Gametes (Ova)' section", "the 'Meiosis' chapter"
+  if (/['"“][^'"”]{2,60}['"”]\s+(section|chapter|part|heading|paragraph|title)\b/i.test(body)) {
+    return true
+  }
+  // "section 'Meiosis'"
+  if (/\b(section|chapter|heading)\s+['"“][^'"”]{2,60}['"”]/i.test(body)) return true
+  return false
+}
+
+/**
  * True when the answer only repeats the words of the question instead of
  * filling the blank.
  */
@@ -1165,6 +1278,64 @@ function contentWords(text: string): Set<string> {
       .split(/[^a-z0-9]+/)
       .filter((w) => w.length >= 3 && !STOP_WORDS.has(w))
   )
+}
+
+/** The body of a raw model answer. */
+function bodyOf(item: unknown): string {
+  if (!item || typeof item !== 'object' || Array.isArray(item)) return ''
+  const body = (item as Record<string, unknown>).body
+  return typeof body === 'string' ? body : ''
+}
+
+/**
+ * The fact every question belongs to.
+ *
+ * The model is asked for one question per fact, in this order, so the order
+ * is the first guess. When the model wrote a different number of questions,
+ * or wrote them in another order, the words a question shares with a fact
+ * decide.
+ */
+export function assignFacts(bodies: string[], focuses: string[]): number[] {
+  const assignment = new Array<number>(bodies.length).fill(-1)
+  if (focuses.length === 0) return assignment
+  const used = new Set<number>()
+
+  bodies.forEach((body, index) => {
+    let best = -1
+    let bestScore = 0
+    focuses.forEach((focus, focusIndex) => {
+      if (used.has(focusIndex)) return
+      const score = factOverlap(body, focus)
+      if (score > bestScore) {
+        bestScore = score
+        best = focusIndex
+      }
+    })
+    // No words in common: the order is the best guess there is.
+    if (best < 0) {
+      for (let focusIndex = 0; focusIndex < focuses.length; focusIndex++) {
+        if (used.has(focusIndex)) continue
+        best = focusIndex
+        break
+      }
+    }
+    if (best < 0) return
+    used.add(best)
+    assignment[index] = best
+  })
+
+  return assignment
+}
+
+/** How many words a question and a fact have in common. */
+function factOverlap(a: string, b: string): number {
+  const words = contentWords(a)
+  const other = contentWords(b)
+  let shared = 0
+  for (const word of words) {
+    if (other.has(word)) shared++
+  }
+  return shared
 }
 
 /**
@@ -1218,14 +1389,50 @@ export function groundedAnswer(
       if (answer.trim().length === 0) return false
       // A solved problem has a number the text never wrote.
       if (/\d/.test(answer)) return true
+      // An answer that is a whole sentence is the passage again.
+      if (!isShortAnswer(answer)) return false
       return inText(answer)
     }
     case 'tf':
-    case 'matching':
-    case 'connect':
-      // These answers are not copied from the text, so they cannot be checked.
       return true
+    case 'matching':
+    case 'connect': {
+      // The items of a pair question are words of the text, so a pair that
+      // invents them is not a question about the text at all.
+      const left = type === 'matching' ? data.left ?? [] : data.prompts ?? []
+      const right = type === 'matching' ? data.right ?? [] : data.answers ?? []
+      if (left.length === 0 || right.length === 0) return false
+      const pairs = pairEntries(key)
+      // One pair is not a matching question.
+      if (pairs.length < 2) return false
+      const leftById = new Map(left.map((choice) => [choice.id, choice]))
+      const rightById = new Map(right.map((choice) => [choice.id, choice]))
+      for (const [leftId, rightId] of pairs) {
+        const prompt = leftById.get(leftId)
+        const answer = rightById.get(rightId)
+        if (!prompt || !answer) return false
+        if (!inText(prompt.text) || !inText(answer.text)) return false
+        if (!isShortItem(prompt.text) || !isShortItem(answer.text)) return false
+      }
+      return true
+    }
   }
+}
+
+/** The pairs of a matching or connect key. */
+function pairEntries(key: StoredKey): [string, string][] {
+  if (!key || typeof key !== 'object' || Array.isArray(key)) return []
+  return Object.entries(key as Record<string, unknown>)
+    .filter((entry): entry is [string, string] => typeof entry[1] === 'string')
+}
+
+/**
+ * An item of a pair question is a phrase and not a whole sentence. A number
+ * is allowed, because a computed value such as "15 EUR" is a real answer.
+ */
+function isShortItem(text: string): boolean {
+  if (/\d/.test(text)) return true
+  return isShortAnswer(text)
 }
 
 /** The accepted answers of an identification or enumeration key. */

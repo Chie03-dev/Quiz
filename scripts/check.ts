@@ -36,9 +36,24 @@ import {
   containsPhrase,
   mentionsText,
   repeatsTheQuestion,
-  numberInBody
+  numberInBody,
+  alignPairMap,
+  assignFacts,
+  namesASection
 } from '../src/main/ai/ggufProvider'
 import { splitFacts } from '../src/main/ai/prompts'
+import { chunkText } from '../src/main/ai/chunker'
+import { decodeXmlEntities } from '../src/main/import/docx'
+import type {
+  AiProvider,
+  AiStatus,
+  AutoKeyResult,
+  GenerateOptions,
+  GenerateResult,
+  GenerateProgress
+} from '../src/main/ai/types'
+import type { ChunkIndex, RagChunk, ScoredChunk } from '../src/main/ai/rag/types'
+import type { DocBlock } from '../src/main/ai/rag/chunking'
 import {
   chunkDocument,
   blocksToDocBlocks,
@@ -533,6 +548,15 @@ async function main(): Promise<void> {
     // --- the retrieval ---
     console.log('\n--- retrieval ---')
     await checkRag()
+
+    // --- the questions in batches ---
+    console.log('\n--- batched generation ---')
+    await checkBatchedGeneration()
+
+    // --- the text of a Word document ---
+    console.log('\n--- Word text ---')
+    await checkDocxText()
+
 
 
   const seen: any[] = []
@@ -2804,6 +2828,342 @@ async function checkAiModels(): Promise<void> {
     } finally {
       safeRmSync(docxDir)
     }
+  } finally {
+    safeRmSync(dir)
+  }
+}
+/**
+ * A chunk index that keeps everything in memory, for the batch check.
+ */
+class MemoryIndex implements ChunkIndex {
+  private readonly chunks = new Map<string, RagChunk[]>()
+
+  replace(sourceRef: string, chunks: RagChunk[]): void {
+    this.chunks.set(sourceRef, chunks)
+  }
+
+  list(sourceRef: string): RagChunk[] {
+    return this.chunks.get(sourceRef) ?? []
+  }
+
+  searchWords(sourceRef: string, query: string, limit = 50): ScoredChunk[] {
+    const words = query.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 2)
+    if (words.length === 0) return []
+    const hits: ScoredChunk[] = []
+    for (const chunk of this.list(sourceRef)) {
+      const text = chunk.text.toLowerCase()
+      const score = words.filter((w) => text.includes(w)).length
+      if (score > 0) hits.push({ chunk, score, rank: hits.length + 1, source: 'bm25' })
+    }
+    return hits.sort((a, b) => b.score - a.score).slice(0, limit)
+  }
+
+  replaceVectors(): void {
+    // The batch check does not use vectors.
+  }
+
+  vectors(): { chunkId: string; vector: number[] }[] {
+    return []
+  }
+
+  hasVectors(): boolean {
+    return false
+  }
+}
+
+/**
+ * A provider that writes one question per fact, so the batching of the
+ * manager can be checked without a model.
+ */
+class BatchProvider implements AiProvider {
+  readonly calls: GenerateOptions[] = []
+
+  status(): AiStatus {
+    return { ready: true, provider: 'test', model: 'batch' }
+  }
+
+  async generate(opts: GenerateOptions): Promise<GenerateResult> {
+    this.calls.push(opts)
+    const focuses = opts.focuses ?? (opts.focus ? [opts.focus] : [])
+    const type = opts.questionTypes[0] ?? 'mcq'
+
+    const questions: Omit<StoredQuestion, 'id' | 'status'>[] = focuses.map((focus, index) => {
+      const marker = /marker(\d+)/.exec(focus)?.[1] ?? String(index)
+      if (type === 'tf') {
+        return {
+          type: 'tf',
+          body: `marker${marker} belongs to topic${marker}`,
+          points: opts.points,
+          data: {},
+          key: true,
+          sourceText: focus
+        }
+      }
+      return {
+        type: 'identification',
+        body: `What does marker${marker} belong to?`,
+        points: opts.points,
+        data: {},
+        key: [focus],
+        sourceText: focus
+      }
+    })
+
+    return {
+      questions,
+      written: questions.length,
+      factIndexes: focuses.map((_, index) => index)
+    }
+  }
+
+  async autoKey(): Promise<AutoKeyResult> {
+    return { questions: [] }
+  }
+}
+
+/**
+ * The questions are written in batches: one model call per group of facts,
+ * every question is checked against the passage it came from, and the count
+ * that was asked for is met.
+ */
+async function checkBatchedGeneration(): Promise<void> {
+  const paragraphs = Array.from({ length: 40 }, (_, i) => `marker${i} belongs to topic${i}`)
+  // Every paragraph sits under its own heading, so every one of them is a
+  // passage of its own.
+  const blocks: DocBlock[] = paragraphs.flatMap((text, i) => [
+    { text: `Section ${i}`, heading: `Section ${i}`, kind: 'heading' as const },
+    { text, heading: `Section ${i}`, kind: 'paragraph' as const }
+  ])
+
+  const provider = new BatchProvider()
+  const progress: GenerateProgress[] = []
+  const manager = new AiManager(provider, {
+    chunker: { chunkText },
+    extract: { extractText: async () => '' },
+    rag: {
+      index: new MemoryIndex(),
+      corpus: async () => blocks
+    },
+    onProgress: (p) => progress.push(p)
+  })
+
+  const result = await manager.generate({
+    sourceText: '',
+    questionTypes: ['identification'],
+    count: 20,
+    points: 1
+  })
+
+  log(
+    result.questions.length === 20,
+    `the batched run writes the 20 questions that were asked for (${result.questions.length})`
+  )
+  log(
+    provider.calls.length < 20,
+    `the questions are written in a few calls, not one per question (${provider.calls.length})`
+  )
+  log(
+    provider.calls.every((call) => (call.focuses?.length ?? 0) <= 8),
+    'no call asks for more than eight questions at once'
+  )
+  log(
+    provider.calls.every((call) => (call.focuses?.length ?? 0) > 0),
+    'every call asks for the facts it should write questions about'
+  )
+
+  // Every question is checked against its own passage.
+  const keys = result.questions.map((q) => (Array.isArray(q.key) ? String(q.key[0] ?? '') : ''))
+  log(
+    keys.every((key) => paragraphs.includes(key)),
+    'every answer is a phrase of the passage its question came from'
+  )
+  log(new Set(keys).size === keys.length, 'every question comes from a different passage')
+  log(
+    result.questions.every((q) => q.body.includes('marker')),
+    'every question is about the fact it was asked for'
+  )
+
+  // The run tells the screen how far it has come.
+  log(progress.length > 0, 'the run reports how far it has come')
+  log(
+    progress[progress.length - 1]?.done === 20,
+    'the last report says every question is ready'
+  )
+  log(
+    progress.every((p) => p.total === 20 && p.elapsedMs >= 0),
+    'every report says how many questions were asked for'
+  )
+
+  // Two types: each one gets its own share of the questions.
+  const twoTypes = new BatchProvider()
+  const split = new AiManager(twoTypes, {
+    chunker: { chunkText },
+    extract: { extractText: async () => '' },
+    rag: {
+      index: new MemoryIndex(),
+      corpus: async () => blocks
+    }
+  })
+  const splitResult = await split.generate({
+    sourceText: '',
+    questionTypes: ['identification', 'tf'],
+    count: 10,
+    points: 1
+  })
+  log(
+    splitResult.questions.length === 10,
+    `two question types together make the count that was asked for (${splitResult.questions.length})`
+  )
+  log(
+    splitResult.questions.filter((q) => q.type === 'identification').length === 5 &&
+      splitResult.questions.filter((q) => q.type === 'tf').length === 5,
+    'each question type gets half of the questions'
+  )
+
+  // The built-in generator still answers when no model is downloaded.
+  const builtIn = new AiManager(undefined, {
+    chunker: { chunkText },
+    extract: { extractText: async () => '' },
+    rag: {
+      index: new MemoryIndex(),
+      corpus: async () => blocks
+    }
+  })
+  const builtInResult = await builtIn.generate({
+    sourceText: '',
+    questionTypes: ['mcq'],
+    count: 3,
+    points: 1
+  })
+  log(
+    builtInResult.questions.length > 0,
+    'the built-in generator still answers in the retrieval path'
+  )
+
+  // The questions are matched to the facts they belong to.
+  const focuses = ['the chloroplasts make sugar', 'the roots take in water', 'the leaf is green']
+  const bodies = ['Which part takes in water?', 'Which part is green?', 'Which part makes sugar?']
+  const assignment = assignFacts(bodies, focuses)
+  log(
+    assignment[0] === 1 && assignment[1] === 2 && assignment[2] === 0,
+    'a question is matched to the fact it shares its words with'
+  )
+  const inOrder = assignFacts(focuses, focuses)
+  log(
+    inOrder[0] === 0 && inOrder[1] === 1 && inOrder[2] === 2,
+    'the order of the questions is the first guess'
+  )
+  log(
+    assignFacts(['nothing alike'], focuses)[0] === 0,
+    'a question without a fact of its own still gets the first one'
+  )
+
+  // The pair questions have to hold up.
+  const pairSource =
+    'Meiosis halves the chromosomes. Fertilization joins two gametes. The cell has a nucleus.'
+  const connectData = {
+    prompts: [{ id: 'p1', text: 'Meiosis' }, { id: 'p2', text: 'Fertilization' }],
+    answers: [
+      { id: 'a1', text: 'halves the chromosomes' },
+      { id: 'a2', text: 'joins two gametes' }
+    ]
+  }
+  log(
+    groundedAnswer('connect', { p1: 'a1', p2: 'a2' }, connectData, pairSource),
+    'a connect question with two real pairs is kept'
+  )
+  log(
+    !groundedAnswer('connect', { p1: 'a1' }, connectData, pairSource),
+    'a connect question with one pair is refused'
+  )
+  log(
+    !groundedAnswer(
+      'connect',
+      { p1: 'a1', p2: 'a2' },
+      {
+        prompts: [{ id: 'p1', text: 'Meiosis' }, { id: 'p2', text: 'Fertilization' }],
+        answers: [{ id: 'a1', text: 'a made up thing' }, { id: 'a2', text: 'joins two gametes' }]
+      },
+      pairSource
+    ),
+    'a connect question with an invented answer is refused'
+  )
+  log(
+    alignPairMap({ p1: 'a1', p2: 'a2' }, connectData.prompts, connectData.answers) !== null,
+    'two real pairs are lined up with the items'
+  )
+  log(
+    alignPairMap({ p1: 'a1' }, connectData.prompts, connectData.answers) === null,
+    'one pair is not a matching question'
+  )
+  log(
+    alignPairMap(
+      { p1: 'a1', p2: 'a2' },
+      [{ id: 'p1', text: 'Meiosis' }, { id: 'p2', text: 'Fertilization' }],
+      [{ id: 'a1', text: 'Meiosis' }, { id: 'a2', text: 'Fertilization' }]
+    ) === null,
+    'a pair that answers itself is refused'
+  )
+
+  // A problem answer is a phrase and not the passage again.
+  log(
+    !groundedAnswer(
+      'problem',
+      { answer: 'The cell has a nucleus and a membrane around it.' },
+      {},
+      pairSource
+    ),
+    'a problem answer that is a whole sentence is refused'
+  )
+  log(
+    groundedAnswer('problem', { answer: '46 chromosomes' }, {}, pairSource),
+    'a problem answer with a number is kept'
+  )
+  log(
+    groundedAnswer('problem', { answer: 'a nucleus' }, {}, pairSource),
+    'a short problem answer the text says is kept'
+  )
+
+  // A question about a section of the document asks about the layout.
+  log(
+    namesASection("What does the 'Large Gametes (Ova)' section describe?"),
+    'a question that names a section is noticed'
+  )
+  log(
+    !namesASection('What is the powerhouse of the cell?'),
+    'a question with a quoted word is not about a section'
+  )
+}
+
+/**
+ * The text of a Word document: the entities are decoded, so an ampersand
+ * does not survive into the questions.
+ */
+async function checkDocxText(): Promise<void> {
+  log(decodeXmlEntities('Tom &amp; Jerry') === 'Tom & Jerry', 'the ampersand entity is decoded')
+  log(decodeXmlEntities('it&#39;s') === "it's", 'a numeric character reference is decoded')
+  log(decodeXmlEntities('&#x27;') === "'", 'a hexadecimal character reference is decoded')
+  log(decodeXmlEntities('&lt;b&gt;') === '<b>', 'the angle bracket entities are decoded')
+  log(decodeXmlEntities('&quot;hi&quot;') === '"hi"', 'the quote entity is decoded')
+  log(decodeXmlEntities('&company;') === '&company;', 'an entity the document defines is left alone')
+
+  const dir = mkdtempSync(join(tmpdir(), 'quiz-entities-'))
+  try {
+    const zip = new JSZip()
+    zip.file(
+      'word/document.xml',
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>
+<w:p><w:r><w:t>Tom &amp; Jerry went to the &quot;cinema&quot;.</w:t></w:r></w:p>
+</w:body></w:document>`
+    )
+    const buffer = await zip.generateAsync({ type: 'nodebuffer' })
+    const docxPath = join(dir, 'chapter1.docx')
+    writeFileSync(docxPath, buffer)
+
+    const text = await extractTextFromPath(docxPath)
+    log(text.includes('Tom & Jerry went to the "cinema".'), 'a Word document decodes its entities')
+    log(!text.includes('&amp;'), 'the entity does not survive into the text')
   } finally {
     safeRmSync(dir)
   }

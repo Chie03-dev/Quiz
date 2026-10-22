@@ -83,10 +83,13 @@ export function Settings(): React.JSX.Element {
     }
   }
 
-  const activate = async (id: string | null): Promise<void> => {
+  const activate = async (model: ModelInfo | null): Promise<void> => {
     setError('')
     try {
-      const ok = await window.quiz.aiSetModel(id)
+      const ok =
+        model && model.kind === 'embedding'
+          ? await window.quiz.aiSetEmbeddingModel(model.id)
+          : await window.quiz.aiSetModel(model ? model.id : null)
       if (!ok) setError('That model could not be selected.')
       await loadModels()
       await loadStatus()
@@ -127,7 +130,10 @@ export function Settings(): React.JSX.Element {
   }
 
   const activeModel = models.find((m) => m.active) ?? null
-  const searchModel = models.find((m) => m.kind === 'embedding' && m.downloaded) ?? null
+  const searchModel =
+    models.find((m) => m.kind === 'embedding' && m.active) ??
+    models.find((m) => m.kind === 'embedding' && m.downloaded) ??
+    null
 
   return (
     <div className="settings-page">
@@ -178,14 +184,14 @@ export function Settings(): React.JSX.Element {
               </div>
 
               <div className="settings-model-actions">
-                {model.downloaded && !model.active && model.kind !== 'embedding' && (
+                {model.downloaded && !model.active && (
                   <Button
                     size="sm"
                     variant="primary"
                     testId={`settings-use-${model.id}`}
-                    onClick={() => void activate(model.id)}
+                    onClick={() => void activate(model)}
                   >
-                    Use this model
+                    {model.kind === 'embedding' ? 'Use as search model' : 'Use this model'}
                   </Button>
                 )}
                 {!model.downloaded && (
@@ -283,9 +289,9 @@ export function Settings(): React.JSX.Element {
           </Badge>
         </div>
         <p className="settings-note">
-          {searchModel
-            ? 'The small search model is downloaded, so the app also finds the passages that mean the same thing as the question.'
-            : 'Download the small search model above to let the app find the passages that mean the same as the question, not only the ones with the same words.'}
+           {searchModel
+             ? 'The search model is downloaded, so the app also finds the passages that mean the same thing as the question.'
+             : 'Download a search model above to let the app find the passages that mean the same as the question, not only the ones with the same words.'}
         </p>
       </section>
     </div>

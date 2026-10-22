@@ -1,4 +1,4 @@
-import type { AiStatus, QuestionType, StoredQuestion } from '../../shared/types'
+import type { AiStatus, GenerateProgress, QuestionType, StoredQuestion } from '../../shared/types'
 import type { ChunkIndex, Embedder } from './rag/types'
 import type { DocBlock } from './rag/chunking'
 
@@ -6,7 +6,7 @@ export type { QuestionType as AiQuestionType }
 
 // The model DTOs live in shared/types so the preload bridge and the renderer
 // can use them without pulling in main-process code.
-export type { ModelInfo, DownloadProgress, DownloadResult, AiStatus } from '../../shared/types'
+export type { ModelInfo, DownloadProgress, DownloadResult, AiStatus, GenerateProgress, AiTiming } from '../../shared/types'
 
 export interface Chunk {
   text: string
@@ -24,6 +24,20 @@ export interface GenerateOptions {
   sourceText: string
   /** The sentence of the passage the question should be about. */
   focus?: string
+  /**
+   * The sentences the questions should be about, one question per sentence.
+   * A model call that writes several questions at once is much cheaper than
+   * one call per question, because the model is loaded again every time.
+   */
+  focuses?: string[]
+  /** A nudge for the second try, when the first one did not hold up. */
+  hint?: string
+  /**
+   * The random seed for this call. The first ask leaves it open so the same
+   * text always gives the same questions; the repair ask passes a different
+   * one so the retry may come out differently.
+   */
+  seed?: number
   /** The file the questions are written from; empty when the text is pasted. */
   filePath?: string
   /** What the questions should be about; empty means the whole source. */
@@ -43,6 +57,11 @@ export interface GenerateResult {
   dropped?: number
   /** Why the questions were left out, and how many of each. */
   reasons?: { reason: string; count: number }[]
+  /**
+   * Which focus every question belongs to, in the order of the questions.
+   * The index points into the focuses that were asked for.
+   */
+  factIndexes?: number[]
 }
 
 export interface AutoKeyOptions {
@@ -84,6 +103,8 @@ export interface AiDependencies {
     /** The blocks of a source: a file that is read, or the pasted text. */
     corpus: (opts: GenerateOptions) => Promise<DocBlock[]>
   }
+  /** Told how far the generation has come, so the screen can show a bar. */
+  onProgress?: (progress: GenerateProgress) => void
 }
 
 export const DEFAULT_CHUNK_TOKENS = 200

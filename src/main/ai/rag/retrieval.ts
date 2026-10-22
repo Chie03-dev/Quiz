@@ -122,7 +122,9 @@ export function chunkSimilarity(a: RagChunk, b: RagChunk): number {
  * The passages of a source, spread over the whole source.
  *
  * The document is read in order and every n-th passage is taken, so the
- * questions are about different parts of the chapter.
+ * questions are about different parts of the chapter. Two questions do not
+ * come from the same paragraph, unless the document has fewer paragraphs
+ * than questions.
  */
 export function spread(
   children: RagChunk[],
@@ -132,12 +134,43 @@ export function spread(
   if (children.length === 0) return []
   const step = Math.max(1, Math.floor(children.length / Math.max(1, count)))
   const picked: Passage[] = []
+  const usedChildren = new Set<string>()
+  const usedParents = new Set<string>()
+
+  const take = (child: RagChunk): void => {
+    const parent = parents.get(child.parentId)
+    if (!parent) return
+    picked.push(toPassage(child, parent, 1))
+    usedChildren.add(child.id)
+    usedParents.add(child.parentId)
+  }
 
   for (let i = 0; i < children.length && picked.length < count; i += step) {
     const child = children[i]
-    const parent = parents.get(child.parentId)
-    if (!parent) continue
-    picked.push(toPassage(child, parent, 1))
+    if (usedChildren.has(child.id)) continue
+    if (usedParents.has(child.parentId)) {
+      // The paragraph is used already: the next paragraph that is not used
+      // yet takes its place, so the questions are not all about one corner
+      // of the chapter.
+      const next = children.find(
+        (candidate, index) =>
+          index > i && !usedParents.has(candidate.parentId) && !usedChildren.has(candidate.id)
+      )
+      if (!next) continue
+      take(next)
+      continue
+    }
+    take(child)
+  }
+
+  // The document has fewer paragraphs than questions: then a paragraph gives
+  // more than one question, and its next sentence is used.
+  if (picked.length < count) {
+    for (const child of children) {
+      if (picked.length >= count) break
+      if (usedChildren.has(child.id)) continue
+      take(child)
+    }
   }
 
   return picked
