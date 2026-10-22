@@ -435,10 +435,10 @@ function registerIpc(): void {
         title: 'Import quiz',
         properties: ['openFile'],
         filters: [
-          { name: 'JSON', extensions: ['json'] },
+          { name: 'All supported files', extensions: ['json', 'md', 'markdown', 'docx', 'pdf'] },
+          { name: 'Word & PDF', extensions: ['docx', 'pdf'] },
           { name: 'Markdown', extensions: ['md', 'markdown'] },
-          { name: 'Word', extensions: ['docx'] },
-          { name: 'PDF', extensions: ['pdf'] }
+          { name: 'JSON', extensions: ['json'] }
         ]
       })
       if (open.canceled || !open.filePaths[0]) {
