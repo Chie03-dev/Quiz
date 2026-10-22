@@ -440,7 +440,7 @@ left sidebar, and screens rendered inside it. A screen never replaces the shell.
   session PIN, quiz count); a "Join this session" panel with the PIN, QR code,
   endpoint and other-address buttons; a "Ready to start" panel with the quiz
   picker and Start quiz (confirmation-gated); and a Students panel with a
-  roster (avatars, status badges, Kick).
+   roster (profile photos, status badges, Kick).
 - **`QuizLibrary.tsx`** - your quizzes: create, import, duplicate, export,
   delete (confirmation-gated), and open in the editor.
 - **`QuizEditor.tsx`** - title, time limit, per-question cards with a status

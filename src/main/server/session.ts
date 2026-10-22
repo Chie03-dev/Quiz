@@ -1,8 +1,8 @@
 import { randomInt, randomUUID } from 'node:crypto'
-import { isValidAvatarSpec } from '../../shared/avatar'
+import { isValidProfilePhoto } from '../../shared/profilePhoto'
 import type {
   AnswerValue,
-  AvatarSpec,
+  ProfilePhoto,
   MemePopPayload,
   PauseReason,
   Quiz,
@@ -46,7 +46,7 @@ export interface Student {
   // --- step 5: finish ---
   finished: boolean
   finishedAt: number | null
-  avatar?: AvatarSpec
+  photo?: ProfilePhoto
   events: StudentEvent[]
 }
 
@@ -132,7 +132,7 @@ export class QuizSession {
       resumeRequested: s.resumeRequested,
         finished: s.finished,
         finishedAt: s.finishedAt,
-        avatar: s.avatar,
+        photo: s.photo,
         events: [...s.events]
     }))
   }
@@ -162,7 +162,7 @@ export class QuizSession {
   handleJoin(
     socket: SocketLike,
     ip: string,
-    d: { pin?: string; name?: string; deviceToken?: string; avatar?: AvatarSpec }
+    d: { pin?: string; name?: string; deviceToken?: string; photo?: ProfilePhoto }
   ): void {
     if (this.limiter.isBlocked(ip)) {
       this.error(socket, 'RATE_LIMITED')
@@ -178,10 +178,10 @@ export class QuizSession {
     }
     this.limiter.recordSuccess(ip)
 
-    // Drop a malformed avatar rather than rejecting the whole join.
-    const avatar = isValidAvatarSpec(d.avatar) ? d.avatar : undefined
+    // Drop a malformed photo rather than rejecting the whole join.
+    const photo = isValidProfilePhoto(d.photo) ? d.photo : undefined
 
-    // Identity restore: same deviceToken => same studentId. Only the avatar is
+    // Identity restore: same deviceToken => same studentId. Only the photo is
     // updated here — the stored name is kept so a reconnect can't hijack a
     // name the server already assigned (name changes happen on a fresh join).
     const existing = d.deviceToken ? this.byDeviceToken.get(d.deviceToken) : undefined
@@ -193,7 +193,7 @@ export class QuizSession {
     }
 
     if (existing) {
-      if (avatar) existing.avatar = avatar
+      if (photo) existing.photo = photo
       this.attach(existing, socket, existing.name)
       return
     }
@@ -220,14 +220,14 @@ export class QuizSession {
       resumeRequested: false,
       finished: false,
       finishedAt: null,
-      avatar,
+      photo,
       events: []
     }
     this.students.set(student.id, student)
     this.byDeviceToken.set(student.deviceToken, student)
     this.send(socket, {
       t: 'joined',
-      d: { studentId: student.id, deviceToken: student.deviceToken, avatar: student.avatar }
+      d: { studentId: student.id, deviceToken: student.deviceToken, photo: student.photo }
     })
     this.notify()
   }
@@ -492,7 +492,7 @@ export class QuizSession {
     student.status = 'connected'
     student.lastSeen = Date.now()
     student.socket = socket
-    this.send(socket, { t: 'joined', d: { studentId: student.id, deviceToken: student.deviceToken, avatar: student.avatar } })
+    this.send(socket, { t: 'joined', d: { studentId: student.id, deviceToken: student.deviceToken, photo: student.photo } })
 
     // A known device rejoining mid-quiz gets the quiz again plus its own answers.
     if (this.run.currentStatus === 'running') {

@@ -240,8 +240,8 @@ export interface StudentInfo {
   finishedAt: number | null
   /** Recent events, oldest first. */
   events: StudentEvent[]
-  /** The avatar this student picked on their phone, if any. */
-  avatar?: AvatarSpec
+  /** The profile photo this student uploaded on join, if any. */
+  photo?: ProfilePhoto
 }
 
 export interface ServerInfo {
@@ -351,8 +351,8 @@ export interface ResultStudentDetail {
   finished: boolean
   totalPointsAwarded: number
   totalPointsPossible: number
-  /** The avatar this student picked, as JSON text from the join ("" when none). */
-  studentAvatar: string
+  /** The profile photo this student picked, as JSON text from the join ("" when none). */
+  studentPhoto: string
   answers: ResultAnswerDetail[]
 }
 
@@ -463,32 +463,25 @@ export type FirewallInstallResult = 'installed' | 'cancelled' | 'failed'
 
 // --- WebSocket protocol (see docs/protocol.md) ---
 
+/** The MIME types a student profile photo may use. JPEG is preferred: small. */
+export type PhotoMime = 'image/jpeg' | 'image/png'
+
 /**
- * A deterministic avatar profile, sent inline on join — no image bytes cross
- * the WebSocket. Indices 0..N select a preset; 0 = none for eyes/mouth/
- * accessory and the base face shape for `face`. `hue` tints the skin tone and
- * `seed` makes the rendering deterministic across clients. Preset tables and
- * bounds live in `src/shared/avatar.ts`.
+ * A student's profile photo: a compressed base64 image (no `data:` prefix) sent
+ * inline on join. The server caps the size and re-encodes; the desktop
+ * instructor renders it straight back via a data URL. JPEG is preferred — the
+ * photo only ever lives in a roster slot.
  */
-export interface AvatarSpec {
-  /** Non-empty token that salts the deterministic render. */
-  seed: string
-  /** 0..360, interpreted as a skin-tone hue by the renderer. */
-  hue: number
-  /** 0..6, picking a face silhouette. */
-  face: number
-  /** 0..8, picking an eye preset (0 = none). */
-  eyes: number
-  /** 0..6, picking a mouth preset (0 = none). */
-  mouth: number
-  /** 0..4, picking an accessory (hat, glasses, ...). */
-  accessory: number
+export interface ProfilePhoto {
+  /** Base64 image data, no `data:` prefix. */
+  data: string
+  mime: PhotoMime
 }
 
 export interface JoinMessage {
   t: 'join'
   id?: string
-  d: { pin: string; name: string; deviceToken?: string; avatar?: AvatarSpec }
+  d: { pin: string; name: string; deviceToken?: string; photo?: ProfilePhoto }
 }
 export interface HeartbeatMessage {
   t: 'hb'
@@ -498,7 +491,7 @@ export interface HeartbeatMessage {
 export interface JoinedMessage {
   t: 'joined'
   id?: string
-  d: { studentId: string; deviceToken: string; avatar?: AvatarSpec }
+  d: { studentId: string; deviceToken: string; photo?: ProfilePhoto }
 }
 export interface ErrorMessage {
   t: 'error'

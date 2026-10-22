@@ -4,7 +4,7 @@ import type { FirewallInstallResult, QuizMeta, StateSnapshot } from '../../share
 import { Badge } from '../components/Badge'
 import { Button } from '../components/Button'
 import { ConfirmButton } from '../components/ConfirmButton'
-import { Avatar } from '../components/Avatar'
+import { StudentPhoto } from '../components/StudentPhoto'
 import { EmptyState } from '../components/EmptyState'
 import { Icon } from '../components/Icon'
 import { Panel } from '../components/Panel'
@@ -261,7 +261,7 @@ function RosterRow({
   const connected = student.status === 'connected'
   return (
     <li className="roster__row">
-      <Avatar avatar={student.avatar} name={student.name} size={32} className="roster__avatar" />
+      <StudentPhoto photo={student.photo} name={student.name} size={32} className="roster__photo" />
       <span className="roster__name">{student.name}</span>
       <Badge tone={connected ? 'ok' : 'danger'}>{student.status}</Badge>
       <Button
