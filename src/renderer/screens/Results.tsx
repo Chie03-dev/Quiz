@@ -6,8 +6,10 @@ import type {
   ResultSessionMeta
 } from '../../shared/types'
 import { adviseAnswer, answerText, keyText, type AnswerAdvice } from '../../shared/answers'
+import { isValidAvatarSpec, type AvatarSpec } from '../../shared/avatar'
 import { Badge } from '../components/Badge'
 import { Button } from '../components/Button'
+import { Avatar } from '../components/Avatar'
 import { ConfirmButton } from '../components/ConfirmButton'
 import { Drawer } from '../components/Drawer'
 import { EmptyState } from '../components/EmptyState'
@@ -23,6 +25,17 @@ const when = (at: number): string =>
     hour: '2-digit',
     minute: '2-digit'
   })
+
+/** Parses a stored `student_avatar` JSON blob ("" when none) into a spec. */
+function parseAvatar(json: string): AvatarSpec | undefined {
+  if (!json) return undefined
+  try {
+    const parsed: unknown = JSON.parse(json)
+    return isValidAvatarSpec(parsed) ? (parsed as AvatarSpec) : undefined
+  } catch {
+    return undefined
+  }
+}
 
 /** Why the session ended, in words. */
 const reasonLabel = (reason: ResultSessionMeta['endReason']): string => {
@@ -611,12 +624,18 @@ export function ResultDetail({
                     </tr>
                   </thead>
                   <tbody>
-                    {students.map((student) => (
-                      <tr key={student.id}>
-                        <th scope="row" className="res__sheet-student" data-testid={`student-${student.id}`}>
-                          {student.studentName}
-                          {student.finished && <span className="res__sheet-flag">finished</span>}
-                        </th>
+                       {students.map((student) => (
+                         <tr key={student.id}>
+                           <th scope="row" className="res__sheet-student" data-testid={`student-${student.id}`}>
+                             <Avatar
+                               avatar={parseAvatar(student.studentAvatar)}
+                               name={student.studentName}
+                               size={24}
+                               className="res__sheet-avatar"
+                             />
+                             {student.studentName}
+                             {student.finished && <span className="res__sheet-flag">finished</span>}
+                           </th>
                         {visibleQuestions.map((question) => {
                           const answer = answersByStudent.get(student.id)?.get(question.id)
                           const { state, mark } = cellState(answer)

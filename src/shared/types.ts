@@ -240,6 +240,8 @@ export interface StudentInfo {
   finishedAt: number | null
   /** Recent events, oldest first. */
   events: StudentEvent[]
+  /** The avatar this student picked on their phone, if any. */
+  avatar?: AvatarSpec
 }
 
 export interface ServerInfo {
@@ -349,6 +351,8 @@ export interface ResultStudentDetail {
   finished: boolean
   totalPointsAwarded: number
   totalPointsPossible: number
+  /** The avatar this student picked, as JSON text from the join ("" when none). */
+  studentAvatar: string
   answers: ResultAnswerDetail[]
 }
 
@@ -459,10 +463,32 @@ export type FirewallInstallResult = 'installed' | 'cancelled' | 'failed'
 
 // --- WebSocket protocol (see docs/protocol.md) ---
 
+/**
+ * A deterministic avatar profile, sent inline on join — no image bytes cross
+ * the WebSocket. Indices 0..N select a preset; 0 = none for eyes/mouth/
+ * accessory and the base face shape for `face`. `hue` tints the skin tone and
+ * `seed` makes the rendering deterministic across clients. Preset tables and
+ * bounds live in `src/shared/avatar.ts`.
+ */
+export interface AvatarSpec {
+  /** Non-empty token that salts the deterministic render. */
+  seed: string
+  /** 0..360, interpreted as a skin-tone hue by the renderer. */
+  hue: number
+  /** 0..6, picking a face silhouette. */
+  face: number
+  /** 0..8, picking an eye preset (0 = none). */
+  eyes: number
+  /** 0..6, picking a mouth preset (0 = none). */
+  mouth: number
+  /** 0..4, picking an accessory (hat, glasses, ...). */
+  accessory: number
+}
+
 export interface JoinMessage {
   t: 'join'
   id?: string
-  d: { pin: string; name: string; deviceToken?: string }
+  d: { pin: string; name: string; deviceToken?: string; avatar?: AvatarSpec }
 }
 export interface HeartbeatMessage {
   t: 'hb'
@@ -472,7 +498,7 @@ export interface HeartbeatMessage {
 export interface JoinedMessage {
   t: 'joined'
   id?: string
-  d: { studentId: string; deviceToken: string }
+  d: { studentId: string; deviceToken: string; avatar?: AvatarSpec }
 }
 export interface ErrorMessage {
   t: 'error'

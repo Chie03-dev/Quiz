@@ -12,12 +12,13 @@
  *          --focus-lost <delayMs>, --focus-gained <delayMs>, --resume-request <delayMs>,
  *          --finish <delayMs>
  *          (send that step-3/step-5 message this many ms after joining).
+ *          --avatar <json> (an AvatarSpec to send on join, e.g. '{"seed":"a","hue":30,"face":1,"eyes":3,"mouth":2,"accessory":0}')
  */
 import WebSocket from 'ws'
 import { randomUUID } from 'node:crypto'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import type { PublicQuestion, ServerMessage } from '../src/shared/types'
+import type { AvatarSpec, PublicQuestion, ServerMessage } from '../src/shared/types'
 
 interface Args {
   pin: string
@@ -35,6 +36,8 @@ interface Args {
   resumeRequestAt: number | null
   /** Step-5 trigger: ms after joining, or null for "never". */
   finishAt: number | null
+  /** The avatar spec to send on join, when --avatar is given. */
+  avatar?: AvatarSpec
 }
 
 const TOKEN_FILE = resolve(process.cwd(), '.fake-student-token.json')
@@ -47,7 +50,7 @@ function parseArgs(argv: string[]): Args {
   const pin = get('--pin')
   const name = get('--name')
   if (!pin || !name) {
-    console.error('Usage: npm run fake-student -- --pin <pin> --name <name> [--ip <ip>] [--port <port>] [--token <token>] [--no-hb] [--answer] [--text <text>] [--focus-lost <ms>] [--focus-gained <ms>] [--resume-request <ms>] [--finish <ms>]')
+    console.error('Usage: npm run fake-student -- --pin <pin> --name <name> [--ip <ip>] [--port <port>] [--token <token>] [--no-hb] [--answer] [--text <text>] [--focus-lost <ms>] [--focus-gained <ms>] [--resume-request <ms>] [--finish <ms>] [--avatar <json>]')
     process.exit(1)
   }
 
@@ -85,7 +88,26 @@ function parseArgs(argv: string[]): Args {
     focusLostAt: delay(get('--focus-lost')),
     focusGainedAt: delay(get('--focus-gained')),
     resumeRequestAt: delay(get('--resume-request')),
-    finishAt: delay(get('--finish'))
+    finishAt: delay(get('--finish')),
+    avatar: parseAvatar(get('--avatar'))
+  }
+
+  function parseAvatar(raw?: string): AvatarSpec | undefined {
+    if (!raw) return undefined
+    try {
+      const parsed: unknown = JSON.parse(raw)
+      const o = parsed as Record<string, unknown>
+      return {
+        seed: typeof o.seed === 'string' ? o.seed : randomUUID(),
+        hue: typeof o.hue === 'number' ? o.hue : 0,
+        face: typeof o.face === 'number' ? o.face : 0,
+        eyes: typeof o.eyes === 'number' ? o.eyes : 0,
+        mouth: typeof o.mouth === 'number' ? o.mouth : 0,
+        accessory: typeof o.accessory === 'number' ? o.accessory : 0
+      }
+    } catch {
+      return undefined
+    }
   }
 
   /** A missing or invalid delay means "do not send that message at all". */
@@ -134,7 +156,9 @@ function main(): void {
 
   ws.on('open', () => {
     console.log(`[${args.name}] open, joining with PIN ${args.pin}`)
-    ws.send(JSON.stringify({ t: 'join', d: { pin: args.pin, name: args.name, deviceToken: args.token } }))
+    const payload: Record<string, unknown> = { pin: args.pin, name: args.name, deviceToken: args.token }
+    if (args.avatar) payload.avatar = args.avatar
+    ws.send(JSON.stringify({ t: 'join', d: payload }))
   })
 
   ws.on('message', (raw: WebSocket.RawData) => {
@@ -148,6 +172,8 @@ function main(): void {
       joined = true
       console.log(`[${args.name}] joined, studentId=${msg.d.studentId}`)
       if (msg.d.deviceToken !== args.token) console.log(`[${args.name}] server token: ${msg.d.deviceToken}`)
+      if (args.avatar && msg.d.avatar) console.log(`[${args.name}] rejoined with avatar`)
+      else if (args.avatar) console.log(`[${args.name}] joined without avatar echo`)
       schedule(args.focusLostAt, () =>
         ws.send(JSON.stringify({ t: 'focus_lost', d: { reason: 'background' } }))
       )

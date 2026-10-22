@@ -72,7 +72,8 @@ export function buildSessionSnapshot(snapshot: SessionSnapshot): CreateResultSes
     students: snapshot.students.map((s) => ({
       id: s.id,
       name: s.name,
-      finished: s.finished
+      finished: s.finished,
+      avatar: s.avatar
     })),
     answers: snapshot.answers
   }

@@ -3,6 +3,7 @@ import type { StateSnapshot, StudentInfo } from '../../shared/types'
 import { MEME_DURATION_MS } from '../../shared/types'
 import { Badge } from '../components/Badge'
 import { Button, IconButton } from '../components/Button'
+import { Avatar } from '../components/Avatar'
 import { ConfirmButton } from '../components/ConfirmButton'
 import { EmptyState } from '../components/EmptyState'
 import { Icon } from '../components/Icon'
@@ -113,12 +114,6 @@ function StudentCard({
   canPop: boolean
   onPop: (studentId: string) => void
 }): React.JSX.Element {
-  const avatar = student.name.trim()
-    .split(' ')
-    .map((w) => w[0])
-    .join('') ||
-    '?'
-  const initials = avatar.slice(0, 2).toUpperCase()
   const pct = total > 0 ? Math.round((answered / total) * 100) : 0
   const paused = student.paused
   const finished = student.finished
@@ -128,9 +123,7 @@ function StudentCard({
       className={`live__card${paused ? ' live__card--paused' : ''}${finished ? ' live__card--finished' : ''}`}
     >
       <div className="live__card-head">
-        <span className="roster__avatar" aria-hidden="true">
-          {initials}
-        </span>
+        <Avatar avatar={student.avatar} name={student.name} size={32} className="roster__avatar" />
         <span className="live__card-name">{student.name}</span>
         {paused && <Badge tone="warn">Paused</Badge>}
         {finished && <Badge tone="ok">Finished</Badge>}
@@ -292,9 +285,7 @@ function Ended({
               return (
                 <li key={s.id} className="live__card">
                   <div className="live__card-head">
-                    <span className="roster__avatar" aria-hidden="true">
-                      {s.name.trim().split(' ').map((w) => w[0]).join('') || '?'}
-                    </span>
+                    <Avatar avatar={s.avatar} name={s.name} size={32} className="roster__avatar" />
                     <span className="live__card-name">{s.name}</span>
                     {s.finished && <Badge tone="ok">Finished</Badge>}
                     <Badge tone={s.status === 'connected' ? 'ok' : 'danger'}>{s.status}</Badge>

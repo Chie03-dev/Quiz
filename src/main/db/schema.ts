@@ -5,7 +5,7 @@ import type { Database } from 'better-sqlite3'
  * whenever a table changes; migrations run in order inside a transaction so
  * an existing library upgrades without losing data.
  */
-export const SCHEMA_VERSION = 5
+export const SCHEMA_VERSION = 6
 
 const MIGRATIONS: string[] = [
   // 1: the step-4 quiz library.
@@ -120,8 +120,12 @@ const MIGRATIONS: string[] = [
     dims INTEGER NOT NULL,
     vector BLOB NOT NULL
   );
-  CREATE INDEX idx_ai_vectors_source ON ai_vectors(source_ref);
-  `
+   CREATE INDEX idx_ai_vectors_source ON ai_vectors(source_ref);
+   `,
+   // 6: store the student avatar on the result score sheet (see docs/protocol.md).
+   `
+   ALTER TABLE result_students ADD COLUMN student_avatar TEXT NOT NULL DEFAULT '';
+   `
 ]
 
 /**
