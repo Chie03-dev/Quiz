@@ -1,6 +1,8 @@
 import { randomInt, randomUUID } from 'node:crypto'
+import { isValidAvatarSpec } from '../../shared/avatar'
 import type {
   AnswerValue,
+  AvatarSpec,
   MemePopPayload,
   PauseReason,
   Quiz,
@@ -44,6 +46,7 @@ export interface Student {
   // --- step 5: finish ---
   finished: boolean
   finishedAt: number | null
+  avatar?: AvatarSpec
   events: StudentEvent[]
 }
 
@@ -127,9 +130,10 @@ export class QuizSession {
       pauseReason: s.pauseReason,
       focusLosses: s.focusLosses,
       resumeRequested: s.resumeRequested,
-      finished: s.finished,
-      finishedAt: s.finishedAt,
-      events: [...s.events]
+        finished: s.finished,
+        finishedAt: s.finishedAt,
+        avatar: s.avatar,
+        events: [...s.events]
     }))
   }
 
@@ -158,7 +162,7 @@ export class QuizSession {
   handleJoin(
     socket: SocketLike,
     ip: string,
-    d: { pin?: string; name?: string; deviceToken?: string }
+    d: { pin?: string; name?: string; deviceToken?: string; avatar?: AvatarSpec }
   ): void {
     if (this.limiter.isBlocked(ip)) {
       this.error(socket, 'RATE_LIMITED')
@@ -174,7 +178,12 @@ export class QuizSession {
     }
     this.limiter.recordSuccess(ip)
 
-    // Identity restore: same deviceToken => same studentId.
+    // Drop a malformed avatar rather than rejecting the whole join.
+    const avatar = isValidAvatarSpec(d.avatar) ? d.avatar : undefined
+
+    // Identity restore: same deviceToken => same studentId. Only the avatar is
+    // updated here — the stored name is kept so a reconnect can't hijack a
+    // name the server already assigned (name changes happen on a fresh join).
     const existing = d.deviceToken ? this.byDeviceToken.get(d.deviceToken) : undefined
 
     // Outside the lobby only a known device may (re)join; anyone else is too late.
@@ -184,6 +193,7 @@ export class QuizSession {
     }
 
     if (existing) {
+      if (avatar) existing.avatar = avatar
       this.attach(existing, socket, existing.name)
       return
     }
@@ -210,11 +220,15 @@ export class QuizSession {
       resumeRequested: false,
       finished: false,
       finishedAt: null,
+      avatar,
       events: []
     }
     this.students.set(student.id, student)
     this.byDeviceToken.set(student.deviceToken, student)
-    this.send(socket, { t: 'joined', d: { studentId: student.id, deviceToken: student.deviceToken } })
+    this.send(socket, {
+      t: 'joined',
+      d: { studentId: student.id, deviceToken: student.deviceToken, avatar: student.avatar }
+    })
     this.notify()
   }
 
@@ -478,7 +492,7 @@ export class QuizSession {
     student.status = 'connected'
     student.lastSeen = Date.now()
     student.socket = socket
-    this.send(socket, { t: 'joined', d: { studentId: student.id, deviceToken: student.deviceToken } })
+    this.send(socket, { t: 'joined', d: { studentId: student.id, deviceToken: student.deviceToken, avatar: student.avatar } })
 
     // A known device rejoining mid-quiz gets the quiz again plus its own answers.
     if (this.run.currentStatus === 'running') {

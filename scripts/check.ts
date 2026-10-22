@@ -80,7 +80,7 @@ import {
 } from '../src/shared/answers'
 import { quizStartError, validateQuestion } from '../src/shared/validation'
 import { buildCheckArgs, buildCheckScript, buildInstallCommand, buildInstallCommands, CHECK_OPTIONS, classifyCheckOutput, encodePowerShell, FIREWALL_RULES, FIREWALL_PROFILE, parseCheckOutput } from '../src/main/firewall'
-import { FIRST_PORT, MAX_PORT, PORT_RANGE, QUESTION_TYPES, type QuestionType, type Quiz, type ResultSessionMeta, type StoredQuestion, type StoredQuiz, type StudentInfo } from '../src/shared/types'
+import { FIRST_PORT, MAX_PORT, PORT_RANGE, QUESTION_TYPES, type AvatarSpec, type QuestionType, type Quiz, type ResultSessionMeta, type StoredQuestion, type StoredQuiz, type StudentInfo } from '../src/shared/types'
 
 
 /**
@@ -626,6 +626,10 @@ async function main(): Promise<void> {
   log(kicked, 'kick() returns true')
   log(a2.msgs.some((m) => m.t === 'kick'), 'kicked client receives the kick message')
   log(server.session.list().length === 0, 'kick removes the student from the list')
+
+  // --- student avatars (join, reconnect, malformed drop, result round-trip) ---
+  console.log('\n--- avatars ---')
+  await checkAvatars(server, port)
 
   // --- quiz run (step 2), before the rate-limit tests block the IP ---
   console.log('\n--- quiz run ---')
@@ -1328,6 +1332,79 @@ async function checkQuizRun(
   console.log('\n--- disconnect and paused reconnect ---')
   await checkReconnectPause(server, port, quiz)
   await sleep(150)
+  server.newSession()
+}
+
+/** A specimen avatar spec used by the avatar round-trip. */
+const SPEC: AvatarSpec = {
+  seed: 'alice-desktop',
+  hue: 30,
+  face: 1,
+  eyes: 3,
+  mouth: 2,
+  accessory: 0
+}
+
+/**
+ * Avatars: a valid spec is stored and echoed on join, a reconnect updates only
+ * the avatar (the name is kept), a malformed spec is dropped without rejecting
+ * the join, and the avatar survives the round trip into the result sheet.
+ */
+async function checkAvatars(server: any, port: number): Promise<void> {
+  const pin = server.session.pin
+
+  // --- a valid avatar is echoed back and stored in list() ---
+  const amy = client(port)
+  await amy.open()
+  amy.send('join', { pin, name: 'AvatarAmy', deviceToken: 'avatar-amy', avatar: SPEC })
+  const joined = await amy.wait('joined')
+  log(
+    deepEqual(joined.d.avatar, SPEC),
+    'a join with a valid avatar echoes the spec back in joined'
+  )
+  const inList = server.session.list().find((s: any) => s.id === joined.d.studentId)
+  log(deepEqual(inList?.avatar, SPEC), 'list() carries the avatar the student joined with')
+
+  // --- reconnect updates only the avatar, keeps the stored name ---
+  const updated: AvatarSpec = { ...SPEC, hue: 60, eyes: 5 }
+  const amy2 = client(port)
+  await amy2.open()
+  amy2.send('join', { pin, name: 'AvatarAmy', deviceToken: 'avatar-amy', avatar: updated })
+  const rejoined = await amy2.wait('joined')
+  log(rejoined.d.studentId === joined.d.studentId, 'an avatar reconnect restores the same studentId')
+  log(
+    deepEqual(rejoined.d.avatar, updated),
+    'the echoed avatar on reconnect reflects the new spec'
+  )
+  const again = server.session.list().find((s: any) => s.id === joined.d.studentId)
+  log(deepEqual(again?.name, 'AvatarAmy'), 'a reconnect keeps the originally stored name')
+  log(deepEqual(again?.avatar, updated), 'a reconnect updates the stored avatar')
+
+  // --- a malformed avatar is dropped, the join still succeeds ---
+  const bad = client(port)
+  await bad.open()
+  bad.send('join', { pin, name: 'BadAvatar', deviceToken: 'avatar-bad', avatar: { seed: '', hue: 'x' } })
+  const badJoined = await bad.wait('joined')
+  log(!!badJoined.d.studentId, 'a join with a malformed avatar still succeeds')
+  log(badJoined.d.avatar === undefined, 'a malformed avatar is not echoed back')
+  const badList = server.session.list().find((s: any) => s.name === 'BadAvatar')
+  log(badList?.avatar === undefined, 'a malformed avatar is not stored on the student')
+
+  // --- the avatar survives into the result sheet ---
+  log(server.startQuiz(SAMPLE_QUIZ), 'a quiz starts so its end saves a result')
+  amy2.send('hb', {})
+  log(server.endQuiz() === true, 'ending the quiz saves the result')
+  const result = liveResult ? liveResults.get(liveResult.id) : null
+  const amyRow = result?.students.find((s: any) => s.studentName === 'AvatarAmy')
+  log(amyRow?.studentAvatar === JSON.stringify(updated), 'the score sheet persists the avatar as JSON')
+  if (amyRow?.studentAvatar) {
+    const parsed = JSON.parse(amyRow.studentAvatar)
+    log(deepEqual(parsed, updated), 'the persisted avatar parses back to the same spec')
+  }
+
+  amy.close()
+  amy2.close()
+  bad.close()
   server.newSession()
 }
 

@@ -1315,6 +1315,18 @@
   font-weight: var(--fw-medium);
 }
 
+.res__sheet-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin-right: var(--sp-2);
+  vertical-align: middle;
+  border-radius: var(--r-full);
+  background: var(--ui-surface-2);
+}
+
 .res__sheet-q {
   display: block;
 }

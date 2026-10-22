@@ -4,6 +4,7 @@ import type { FirewallInstallResult, QuizMeta, StateSnapshot } from '../../share
 import { Badge } from '../components/Badge'
 import { Button } from '../components/Button'
 import { ConfirmButton } from '../components/ConfirmButton'
+import { Avatar } from '../components/Avatar'
 import { EmptyState } from '../components/EmptyState'
 import { Icon } from '../components/Icon'
 import { Panel } from '../components/Panel'
@@ -257,20 +258,10 @@ function RosterRow({
 }: {
   student: StateSnapshot['students'][number]
 }): React.JSX.Element {
-  const initials =
-    student.name
-      .trim()
-      .split(' ')
-      .map((w) => w[0])
-      .join('')
-      .slice(0, 2)
-      .toUpperCase() || '?'
   const connected = student.status === 'connected'
   return (
     <li className="roster__row">
-      <span className="roster__avatar" aria-hidden="true">
-        {initials}
-      </span>
+      <Avatar avatar={student.avatar} name={student.name} size={32} className="roster__avatar" />
       <span className="roster__name">{student.name}</span>
       <Badge tone={connected ? 'ok' : 'danger'}>{student.status}</Badge>
       <Button
