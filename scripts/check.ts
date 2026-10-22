@@ -80,7 +80,7 @@ import {
 } from '../src/shared/answers'
 import { quizStartError, validateQuestion } from '../src/shared/validation'
 import { buildCheckArgs, buildCheckScript, buildInstallCommand, buildInstallCommands, CHECK_OPTIONS, classifyCheckOutput, encodePowerShell, FIREWALL_RULES, FIREWALL_PROFILE, parseCheckOutput } from '../src/main/firewall'
-import { FIRST_PORT, MAX_PORT, PORT_RANGE, QUESTION_TYPES, type AvatarSpec, type QuestionType, type Quiz, type ResultSessionMeta, type StoredQuestion, type StoredQuiz, type StudentInfo } from '../src/shared/types'
+import { FIRST_PORT, MAX_PORT, PORT_RANGE, QUESTION_TYPES, type ProfilePhoto, type QuestionType, type Quiz, type ResultSessionMeta, type StoredQuestion, type StoredQuiz, type StudentInfo } from '../src/shared/types'
 
 
 /**
@@ -627,9 +627,9 @@ async function main(): Promise<void> {
   log(a2.msgs.some((m) => m.t === 'kick'), 'kicked client receives the kick message')
   log(server.session.list().length === 0, 'kick removes the student from the list')
 
-  // --- student avatars (join, reconnect, malformed drop, result round-trip) ---
-  console.log('\n--- avatars ---')
-  await checkAvatars(server, port)
+  // --- student profile photos (join, reconnect, malformed drop, result round-trip) ---
+  console.log('\n--- profile photos ---')
+  await checkProfilePhotos(server, port)
 
   // --- quiz run (step 2), before the rate-limit tests block the IP ---
   console.log('\n--- quiz run ---')
@@ -1335,71 +1335,71 @@ async function checkQuizRun(
   server.newSession()
 }
 
-/** A specimen avatar spec used by the avatar round-trip. */
-const SPEC: AvatarSpec = {
-  seed: 'alice-desktop',
-  hue: 30,
-  face: 1,
-  eyes: 3,
-  mouth: 2,
-  accessory: 0
+/** A specimen profile photo used by the profile-photo round-trip. */
+const PHOTO: ProfilePhoto = {
+  data:
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+  mime: 'image/jpeg'
+}
+
+const OTHER_PHOTO: ProfilePhoto = {
+  data:
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mP8z8BQDQAJ5gGA3cU1rAAAAABJRU5ErkJggg==',
+  mime: 'image/png'
 }
 
 /**
- * Avatars: a valid spec is stored and echoed on join, a reconnect updates only
- * the avatar (the name is kept), a malformed spec is dropped without rejecting
- * the join, and the avatar survives the round trip into the result sheet.
+ * Profile photos: a valid photo is echoed back on join, a reconnect updates
+ * only the photo (the name is kept), a malformed photo is dropped without
+ * rejecting the join, and the photo survives the round trip into the result
+ * sheet as base64.
  */
-async function checkAvatars(server: any, port: number): Promise<void> {
+async function checkProfilePhotos(server: any, port: number): Promise<void> {
   const pin = server.session.pin
 
-  // --- a valid avatar is echoed back and stored in list() ---
+  // --- a valid photo is echoed back and stored in list() ---
   const amy = client(port)
   await amy.open()
-  amy.send('join', { pin, name: 'AvatarAmy', deviceToken: 'avatar-amy', avatar: SPEC })
+  amy.send('join', { pin, name: 'PhotoAmy', deviceToken: 'photo-amy', photo: PHOTO })
   const joined = await amy.wait('joined')
-  log(
-    deepEqual(joined.d.avatar, SPEC),
-    'a join with a valid avatar echoes the spec back in joined'
-  )
+  log(deepEqual(joined.d.photo, PHOTO), 'a join with a valid photo echoes it back in joined')
   const inList = server.session.list().find((s: any) => s.id === joined.d.studentId)
-  log(deepEqual(inList?.avatar, SPEC), 'list() carries the avatar the student joined with')
+  log(deepEqual(inList?.photo, PHOTO), 'list() carries the photo the student joined with')
 
-  // --- reconnect updates only the avatar, keeps the stored name ---
-  const updated: AvatarSpec = { ...SPEC, hue: 60, eyes: 5 }
+  // --- reconnect updates only the photo, keeps the stored name ---
   const amy2 = client(port)
   await amy2.open()
-  amy2.send('join', { pin, name: 'AvatarAmy', deviceToken: 'avatar-amy', avatar: updated })
+  amy2.send('join', { pin, name: 'PhotoAmy', deviceToken: 'photo-amy', photo: OTHER_PHOTO })
   const rejoined = await amy2.wait('joined')
-  log(rejoined.d.studentId === joined.d.studentId, 'an avatar reconnect restores the same studentId')
+  log(rejoined.d.studentId === joined.d.studentId, 'a photo reconnect restores the same studentId')
   log(
-    deepEqual(rejoined.d.avatar, updated),
-    'the echoed avatar on reconnect reflects the new spec'
+    deepEqual(rejoined.d.photo, OTHER_PHOTO),
+    'the echoed photo on reconnect reflects the new photo'
   )
   const again = server.session.list().find((s: any) => s.id === joined.d.studentId)
-  log(deepEqual(again?.name, 'AvatarAmy'), 'a reconnect keeps the originally stored name')
-  log(deepEqual(again?.avatar, updated), 'a reconnect updates the stored avatar')
+  log(deepEqual(again?.name, 'PhotoAmy'), 'a reconnect keeps the originally stored name')
+  log(deepEqual(again?.photo, OTHER_PHOTO), 'a reconnect updates the stored photo')
 
-  // --- a malformed avatar is dropped, the join still succeeds ---
+  // --- a malformed photo is dropped, the join still succeeds ---
   const bad = client(port)
   await bad.open()
-  bad.send('join', { pin, name: 'BadAvatar', deviceToken: 'avatar-bad', avatar: { seed: '', hue: 'x' } })
+  bad.send('join', { pin, name: 'BadPhoto', deviceToken: 'photo-bad', photo: { data: '!!!not base64', mime: 'image/jpeg' } })
   const badJoined = await bad.wait('joined')
-  log(!!badJoined.d.studentId, 'a join with a malformed avatar still succeeds')
-  log(badJoined.d.avatar === undefined, 'a malformed avatar is not echoed back')
-  const badList = server.session.list().find((s: any) => s.name === 'BadAvatar')
-  log(badList?.avatar === undefined, 'a malformed avatar is not stored on the student')
+  log(!!badJoined.d.studentId, 'a join with a malformed photo still succeeds')
+  log(badJoined.d.photo === undefined, 'a malformed photo is not echoed back')
+  const badList = server.session.list().find((s: any) => s.name === 'BadPhoto')
+  log(badList?.photo === undefined, 'a malformed photo is not stored on the student')
 
-  // --- the avatar survives into the result sheet ---
+  // --- the photo survives into the result sheet ---
   log(server.startQuiz(SAMPLE_QUIZ), 'a quiz starts so its end saves a result')
   amy2.send('hb', {})
   log(server.endQuiz() === true, 'ending the quiz saves the result')
   const result = liveResult ? liveResults.get(liveResult.id) : null
-  const amyRow = result?.students.find((s: any) => s.studentName === 'AvatarAmy')
-  log(amyRow?.studentAvatar === JSON.stringify(updated), 'the score sheet persists the avatar as JSON')
-  if (amyRow?.studentAvatar) {
-    const parsed = JSON.parse(amyRow.studentAvatar)
-    log(deepEqual(parsed, updated), 'the persisted avatar parses back to the same spec')
+  const amyRow = result?.students.find((s: any) => s.studentName === 'PhotoAmy')
+  log(amyRow?.studentPhoto === JSON.stringify(OTHER_PHOTO), 'the score sheet persists the photo as JSON')
+  if (amyRow?.studentPhoto) {
+    const parsed = JSON.parse(amyRow.studentPhoto)
+    log(deepEqual(parsed, OTHER_PHOTO), 'the persisted photo parses back to the same photo')
   }
 
   amy.close()

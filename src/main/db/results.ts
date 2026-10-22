@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type { Database } from 'better-sqlite3'
 import type {
   AnswerValue,
-  AvatarSpec,
+  ProfilePhoto,
   QuestionData,
   QuestionType,
   ResultAnswerDetail,
@@ -181,8 +181,8 @@ export interface ResultStudentInput {
   id: string
   name: string
   finished: boolean
-  /** The avatar this student picked, as a parsed spec or null. */
-  avatar?: AvatarSpec | null
+  /** The profile photo this student picked, as a parsed photo or null. */
+  photo?: ProfilePhoto | null
 }
 
 /** Everything one session snapshot needs. */
@@ -231,7 +231,7 @@ interface StudentRow {
   finished: number
   totalPointsAwarded: number
   totalPointsPossible: number
-  studentAvatar: string
+  studentPhoto: string
 }
 
 interface AnswerRow {
@@ -290,7 +290,7 @@ export class ResultsStore {
                 student_key AS studentKey, finished,
                 total_points_awarded AS totalPointsAwarded,
                 total_points_possible AS totalPointsPossible,
-                student_avatar AS studentAvatar
+                student_photo AS studentPhoto
          FROM result_students WHERE session_id = ?
          ORDER BY student_name COLLATE NOCASE ASC, id ASC`
       )
@@ -346,7 +346,7 @@ export class ResultsStore {
        finished: row.finished !== 0,
        totalPointsAwarded: row.totalPointsAwarded,
        totalPointsPossible: row.totalPointsPossible,
-       studentAvatar: row.studentAvatar ?? '',
+        studentPhoto: row.studentPhoto ?? '',
        answers: byStudent.get(row.id) ?? []
      }))
 
@@ -411,7 +411,7 @@ export class ResultsStore {
 
       const insertStudent = this.db.prepare(
         `INSERT INTO result_students
-           (id, session_id, student_name, student_key, finished, total_points_awarded, total_points_possible, student_avatar)
+           (id, session_id, student_name, student_key, finished, total_points_awarded, total_points_possible, student_photo)
          VALUES (?, ?, ?, ?, ?, 0, ?, ?)`
       )
       const insertAnswer = this.db.prepare(
@@ -424,7 +424,7 @@ export class ResultsStore {
       input.students.forEach((student) => {
         const studentRowId = randomUUID()
         const answers = input.answers[student.id] ?? {}
-        const avatarJson = student.avatar ? JSON.stringify(student.avatar) : ''
+        const photoJson = student.photo ? JSON.stringify(student.photo) : ''
         insertStudent.run(
           studentRowId,
           sessionId,
@@ -432,7 +432,7 @@ export class ResultsStore {
           student.id,
           student.finished ? 1 : 0,
           totalPoints,
-          avatarJson
+          photoJson
         )
         input.questions.forEach((question) => {
           const value = answers[question.id] ?? null

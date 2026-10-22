@@ -284,13 +284,14 @@
   background: var(--ui-surface-2);
 }
 
-.roster__avatar {
+.roster__photo {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 32px;
   height: 32px;
   border-radius: var(--r-full);
+  object-fit: cover;
   background: var(--ui-accent-soft);
   color: var(--ui-accent-hover);
   font-size: var(--fs-sm);
@@ -1315,7 +1316,7 @@
   font-weight: var(--fw-medium);
 }
 
-.res__sheet-avatar {
+.res__sheet-photo {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1324,6 +1325,7 @@
   margin-right: var(--sp-2);
   vertical-align: middle;
   border-radius: var(--r-full);
+  object-fit: cover;
   background: var(--ui-surface-2);
 }
 

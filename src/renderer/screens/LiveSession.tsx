@@ -3,7 +3,7 @@ import type { StateSnapshot, StudentInfo } from '../../shared/types'
 import { MEME_DURATION_MS } from '../../shared/types'
 import { Badge } from '../components/Badge'
 import { Button, IconButton } from '../components/Button'
-import { Avatar } from '../components/Avatar'
+import { StudentPhoto } from '../components/StudentPhoto'
 import { ConfirmButton } from '../components/ConfirmButton'
 import { EmptyState } from '../components/EmptyState'
 import { Icon } from '../components/Icon'
@@ -123,7 +123,7 @@ function StudentCard({
       className={`live__card${paused ? ' live__card--paused' : ''}${finished ? ' live__card--finished' : ''}`}
     >
       <div className="live__card-head">
-        <Avatar avatar={student.avatar} name={student.name} size={32} className="roster__avatar" />
+        <StudentPhoto photo={student.photo} name={student.name} size={32} className="roster__photo" />
         <span className="live__card-name">{student.name}</span>
         {paused && <Badge tone="warn">Paused</Badge>}
         {finished && <Badge tone="ok">Finished</Badge>}
@@ -285,7 +285,7 @@ function Ended({
               return (
                 <li key={s.id} className="live__card">
                   <div className="live__card-head">
-                    <Avatar avatar={s.avatar} name={s.name} size={32} className="roster__avatar" />
+                    <StudentPhoto photo={s.photo} name={s.name} size={32} className="roster__photo" />
                     <span className="live__card-name">{s.name}</span>
                     {s.finished && <Badge tone="ok">Finished</Badge>}
                     <Badge tone={s.status === 'connected' ? 'ok' : 'danger'}>{s.status}</Badge>

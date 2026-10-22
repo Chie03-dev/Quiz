@@ -73,7 +73,7 @@ export function buildSessionSnapshot(snapshot: SessionSnapshot): CreateResultSes
       id: s.id,
       name: s.name,
       finished: s.finished,
-      avatar: s.avatar
+      photo: s.photo
     })),
     answers: snapshot.answers
   }

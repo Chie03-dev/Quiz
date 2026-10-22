@@ -12,13 +12,14 @@
  *          --focus-lost <delayMs>, --focus-gained <delayMs>, --resume-request <delayMs>,
  *          --finish <delayMs>
  *          (send that step-3/step-5 message this many ms after joining).
- *          --avatar <json> (an AvatarSpec to send on join, e.g. '{"seed":"a","hue":30,"face":1,"eyes":3,"mouth":2,"accessory":0}')
+  *          --photo <path> (path to a JPEG/PNG the student uploads on join; keep it a
+  *          small thumbnail, ~7 KB or smaller)
  */
 import WebSocket from 'ws'
 import { randomUUID } from 'node:crypto'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import type { AvatarSpec, PublicQuestion, ServerMessage } from '../src/shared/types'
+import type { PhotoMime, ProfilePhoto, PublicQuestion, ServerMessage } from '../src/shared/types'
 
 interface Args {
   pin: string
@@ -36,8 +37,8 @@ interface Args {
   resumeRequestAt: number | null
   /** Step-5 trigger: ms after joining, or null for "never". */
   finishAt: number | null
-  /** The avatar spec to send on join, when --avatar is given. */
-  avatar?: AvatarSpec
+  /** The profile photo to send on join, when --photo is given. */
+  photo?: ProfilePhoto
 }
 
 const TOKEN_FILE = resolve(process.cwd(), '.fake-student-token.json')
@@ -50,7 +51,7 @@ function parseArgs(argv: string[]): Args {
   const pin = get('--pin')
   const name = get('--name')
   if (!pin || !name) {
-    console.error('Usage: npm run fake-student -- --pin <pin> --name <name> [--ip <ip>] [--port <port>] [--token <token>] [--no-hb] [--answer] [--text <text>] [--focus-lost <ms>] [--focus-gained <ms>] [--resume-request <ms>] [--finish <ms>] [--avatar <json>]')
+    console.error('Usage: npm run fake-student -- --pin <pin> --name <name> [--ip <ip>] [--port <port>] [--token <token>] [--no-hb] [--answer] [--text <text>] [--focus-lost <ms>] [--focus-gained <ms>] [--resume-request <ms>] [--finish <ms>] [--photo <path>]')
     process.exit(1)
   }
 
@@ -89,23 +90,29 @@ function parseArgs(argv: string[]): Args {
     focusGainedAt: delay(get('--focus-gained')),
     resumeRequestAt: delay(get('--resume-request')),
     finishAt: delay(get('--finish')),
-    avatar: parseAvatar(get('--avatar'))
+    photo: parsePhoto(get('--photo'))
   }
 
-  function parseAvatar(raw?: string): AvatarSpec | undefined {
+  /**
+   * Reads a small JPEG/PNG from disk, detects its MIME from the magic bytes,
+   * and base64-encodes it. The server caps the base64 length, so pass a small
+   * thumbnail (~7 KB or smaller) — larger files are dropped on join.
+   */
+  function parsePhoto(raw?: string): ProfilePhoto | undefined {
     if (!raw) return undefined
     try {
-      const parsed: unknown = JSON.parse(raw)
-      const o = parsed as Record<string, unknown>
-      return {
-        seed: typeof o.seed === 'string' ? o.seed : randomUUID(),
-        hue: typeof o.hue === 'number' ? o.hue : 0,
-        face: typeof o.face === 'number' ? o.face : 0,
-        eyes: typeof o.eyes === 'number' ? o.eyes : 0,
-        mouth: typeof o.mouth === 'number' ? o.mouth : 0,
-        accessory: typeof o.accessory === 'number' ? o.accessory : 0
-      }
+      const buf = readFileSync(resolve(raw))
+      const mime = inferMime(buf)
+      if (!mime) return undefined
+      return { data: buf.toString('base64'), mime }
     } catch {
+      return undefined
+    }
+
+    function inferMime(buf: Buffer): PhotoMime | undefined {
+      if (buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return 'image/jpeg'
+      if (buf.length >= 8 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47)
+      return 'image/png'
       return undefined
     }
   }
@@ -157,7 +164,7 @@ function main(): void {
   ws.on('open', () => {
     console.log(`[${args.name}] open, joining with PIN ${args.pin}`)
     const payload: Record<string, unknown> = { pin: args.pin, name: args.name, deviceToken: args.token }
-    if (args.avatar) payload.avatar = args.avatar
+    if (args.photo) payload.photo = args.photo
     ws.send(JSON.stringify({ t: 'join', d: payload }))
   })
 
@@ -172,8 +179,8 @@ function main(): void {
       joined = true
       console.log(`[${args.name}] joined, studentId=${msg.d.studentId}`)
       if (msg.d.deviceToken !== args.token) console.log(`[${args.name}] server token: ${msg.d.deviceToken}`)
-      if (args.avatar && msg.d.avatar) console.log(`[${args.name}] rejoined with avatar`)
-      else if (args.avatar) console.log(`[${args.name}] joined without avatar echo`)
+      if (args.photo && msg.d.photo) console.log(`[${args.name}] rejoined with photo`)
+      else if (args.photo) console.log(`[${args.name}] joined without photo echo`)
       schedule(args.focusLostAt, () =>
         ws.send(JSON.stringify({ t: 'focus_lost', d: { reason: 'background' } }))
       )

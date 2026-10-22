@@ -1,15 +1,16 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type {
+  ProfilePhoto,
   ResultAnswerDetail,
   ResultQuestionDetail,
   ResultSessionDetail,
   ResultSessionMeta
 } from '../../shared/types'
 import { adviseAnswer, answerText, keyText, type AnswerAdvice } from '../../shared/answers'
-import { isValidAvatarSpec, type AvatarSpec } from '../../shared/avatar'
+import { isValidProfilePhoto } from '../../shared/profilePhoto'
 import { Badge } from '../components/Badge'
 import { Button } from '../components/Button'
-import { Avatar } from '../components/Avatar'
+import { StudentPhoto } from '../components/StudentPhoto'
 import { ConfirmButton } from '../components/ConfirmButton'
 import { Drawer } from '../components/Drawer'
 import { EmptyState } from '../components/EmptyState'
@@ -26,12 +27,12 @@ const when = (at: number): string =>
     minute: '2-digit'
   })
 
-/** Parses a stored `student_avatar` JSON blob ("" when none) into a spec. */
-function parseAvatar(json: string): AvatarSpec | undefined {
+/** Parses a stored `student_photo` JSON blob ("" when none) into a photo. */
+function parsePhoto(json: string): ProfilePhoto | undefined {
   if (!json) return undefined
   try {
     const parsed: unknown = JSON.parse(json)
-    return isValidAvatarSpec(parsed) ? (parsed as AvatarSpec) : undefined
+    return isValidProfilePhoto(parsed) ? (parsed as ProfilePhoto) : undefined
   } catch {
     return undefined
   }
@@ -627,12 +628,12 @@ export function ResultDetail({
                        {students.map((student) => (
                          <tr key={student.id}>
                            <th scope="row" className="res__sheet-student" data-testid={`student-${student.id}`}>
-                             <Avatar
-                               avatar={parseAvatar(student.studentAvatar)}
-                               name={student.studentName}
-                               size={24}
-                               className="res__sheet-avatar"
-                             />
+                              <StudentPhoto
+                                photo={parsePhoto(student.studentPhoto)}
+                                name={student.studentName}
+                                size={24}
+                                className="res__sheet-photo"
+                              />
                              {student.studentName}
                              {student.finished && <span className="res__sheet-flag">finished</span>}
                            </th>
