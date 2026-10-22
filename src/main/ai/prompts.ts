@@ -99,6 +99,8 @@ export const PROMPT_QUESTION_OF_TYPE = (input: {
   avoid?: string[]
   /** The facts of the source text, one question per fact. */
   facts?: string[]
+  /** The one sentence the question has to be about. */
+  focus?: string
 }): string => {
   const shape = TYPE_SHAPES[input.type]
   const avoid =
@@ -113,6 +115,9 @@ export const PROMPT_QUESTION_OF_TYPE = (input: {
           .map((f, i) => `${i + 1}. ${f}`)
           .join('\n')}\n`
       : ''
+  const focus = input.focus
+    ? `\nWrite one question about this sentence of the text. The question is about this sentence and nothing else:\n"${input.focus}"\n`
+    : ''
   return `You are an expert quiz generator. Write ${input.count} quiz question(s) of the type "${input.type}" from the text below.
 
 Rules:
@@ -125,7 +130,7 @@ Rules:
 - "key" must be ${shape.key}.
 - The question and the answer must come from the source text. Never leave the answer empty and never write "1" as a placeholder.
 - Fill in every <...> placeholder with words from the source text. The template shows the shape only.
-${avoid}${facts}
+${avoid}${facts}${focus}
 Template:
 ${shape.example}
 

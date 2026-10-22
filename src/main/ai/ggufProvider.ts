@@ -195,8 +195,14 @@ export class GgufProvider implements AiProvider {
   }
 
   async generate(opts: GenerateOptions): Promise<GenerateResult> {
-    const types = opts.questionTypes.length > 0 ? opts.questionTypes : (['mcq'] as QuestionType[])
+    const types: QuestionType[] = opts.questionTypes.length > 0 ? opts.questionTypes : ['mcq']
     const sourceText = opts.sourceText.slice(0, 6000)
+
+    // With a focus the retrieval has already chosen the sentence: one
+    // question is written about it and nothing else is asked.
+    if (opts.focus) {
+      return this.generateAbout(opts, sourceText, opts.focus)
+    }
 
     // One call per type: a small model mixes the types up when it may choose.
     const base = Math.floor(opts.count / types.length)
@@ -396,6 +402,54 @@ export class GgufProvider implements AiProvider {
         question.key = key
       }
     })
+  }
+
+  /**
+   * Writes one question about one sentence of a passage.
+   *
+   * The retrieval has already chosen the sentence, so the model is only
+   * asked for the question; the answer has to come from that sentence.
+   */
+  private async generateAbout(
+    opts: GenerateOptions,
+    sourceText: string,
+    focus: string
+  ): Promise<GenerateResult> {
+    const type = opts.questionTypes[0] ?? 'mcq'
+    const prompt = PROMPT_QUESTION_OF_TYPE({
+      sourceText,
+      type,
+      count: 1,
+      points: opts.points,
+      focus
+    })
+
+    const run = await this.runModel(prompt)
+    if (!run.ok) return { questions: [], error: run.error }
+
+    const parsed = extractJsonArray(run.output)
+    if (!parsed) {
+      return { questions: [], error: `The model did not answer with a JSON list of ${type} questions.` }
+    }
+
+    const kept: Omit<StoredQuestion, 'id' | 'status'>[] = []
+    const reasons = new Map<string, number>()
+
+    for (const item of parsed) {
+      const result = this.buildQuestion(item, type, opts.points, sourceText)
+      if (result.draft) {
+        kept.push(result.draft)
+        continue
+      }
+      reasons.set(result.why, (reasons.get(result.why) ?? 0) + 1)
+    }
+
+    return {
+      questions: kept,
+      written: parsed.length,
+      dropped: [...reasons.values()].reduce((sum, n) => sum + n, 0),
+      reasons: [...reasons.entries()].map(([reason, count]) => ({ reason, count }))
+    }
   }
 
   async autoKey(opts: AutoKeyOptions): Promise<AutoKeyResult> {
@@ -954,7 +1008,7 @@ function unwrapSingle(value: unknown): unknown {
  * The text as plain words, so a phrase can be found in it however the model
  * spaced and punctuated it.
  */
-function normalizeText(text: string): string {
+export function normalizeText(text: string): string {
   return text
     .toLowerCase()
     .replace(/[^a-z0-9%\s]+/g, ' ')
@@ -1054,6 +1108,19 @@ export function numberInBody(body: string): number | null {
 }
 
 /**
+ * True when the answer is a phrase and not a whole sentence. A student is
+ * asked for a word or two, not for the passage again.
+ */
+export function isShortAnswer(text: string): boolean {
+  const trimmed = text.trim()
+  if (trimmed.length === 0) return false
+  if (trimmed.length > 80) return false
+  if (/[.!?]/.test(trimmed)) return false
+  if (trimmed.split(/\s+/).length > 12) return false
+  return true
+}
+
+/**
  * True when the answer only repeats the words of the question instead of
  * filling the blank.
  */
@@ -1127,7 +1194,7 @@ export function groundedAnswer(
       return inText(chosen.text)
     }
     case 'identification':
-      return answerStrings(key).every(inText)
+      return answerStrings(key).every((answer) => inText(answer) && isShortAnswer(answer))
     case 'enumeration': {
       const items = answerStrings(key)
       if (items.length === 0) return false
@@ -1135,7 +1202,7 @@ export function groundedAnswer(
       const unique = new Set(items.map((item) => item.trim().toLowerCase()))
       if (unique.size !== items.length) return false
       if (data.count !== undefined && data.count !== items.length) return false
-      if (!items.every(inText)) return false
+      if (!items.every((item) => inText(item) && isShortAnswer(item))) return false
       // The items are the answer, not the question again.
       return items.every((item) => !repeatsTheQuestion(item, body))
     }

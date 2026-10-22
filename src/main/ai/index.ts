@@ -2,6 +2,9 @@ import { AiManager } from './manager'
 import { StubProvider } from './provider'
 import { ModelStore } from './modelStore'
 import { createProviderForStore } from './providerFactory'
+import type { ChunkIndex, Embedder } from './rag/types'
+import type { DocBlock } from './rag/chunking'
+import type { GenerateOptions } from './types'
 
 export { AiManager } from './manager'
 export { StubProvider } from './provider'
@@ -31,7 +34,21 @@ export function createAiManager(): AiManager {
   return new AiManager(new StubProvider())
 }
 
-/** Creates a manager using the config from a ModelStore (or the stub fallback). */
-export function createAiManagerWithStore(store: ModelStore): AiManager {
-  return new AiManager(createProviderForStore(store))
+/**
+ * Creates a manager for the chosen model.
+ *
+ * The retrieval is part of it: the index of the sources, the blocks of a
+ * source and the embedding model that makes the search by meaning work.
+ */
+export function createAiManagerWithStore(
+  store: ModelStore,
+  rag?: {
+    index: ChunkIndex
+    embedder?: Embedder
+    corpus: (opts: GenerateOptions) => Promise<DocBlock[]>
+  }
+): AiManager {
+  const manager = new AiManager(createProviderForStore(store))
+  if (rag) manager.setRetrieval(rag)
+  return manager
 }

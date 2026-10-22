@@ -24,6 +24,7 @@ export function AiGenerateDialog({ open, onClose, onGenerated }: AiGenerateDialo
   const [selectedTypes, setSelectedTypes] = useState<QuestionType[]>(['mcq', 'tf'])
   const [count, setCount] = useState(5)
   const [points, setPoints] = useState(1)
+  const [topic, setTopic] = useState('')
   const [status, setStatus] = useState<'idle' | 'loading' | 'error'>('idle')
   const [error, setError] = useState('')
   const [engine, setEngine] = useState<AiStatus | null>(null)
@@ -72,9 +73,10 @@ export function AiGenerateDialog({ open, onClose, onGenerated }: AiGenerateDialo
       setError('Select at least one question type.')
       return
     }
-    // The file and the pasted text are both used, the file first.
-    const text = [fileText, sourceText].filter((part) => part.trim().length > 0).join('\n\n')
-    if (!text.trim()) {
+    // The file is read by the main process; only the pasted text comes from
+    // here. Both are used.
+    const text = sourceText.trim()
+    if (!text && !sourceFile) {
       setError('Provide source text or select a file.')
       return
     }
@@ -83,6 +85,8 @@ export function AiGenerateDialog({ open, onClose, onGenerated }: AiGenerateDialo
 
     const result = await window.quiz.aiGenerate({
       sourceText: text,
+      filePath: sourceFile ?? undefined,
+      topic: topic.trim(),
       questionTypes: selectedTypes,
       count: Math.max(1, Math.min(50, count)),
       points: Math.max(1, points)
@@ -164,6 +168,18 @@ export function AiGenerateDialog({ open, onClose, onGenerated }: AiGenerateDialo
                 ))}
               </div>
             </div>
+
+            <label className="ui-field">
+              <span className="ui-field__label">What should the questions be about? (optional)</span>
+              <input
+                className="ui-input"
+                type="text"
+                data-testid="ai-topic"
+                placeholder="Leave empty to spread the questions over the whole text"
+                value={topic}
+                onChange={(e) => setTopic(e.target.value)}
+              />
+            </label>
 
             <div className="ai__controls">
               <label className="ui-field">

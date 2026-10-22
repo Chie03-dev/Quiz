@@ -5,7 +5,7 @@ import type { Database } from 'better-sqlite3'
  * whenever a table changes; migrations run in order inside a transaction so
  * an existing library upgrades without losing data.
  */
-export const SCHEMA_VERSION = 4
+export const SCHEMA_VERSION = 5
 
 const MIGRATIONS: string[] = [
   // 1: the step-4 quiz library.
@@ -106,8 +106,42 @@ const MIGRATIONS: string[] = [
     created_at INTEGER NOT NULL
   );
   CREATE INDEX idx_ai_chunks_source ON ai_chunks(source_ref, chunk_index);
+  `,
+  // 5: the retrieval index: parents and children, the word index and the
+  // vectors of the chunks.
+  `
+  ALTER TABLE ai_chunks ADD COLUMN parent_id TEXT NOT NULL DEFAULT '';
+  ALTER TABLE ai_chunks ADD COLUMN kind TEXT NOT NULL DEFAULT 'child';
+  ALTER TABLE ai_chunks ADD COLUMN heading TEXT NOT NULL DEFAULT '';
+  {{FTS}}
+  CREATE TABLE ai_vectors (
+    chunk_id TEXT PRIMARY KEY,
+    source_ref TEXT NOT NULL,
+    dims INTEGER NOT NULL,
+    vector BLOB NOT NULL
+  );
+  CREATE INDEX idx_ai_vectors_source ON ai_vectors(source_ref);
   `
 ]
+
+/**
+ * The word index. SQLite has FTS5 in most builds; when it is missing the
+ * search falls back to reading the chunks of the source.
+ */
+const FTS_TABLE = `
+  CREATE VIRTUAL TABLE ai_fts USING fts5(text, source_ref UNINDEXED, chunk_id UNINDEXED);
+`
+
+/** True when this build of SQLite can make a full text index. */
+export function hasFullTextSearch(db: Database): boolean {
+  try {
+    db.exec('CREATE VIRTUAL TABLE temp.__fts5_probe USING fts5(body)')
+    db.exec('DROP TABLE temp.__fts5_probe')
+    return true
+  } catch {
+    return false
+  }
+}
 
 /**
  * Applies every pending migration. Returns true when the database was empty
@@ -125,8 +159,9 @@ export function migrate(db: Database): boolean {
   for (let v = current; v < SCHEMA_VERSION; v++) {
     const step = MIGRATIONS[v]
     if (!step) throw new Error(`Missing migration for schema v${v + 1}`)
+    const sql = step.replace('{{FTS}}', hasFullTextSearch(db) ? FTS_TABLE : '')
     db.transaction(() => {
-      db.exec(step)
+      db.exec(sql)
       db.pragma(`user_version = ${v + 1}`)
     })()
   }

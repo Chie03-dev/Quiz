@@ -490,6 +490,36 @@ editor both work offline. The **Settings** screen decides what answers them.
   back into sentences first, so a sentence that was broken over three lines is
   one fact again.
 
+### How the questions are found
+
+The app does not paste the whole chapter into the model. It **looks up the
+passages** the questions should come from, and that is what a modern retrieval
+setup does:
+
+- **The chapter is cut into pieces that mean something.** Headings stay with
+  their paragraphs, a table row is a piece of its own, and every piece keeps
+  the section it belongs to.
+- **Two pieces per idea.** A small piece (a sentence or two) is searched; the
+  whole paragraph it sits in is read. The search is precise, the answer has
+  room.
+- **Two searches, one ranking.** One search looks for the same words, the
+  other for the same meaning (the small search model turns the text into
+  numbers). The two rankings are put together, and the piece that both found
+  comes first.
+- **The questions cover the chapter.** Passages that say the same thing are
+  put aside, so ten questions are about ten different parts of the text and
+  not ten sentences of the introduction.
+- **Nothing goes in that was not found.** The answer of every question is
+  looked up in the passage it came from, word for word. A question about
+  something the text does not say does not reach the quiz.
+- **Ask about a part of the text.** The *What should the questions be about?*
+  field searches the chapter first and writes the questions from the passages
+  it finds - "how the cells divide" gives questions about meiosis, even when
+  meiosis is on page 40.
+
+The search model (BGE small, about 25 MB) is optional: without it the app
+searches by words alone, which is enough for most chapters.
+
 ### Results
 
 Every finished session is saved as a **result session** and scored for you.

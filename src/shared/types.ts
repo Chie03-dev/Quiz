@@ -621,6 +621,11 @@ export interface ModelInfo {
   version: string
   /** Whether this model is the one the AI layer currently uses. */
   active?: boolean
+  /**
+   * What the model is for: a model that writes the questions, or a model
+   * that turns text into vectors so the app can search by meaning.
+   */
+  kind?: 'chat' | 'embedding'
 }
 
 /** Download progress: 0..100. */

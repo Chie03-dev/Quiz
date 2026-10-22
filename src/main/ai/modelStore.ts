@@ -41,6 +41,18 @@ export const AVAILABLE_MODELS: Omit<ModelInfo, 'downloaded'>[] = [
     downloadUrl:
       'https://huggingface.co/microsoft/Phi-3-mini-4k-instruct-gguf/resolve/main/Phi-3-mini-4k-instruct-q4.gguf',
     version: 'q4'
+  },
+  {
+    id: 'bge-small-en-v1.5-q4',
+    name: 'BGE small English v1.5 (Q4_K_M)',
+    description:
+      'About 25 MB. The search model: it reads the chapter and finds the passages that mean the same as the question. Optional; the app searches by words without it.',
+    sizeBytes: 24_808_576,
+    fileName: 'bge-small-en-v1.5-q4_k_m.gguf',
+    downloadUrl:
+      'https://huggingface.co/CompendiumLabs/bge-small-en-v1.5-gguf/resolve/main/bge-small-en-v1.5-q4_k_m.gguf',
+    version: 'q4_k_m',
+    kind: 'embedding'
   }
 ]
 
@@ -178,6 +190,17 @@ export class ModelStore {
   /** The folder the models live in; the settings screen shows it. */
   getModelsDir(): string {
     return this.modelsDir
+  }
+
+  /**
+   * The path of the model that turns text into vectors, or null when it is
+   * not downloaded. The app searches by words alone without it.
+   */
+  embeddingModelPath(): string | null {
+    const model = AVAILABLE_MODELS.find((m) => m.kind === 'embedding')
+    if (!model) return null
+    const path = join(this.modelsDir, model.fileName)
+    return existsSync(path) ? path : null
   }
 
   /**

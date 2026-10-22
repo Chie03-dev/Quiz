@@ -1,7 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { existsSync, promises as fs } from 'node:fs'
 import { randomUUID } from 'node:crypto'
-import { extname, join } from 'node:path'
+import { extname, dirname, join } from 'node:path'
 import type {
   ExportQuizResult,
   ImportQuizResult,
@@ -33,6 +33,8 @@ import { MemeAssets, MEME_DIR_NAME, MEME_MAX_BYTES, buildPopPayload, seedSampleM
 import { parseQuizJson, serializeQuiz } from './quizFormat'
 import { describeError, importQuizFile } from './import'
 import { createAiManagerWithStore, createProviderForStore, ModelStore, type ModelInfo, type DownloadResult } from './ai'
+import { fileBlocks, textBlocks } from './ai/corpus'
+import { LazyEmbedder, LlamaEmbedder } from './ai/rag/embeddings'
 import type { AiManager } from './ai'
 import type {
   AiStatus,
@@ -48,6 +50,7 @@ let memeStore: MemeStore | null = null
 let resultsStore: ResultsStore | null = null
 let aiManager: AiManager | null = null
 let modelStore: ModelStore | null = null
+let embedder: LazyEmbedder | null = null
 let memeAssets: MemeAssets | null = null
 let latestStudents: StudentInfo[] = []
 let latestServer: ServerInfo | null = null
@@ -661,13 +664,29 @@ function registerIpc(): void {
     if (!library || !aiManager) return { ok: false, error: 'The AI provider is not available.' }
     try {
       if (!opts || typeof opts !== 'object') return { ok: false, error: 'Invalid generation options.' }
-      const o = opts as { sourceText?: string; questionTypes?: string[]; count?: number; points?: number }
+      const o = opts as {
+        sourceText?: string
+        filePath?: string
+        topic?: string
+        questionTypes?: string[]
+        count?: number
+        points?: number
+      }
       const sourceText = typeof o.sourceText === 'string' ? o.sourceText : ''
+      const filePath = typeof o.filePath === 'string' && o.filePath.length > 0 ? o.filePath : undefined
+      const topic = typeof o.topic === 'string' ? o.topic : ''
       const questionTypes = Array.isArray(o.questionTypes) ? o.questionTypes.filter((t): t is QuestionType => typeof t === 'string' && QUESTION_TYPES.includes(t as QuestionType)) : []
       const count = typeof o.count === 'number' && o.count > 0 ? o.count : 5
       const points = typeof o.points === 'number' && o.points > 0 ? o.points : 1
 
-      const result = await aiManager.generate({ sourceText, questionTypes, count, points })
+      const result = await aiManager.generate({
+        sourceText,
+        filePath,
+        topic,
+        questionTypes,
+        count,
+        points
+      })
 
       if (result.error) return { ok: false, error: result.error }
       if (result.questions.length === 0) {
@@ -794,8 +813,26 @@ function registerIpc(): void {
   })
 }
 
-/** The student ids of a targeted pop; undefined means every student. */
-function toIdList(value: unknown): string[] | undefined {
+/**
+ * The embedder for the search by meaning.
+ *
+ * It only works when the small embedding model and the llama.cpp server are
+ * there; without them the app searches by words alone.
+ */
+function createEmbedder(): LazyEmbedder {
+  return new LazyEmbedder(() => {
+    if (!modelStore) return null
+    const modelPath = modelStore.embeddingModelPath()
+    if (!modelPath) return null
+    const enginePath = modelStore.getEnginePath()
+    if (!enginePath) return null
+    const serverPath = join(dirname(enginePath), 'llama-server.exe')
+    if (!existsSync(serverPath)) return null
+    return new LlamaEmbedder({ binaryPath: serverPath, modelPath })
+  })
+}
+
+/** The student ids of a targeted pop; undefined means every student. */function toIdList(value: unknown): string[] | undefined {
   if (!Array.isArray(value)) return undefined
   const ids = value.filter((id): id is string => typeof id === 'string' && id.length > 0)
   return ids.length > 0 ? ids : undefined
@@ -829,7 +866,15 @@ app.whenReady().then(async () => {
   memeStore = data.memes
   resultsStore = data.results
   modelStore = new ModelStore(join(userData, 'models'))
-  aiManager = createAiManagerWithStore(modelStore)
+  embedder = createEmbedder()
+  aiManager = createAiManagerWithStore(modelStore, {
+    index: data.ai,
+    embedder,
+    corpus: async (opts) => {
+      if (opts.filePath) return fileBlocks(opts.filePath)
+      return textBlocks(opts.sourceText)
+    }
+  })
   memeAssets = new MemeAssets(memeStore, join(userData, MEME_DIR_NAME))
   memeAssets.ensure()
   // The sample meme is seeded on a brand-new profile only, next to the
@@ -864,4 +909,6 @@ app.on('before-quit', () => {
   aiManager = null
   modelStore = null
   memeAssets = null
+  embedder?.stop()
+  embedder = null
 })

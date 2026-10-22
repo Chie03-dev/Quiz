@@ -1,4 +1,6 @@
 import type { AiStatus, QuestionType, StoredQuestion } from '../../shared/types'
+import type { ChunkIndex, Embedder } from './rag/types'
+import type { DocBlock } from './rag/chunking'
 
 export type { QuestionType as AiQuestionType }
 
@@ -18,7 +20,14 @@ export interface ModelConfig {
 }
 
 export interface GenerateOptions {
+  /** The text the question is written from: a passage of the source. */
   sourceText: string
+  /** The sentence of the passage the question should be about. */
+  focus?: string
+  /** The file the questions are written from; empty when the text is pasted. */
+  filePath?: string
+  /** What the questions should be about; empty means the whole source. */
+  topic?: string
   questionTypes: QuestionType[]
   count: number
   points: number
@@ -61,6 +70,19 @@ export interface AiDependencies {
   }
   extract: {
     extractText: (filePath: string) => Promise<string>
+  }
+  /**
+   * The retrieval part. Without it the manager works on the whole text, the
+   * way it did before; with it the text is indexed and the questions are
+   * written from single passages.
+   */
+  rag?: {
+    /** The index of the sources. */
+    index: ChunkIndex
+    /** The embedding model, when there is one. */
+    embedder?: Embedder
+    /** The blocks of a source: a file that is read, or the pasted text. */
+    corpus: (opts: GenerateOptions) => Promise<DocBlock[]>
   }
 }
 
