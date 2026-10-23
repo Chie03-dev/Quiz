@@ -51,8 +51,8 @@
   --r-full: 999px;
 
   /* --- elevation: deeper, paper-lift shadows --- */
-  --shadow-1: 0 2px 4px rgba(0, 0, 0, 0.45);
-  --shadow-2: 0 10px 28px rgba(0, 0, 0, 0.5);
+  --shadow-1: 0 2px 4px rgba(0, 0, 0, 0.12);
+  --shadow-2: 0 10px 28px rgba(0, 0, 0, 0.18);
   --focus-ring: 0 0 0 2px var(--ui-surface-paper), 0 0 0 4px var(--ui-amber);
 }
 

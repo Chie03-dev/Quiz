@@ -135,6 +135,12 @@ export function Settings(): React.JSX.Element {
     models.find((m) => m.kind === 'embedding' && m.downloaded) ??
     null
 
+  // First-run nudge: show it only when the catalog has loaded and no LLM is
+  // downloaded yet, so the instructor is pointed at the smallest model.
+  const llmModels = models.filter((m) => m.kind !== 'embedding').sort((a, b) => a.sizeBytes - b.sizeBytes)
+  const downloadedLLM = llmModels.some((m) => m.downloaded)
+  const firstRunNudge = llmModels.length > 0 && !downloadedLLM ? llmModels[0] : null
+
   return (
     <div className="settings-page">
       <section className="settings-section">
@@ -160,6 +166,26 @@ export function Settings(): React.JSX.Element {
         {loading && <p className="settings-loading">Loading model list…</p>}
 
         {error && <p className="settings-error">{error}</p>}
+
+        {firstRunNudge && (
+          <div className="settings-nudge" data-testid="settings-first-run">
+            <Badge tone="warn">No model installed yet</Badge>
+            <p className="settings-nudge__body">
+              AI answers require a downloaded model. Start with {firstRunNudge.name} (about{' '}
+              {formatSize(firstRunNudge.sizeBytes)}) — it's the smallest.
+            </p>
+            <Button
+              size="sm"
+              variant="primary"
+              icon={<Icon name="download" />}
+              testId={`settings-nudge-download-${firstRunNudge.id}`}
+              disabled={busy !== null}
+              onClick={() => void download(firstRunNudge.id)}
+            >
+              {busy === firstRunNudge.id ? 'Downloading…' : 'Download'}
+            </Button>
+          </div>
+        )}
 
         <div className="settings-models">
           {models.map((model) => (

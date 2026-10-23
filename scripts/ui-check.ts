@@ -637,6 +637,42 @@ async function main(): Promise<void> {
       'a missing llama.cpp binary falls back to the built-in generator'
     )
 
+    // --- the editor AI indicator: shows the model (or the nudge) and the
+    // auto-select button refuses the stub instead of silently filling keys ---
+    log(await clickByTestId(cdp, 'nav-quizzes'), 'the quizzes list is reachable from the sidebar')
+    const quizToOpen = await cdp.eval<string | null>(
+      `(() => {
+          const el = document.querySelector('[data-testid^="open-"]')
+          return el ? el.getAttribute('data-testid').replace(/^open-/, '') : null
+        })()`
+    )
+    log(!!quizToOpen, `a quiz can be opened in the editor (${quizToOpen ?? 'none found'})`)
+    if (quizToOpen) {
+      log(await clickByTestId(cdp, `open-${quizToOpen}`), 'the quiz opens in the editor')
+      await waitFor(async () => ((await hasTestId(cdp, 'ai-model-badge')) ? true : null))
+      const badgeText = await textByTestId(cdp, 'ai-model-badge')
+      log(
+        badgeText === 'No AI model',
+        `the editor shows an AI model badge that says "No AI model" (got ${badgeText ?? 'nothing'})`
+      )
+      // Clicking Auto-select with the stub must NOT start filling answers.
+      const progressBefore = await hasTestId(cdp, 'auto-key-progress')
+      log(progressBefore === false, 'clicking Auto-select does not start progress when no model is active')
+      log(await clickByTestId(cdp, 'auto-key'), 'the Auto-select button was clicked')
+      const errorText = await waitFor(async () => {
+        const t = await textByTestId(cdp, 'auto-key-error')
+        return t && t.includes('No AI model') ? t : null
+      }, 5_000)
+      log(
+        !!errorText && errorText.includes('No AI model is downloaded'),
+        `clicking Auto-select shows the model nudge (${errorText ?? 'nothing'})`
+      )
+      // The nudge badge is tappable and opens Settings.
+      log(await clickByTestId(cdp, 'ai-model-badge'), 'the "No AI model" badge is tappable')
+      await waitFor(async () => ((await hasTestId(cdp, 'settings-first-run')) ? true : null))
+      log(await hasTestId(cdp, 'settings-first-run'), 'tapping the badge opens Settings and shows the first-run nudge')
+    }
+
     console.log('done')
   } finally {
     for (const k of kids) k.kill()

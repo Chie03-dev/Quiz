@@ -231,6 +231,33 @@ ul {
   color: var(--ui-teal);
 }
 
+/* A Badge that carries an onClick renders as a <button>; reset the pen-stroke
+   paper button defaults so it keeps its pill look and stays clickable without
+   changing its background on hover. */
+button.ui-badge {
+  cursor: pointer;
+  background: inherit;
+  border: none;
+  border-radius: var(--r-full);
+  box-shadow: none;
+  transform: none;
+  padding: 2px var(--sp-2);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  letter-spacing: 0.02em;
+  transition: none;
+}
+
+button.ui-badge:hover {
+  box-shadow: none;
+  transform: none;
+}
+
+button.ui-badge:focus-visible {
+  outline: 2px solid var(--ui-amber);
+  outline-offset: 2px;
+}
+
 /* --- fields -------------------------------------------------------- */
 
 .ui-field {

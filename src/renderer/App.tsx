@@ -117,6 +117,7 @@ export function App(): React.JSX.Element {
       <QuizEditor
         quizId={view.quizId}
         onBack={() => setView({ name: 'library' })}
+        onOpenSettings={() => setView({ name: 'settings' })}
         importReport={view.importReport}
       />
     )

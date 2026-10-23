@@ -134,6 +134,9 @@ function FirewallStatus(): React.JSX.Element | null {
       <div className="fw__title">
         Phones may not be able to connect until you allow this app through the Windows firewall.
       </div>
+      <div className="fw__detail">
+        Phones can&rsquo;t join yet &mdash; click <strong>Allow phones to connect</strong> below.
+      </div>
       {result === 'cancelled' && (
         <div className="fw__detail">Permission was not granted. Phones may not be able to connect.</div>
       )}

@@ -136,7 +136,16 @@ export function QuizLibrary({
       {error && <p className="ui-error">{error}</p>}
 
       {importReport && (
-        <Panel title="Import complete" actions={<Badge tone="ok">Added to library</Badge>}>
+        <Panel title="Import complete" actions={
+          <>
+            <Badge tone="ok">Added to library</Badge>
+            {importReport.warnings.length > 0 && (
+              <Badge tone="warn" testId="import-warnings">
+                {importReport.warnings.length} warning{importReport.warnings.length === 1 ? '' : 's'}
+              </Badge>
+            )}
+          </>
+        }>
           <div className="import">
             <p>
               <strong>Title:</strong> {importReport.title}

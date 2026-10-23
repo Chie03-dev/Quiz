@@ -84,10 +84,13 @@ function QuestionCard({
 export function QuizEditor({
   quizId,
   onBack,
+  onOpenSettings,
   importReport = null
 }: {
   quizId: string
   onBack: () => void
+  /** Opens the Settings screen so the instructor can pick/download a model. */
+  onOpenSettings?: () => void
   importReport?: ImportQuizReport | null
 }): React.JSX.Element {
   const [quiz, setQuiz] = useState<StoredQuiz | null>(null)
@@ -363,9 +366,9 @@ export function QuizEditor({
           {autoKeying ? 'Auto-selecting…' : 'Auto-select answers'}
         </Button>
         {activeModel ? (
-          <Badge tone="accent">AI: {activeModel.name}</Badge>
+          <Badge tone="accent" testId="ai-model-badge">AI: {activeModel.name}</Badge>
         ) : (
-          <Badge tone="warn">No AI model</Badge>
+          <Badge tone="warn" testId="ai-model-badge" onClick={onOpenSettings}>No AI model</Badge>
         )}
         <Button variant="primary" testId="save-quiz" onClick={save}>
           Save
@@ -385,7 +388,7 @@ export function QuizEditor({
           </p>
         </div>
       )}
-      {autoKeyError && <p className="ui-error">{autoKeyError}</p>}
+      {autoKeyError && <p className="ui-error" data-testid="auto-key-error">{autoKeyError}</p>}
     </div>
   )
 }
