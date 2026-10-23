@@ -121,6 +121,13 @@ button:active {
   box-shadow: var(--shadow-1);
 }
 
+/* Secondary buttons are paper cards: hover keeps the paper surface and lets the
+   hand-ruled border do the work. Without this the shared .ui-btn:hover tint
+   (var(--ui-border), which is near-black in this theme) fills them black. */
+button.ui-btn--secondary:hover:not(:disabled) {
+  background: var(--ui-surface-3);
+}
+
 /* Torn-paper fragments for grouped surfaces. */
 .ui-fragment {
   background: var(--ui-surface-paper);
