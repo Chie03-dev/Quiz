@@ -2,8 +2,6 @@
 
 A Windows Electron app for running LAN quiz sessions. Scan the QR code from a phone, students join with a PIN, and you control the quiz from your PC. Answer keys never leave the instructor machine.
 
-**Latest release: [v0.4.0](https://github.com/Chie0-dev/Quiz/releases/tag/v0.4.1)**
-
 ## Screenshots
 
 | Dashboard | Quiz Library | Quiz Editor |
