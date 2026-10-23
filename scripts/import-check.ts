@@ -173,6 +173,33 @@ async function main(): Promise<void> {
     ok(docxResult.warnings.length === 0, `docx has no import warnings (got ${JSON.stringify(docxResult.warnings)})`)
   }
 
+  // --- Geography College exam: a multi-page PDF that once imported as 69
+  // mis-typed questions; it must come back as 45 questions (a matching section is
+  // one set with 6 pairs) with every key resolved. ---
+  const geoPath = join(here, '..', 'docs', 'geography_college_exam.pdf')
+  const geoResult = await importQuizFile(geoPath, 'auto')
+  ok(geoResult.ok, 'geography college exam imports')
+  if (geoResult.ok) {
+    const gq = geoResult.quiz.questions
+    ok(gq.length === 45, `geography yields 45 questions (got ${gq.length})`)
+    ok(countByType(gq, 'mcq') === 7, 'geography has 7 multiple choice questions')
+    ok(countByType(gq, 'tf') === 6, 'geography has 6 true/false questions')
+    ok(countByType(gq, 'identification') === 6, 'geography has 6 identification questions')
+    ok(countByType(gq, 'fillin') === 6, 'geography has 6 fill-in questions')
+    ok(countByType(gq, 'enumeration') === 6, 'geography has 6 enumeration questions')
+    ok(countByType(gq, 'problem') === 6, 'geography has 6 problem-solving questions')
+    ok(countByType(gq, 'matching') === 1, 'geography has 1 matching question (a 6-pair set)')
+    ok(countByType(gq, 'connect') === 7, 'geography has 7 connect questions')
+    ok(gq.every((q) => q.key !== null), 'geography has no unanswered keys')
+    const mk = gq.find((q) => q.type === 'matching')?.key as Record<string, string> | undefined
+    ok(!!mk && Object.keys(mk).length === 6, 'geography matching resolved all 6 pairs')
+    const connectQs = gq.filter((q) => q.type === 'connect')
+    ok(
+      connectQs.length === 7 && connectQs.every((q) => Object.keys(q.key as Record<string, string>).length === 1),
+      'each geography connect question resolved its pair'
+    )
+  }
+
   const zeroMarks = `Multiple Choice
 Q1. What is 2 + 2?
 A. 3

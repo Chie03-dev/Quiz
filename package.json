@@ -1,6 +1,6 @@
 {
   "name": "quiz-instructor",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "LAN quiz instructor console - run quizzes from the phones in the room",
   "main": "./out/main/index.js",
   "author": "Quiz",
