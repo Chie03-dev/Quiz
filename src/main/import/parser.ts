@@ -100,6 +100,9 @@ export const SECTION_LABELS: Record<QuestionType, string> = {
  */
 const SECTION_TYPES: { re: RegExp; type: QuestionType }[] = [
   { re: /^multiple\s*choice\b/i, type: 'mcq' },
+  // A printed-exam header may spell out the section mid-line ("50-Item
+  // Multiple-Choice Quiz"); match the words anywhere in the line.
+  { re: /\bmultiple[-–—]?choice\b/i, type: 'mcq' },
   // A printed-exam header spells the pair out, but a True/False question is
   // "True / False" (with a slash) or "T/F", never the sentence "True or False".
   // The slash form allows at most one space on each side so a printed-answer
