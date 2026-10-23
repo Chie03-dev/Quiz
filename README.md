@@ -2,7 +2,7 @@
 
 A Windows Electron app for running LAN quiz sessions. Scan the QR code from a phone, students join with a PIN, and you control the quiz from your PC. Answer keys never leave the instructor machine.
 
-**Latest release: [v0.4.0](https://github.com/Chie0-dev/Quiz/releases/tag/v0.4.0)**
+**Latest release: [v0.4.0](https://github.com/Chie0-dev/Quiz/releases/tag/v0.4.1)**
 
 ## Screenshots
 
@@ -79,35 +79,3 @@ While a quiz runs, the content area shows the countdown timer (urgent under 30 s
 ## Memes
 
 The meme tray (bottom of the Dashboard) pops images onto students' phones mid-quiz. Compressed in-renderer (max 1024 px, JPEG unless transparency is needed) and served from the same server port. The phone fetches the image itself; only a relative path travels over the socket. A meme never pauses the countdown.
-
-## Testing
-
-```bash
-npm run check         # end-to-end protocol checks against a real server
-npm run ui-check      # drives the real UI via CDP (needs --remote-debugging-port=9222)
-npm run fake-student  # --pin 1234 --name Alice
-```
-
-`ui-check` attaches to a running app over the DevTools protocol, clicks by `data-testid`, and asserts state. A fake student client is included for testing without phones.
-
-## What's new
-
-| Version | Key change |
-|---|---|
-| **v0.4.0** | Settings screen for offline AI models; AI answer-key auto-select in the editor; first-run nudge when no model is installed. |
-| **v0.3.4** | Dashboard firewall line always visible (not only when broken); Settings opens from the editor. |
-| **v0.3.3** | Softened shadows, QuizLibrary warnings badge, `data-testid` on key UI elements for ui-check. |
-| **v0.2.7** | Instructor logo on the app icon. Student cards wrap status badges instead of squeezing names. |
-| **v0.2.6** | CSS duplicate-property guard; question numbers counted once in the main process. |
-| **v0.2.5** | Answer editor as a bottom drawer (context-aware, Escape to close). |
-| **v0.2.4** | Score sheet paged width-wise with a compact mode; student column and total stay fixed. |
-| **v0.2.3** | Importer reads `.docx`, `.pdf`, `.md` — printed exams with no answer keys import as drafts. |
-| **v0.2.2** | Answers matched ignoring case, spacing, and dashes; closest answer suggested. |
-| **v0.2.1** | Firewall check at startup; dashboard always shows firewall state; `setup-firewall.bat` shipped. |
-| **v0.2.0** | Results and score sheet; scoring for all 8 question types with partial credit. |
-| **v0.1.0** | First portable build: quiz library, editor, live session with counts, meme tray. |
-
-Builds:
-
-- `QuizInstructor-<version>-setup.exe` — installer with a stable path (recommended).
-- `QuizInstructor-<version>-portable.exe` — single-file, no install, unpacks to a temp folder each run.
