@@ -98,30 +98,20 @@ export const SECTION_LABELS: Record<QuestionType, string> = {
  * between two tables", which is a choice in an exam, and turned the rest of
  * the paper into a connect section.
  */
-const SECTION_TYPES: { re: RegExp; type: QuestionType }[] = [
-  { re: /^multiple\s*choice\b/i, type: 'mcq' },
-  // A printed-exam header may spell out the section mid-line ("50-Item
-  // Multiple-Choice Quiz"); match the words anywhere in the line.
-  { re: /\bmultiple[-–—]?choice\b/i, type: 'mcq' },
-  // A printed-exam header spells the pair out, but a True/False question is
-  // "True / False" (with a slash) or "T/F", never the sentence "True or False".
-  // The slash form allows at most one space on each side so a printed-answer
-  // line such as "True        /        False" is not mistaken for a header.
-  { re: /^(?:true\s+or\s+false|true\s?\/\s?false|t\/f)\b/i, type: 'tf' },
-  { re: /^identification\b/i, type: 'identification' },
-  // "Part B: Short Answer" is a printed exam's identification section; anchored
-  // on the end so a stem that merely starts with "short answer:" is not swallowed.
-  { re: /^short\s*answer(s)?\s*[:\-]?\s*$/i, type: 'identification' },
-  { re: /^fill\s*in\s*the\s*blanks?\b/i, type: 'fillin' },
-  { re: /^enumeration\b/i, type: 'enumeration' },
-  { re: /^problem\s*solving\b/i, type: 'problem' },
-  { re: /^matching\b/i, type: 'matching' },
-  { re: /^connect\b/i, type: 'connect' },
-  { re: /^activity\b/i, type: 'connect' }
+const SECTION_PATTERNS: { type: QuestionType; patterns: RegExp[] }[] = [
+  { type: 'mcq', patterns: [/(?:^|\s)(multiple[-\s\u2013\u2014]*choice|mcq|objective(?:\s*type)?|selected\s*response)(?:\s|$)/i] },
+  { type: 'tf', patterns: [/(?:^|\s)(true\s*or\s*false|true\s*\/\s*false|true\s+false|t\s*\/\s*f|boolean)(?:\s|$)/i] },
+  { type: 'identification', patterns: [/(?:^|\s)(identification|identify|short\s*answers?)(?:\s|$)/i] },
+  { type: 'fillin', patterns: [/(?:^|\s)(fill\s*in\s*the\s*blanks?|fill\s*up|cloze|completion)(?:\s|$)/i] },
+  { type: 'enumeration', patterns: [/(?:^|\s)(enumeration|enumerate)(?:\s|$)/i] },
+  { type: 'problem', patterns: [/(?:^|\s)(problem\s*solving|problems?|solve|computation|calculation)(?:\s|$)/i] },
+  { type: 'matching', patterns: [/(?:^|\s)(matching|match\s+the\s+following|column\s*[ab])(?:\s|$)/i] },
+  { type: 'connect', patterns: [/(?:^|\s)(connect|pairing|associate)(?:\s|$)/i] },
+  { type: 'connect', patterns: [/(?:^|\s)(activity|exercise)(?:\s|$)/i] }
 ]
 
 /** A section header is short. A long line is a sentence, not a header. */
-const SECTION_MAX_LEN = 40
+const SECTION_MAX_LEN = 60
 
 /** A roman-numeral section header ("V. Enumeration") starts with a single-letter
  * choice-looking token only when it is a one-letter roman (I. or V. or X.), so
@@ -137,37 +127,37 @@ interface SectionHit {
 function matchSection(raw: string, isHeading = false): SectionHit | null {
   if (QUESTION_START.test(raw)) return null // "1. ..." is a question, not a header
   if (PLAIN_STEM.test(raw)) return null // a question is not a header either
-  let t = raw.trim().replace(/[:\s]+$/, '')
-  // Track whether a numbered prefix (roman "II.", letter "A:", "Part A:") was
-  // actually stripped; a bare "True / False" answer line has none and must not
-  // be promoted to a section header on its own.
+  let t = raw.trim()
   let hadPrefix = false
-  if (/^[IVXiv]{1,6}\s*[.)]\s*/u.test(t)) {
+  // Roman numeral prefix: I., II., V., X.
+  if (/^[IVXLCivxlc]{1,6}\s*[.)]\s*/u.test(t)) { hadPrefix = true; t = t.replace(/^[IVXLCivxlc]{1,6}\s*[.)]\s*/u, '') }
+  // Letter prefix: A., B:
+  if (/^[A-Za-z]\s*[.)]\s*/u.test(t)) { hadPrefix = true; t = t.replace(/^[A-Za-z]\s*[.)]\s*/u, '') }
+  // Part / Section / Activity / Exercise / Chapter / Unit / Module / Topic / Group
+  if (/^(?:part|section|activity|exercise|chapter|unit|module|topic|group)\s+[A-Za-z0-9IVXLC]+\s*[:\-]?\s*/i.test(t)) {
     hadPrefix = true
-    t = t.replace(/^[IVXiv]{1,6}\s*[.)]\s*/, '') // optional roman prefix
+    t = t.replace(/^(?:part|section|activity|exercise|chapter|unit|module|topic|group)\s+[A-Za-z0-9IVXLC]+\s*[:\-]?\s*/i, '')
   }
-  if (/^[A-Za-z]\s*[.)]\s*/u.test(t)) {
+  if (/^(?:part|section|activity|exercise|chapter|unit|module|topic|group)\s*[:\-]\s*/i.test(t)) {
     hadPrefix = true
-    t = t.replace(/^[A-Za-z]\s*[.)]\s*/, '') // optional letter prefix
-  }
-  if (/^part\s+[A-Za-z]\s*[:\-]?\s*/i.test(t)) {
-    hadPrefix = true
-    t = t.replace(/^part\s+[A-Za-z]\s*[:\-]?\s*/i, '') // optional "Part A:" section label
+    t = t.replace(/^(?:part|section|activity|exercise|chapter|unit|module|topic|group)\s*[:\-]\s*/i, '')
   }
   const points = t.match(POINTS_RE)
   const name = t.replace(/\([^)]*\)/g, ' ').replace(/\s+/g, ' ').trim()
   if (!name) return null
-  // A printed-exam True/False answer line ("True        /        False") is
-  // normalized to "True / False" here, so the tf section regex would match it.
-  // Only treat it as a header when the line arrived as one: a heading, or with
-  // a number/letter/part prefix like "II. True / False".
+  const compact = name.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
   const header = isHeading || hadPrefix
-  for (const s of SECTION_TYPES) {
-    if (!s.re.test(name)) continue
-    // A header is short. A long line that starts with a section word is a
-    // sentence, not a header.
+  // A header-like line carries only header vocabulary; sentences (choices) do not.
+  const headerWords = new Set(['multiple','choice','mcq','objective','type','selected','response','true','false','or','boolean','identification','identify','short','answer','answers','fill','in','the','blank','blanks','fillup','cloze','completion','enumeration','enumerate','problem','problems','solve','solving','computation','calculation','matching','match','following','column','a','b','connect','pairing','associate','activity','exercise','questions','question','quiz','exam','test','section','part','items','item'])
+  const tokens = compact.split(/\s+/).filter(Boolean)
+  const headerLike = tokens.length > 0 && tokens.every((tok) => headerWords.has(tok) || /^\d+$/.test(tok))
+  for (const s of SECTION_PATTERNS) {
+    if (!s.patterns.some((p) => p.test(compact))) continue
     if (!isHeading && name.length > SECTION_MAX_LEN) continue
     if (s.type === 'tf' && !header) continue
+    // Sentences that happen to contain a keyword are not headers unless they are
+    // headings, prefixed, all caps, or made only of header words.
+    if (!header && !isAllCaps(raw) && !headerLike) continue
     return { type: s.type, points: points ? Number(points[1]) : null }
   }
   return null
@@ -1010,7 +1000,7 @@ function finalize(b: Builder, mark: ResolvedMark): DraftItem {
 // --- key resolution -------------------------------------------------------
 
 /** Matches the leading "1." / "Q12." number of a question, without trailing space. */
-const QSTART_PREFIX = /^\s*(?:q\s*(\d+)\s*[.)]|(\d+)\s*[.)])/i
+const QSTART_PREFIX = /^\s*(?:(?:q(?:uestion)?|item|no\.?)\s*(\d+)\s*[.):\-]|(\d+)\s*[.):\-])/i
 
 /**
  * The number and kind of the question a line starts, or null when the line is
@@ -1110,6 +1100,7 @@ export function parseBlocks(blocks: Block[], options: ParseOptions = {}): ParseR
   let mode: 'body' | 'key' = 'body'
   let keyType: QuestionType | null = null
   const keyEntries: KeyEntry[] = []
+  let previousWasMeta = false
 
   const finalizeCurrent = (): void => {
     if (!current) return
@@ -1138,7 +1129,13 @@ export function parseBlocks(blocks: Block[], options: ParseOptions = {}): ParseR
     const trimmed = text.trim()
     if (!trimmed) continue
     const isHeading = block.heading !== undefined
-    if (firstNonEmpty === null && !isMeta(trimmed)) firstNonEmpty = trimmed
+    const pageMarked = /^.+\s*[|\-]\s*page\s*\d+\s*$/i.test(trimmed)
+    if (firstNonEmpty === null && !isMeta(trimmed) && !pageMarked &&
+        !QUESTION_START.test(trimmed) && !CHOICE_START.test(trimmed) &&
+        !ANSWER_LINE.test(trimmed) && !TF_INLINE.test(trimmed) &&
+        matchSection(trimmed, isHeading) === null) {
+      firstNonEmpty = trimmed.replace(/\s*[|\-]\s*page\s*\d+\s*$/i, '').trim()
+    }
 
     if (mode === 'body' && isAnswerKeyHeading(trimmed)) {
       finalizeCurrent()
@@ -1170,7 +1167,17 @@ export function parseBlocks(blocks: Block[], options: ParseOptions = {}): ParseR
       timeLimitSec = tl
       continue
     }
-    if (isMeta(trimmed)) continue
+    if (isMeta(trimmed)) { previousWasMeta = true; continue }
+    // A line that directly follows an instruction/form-field line and is
+    // not itself a question, choice, section header or answer key is a
+    // continuation of that instruction ("worth 1 point."). Skip it so it
+    // does not become an unrecognized line or a stray choice.
+    if (previousWasMeta && !QUESTION_START.test(trimmed) && !CHOICE_START.test(trimmed) &&
+        matchSection(trimmed, isHeading) === null && !isAnswerKeyHeading(trimmed)) {
+      previousWasMeta = true
+      continue
+    }
+    previousWasMeta = false
 
     // A section header may be a heading or a plain line; a line that looks like
     // a choice ("A. ...") inside a question is a choice, never a section header.
@@ -1205,7 +1212,9 @@ export function parseBlocks(blocks: Block[], options: ParseOptions = {}): ParseR
       continue
     }
 
-    if (title === null && isHeading && !QUESTION_START.test(trimmed)) {
+    if (title === null && !QUESTION_START.test(trimmed) && !CHOICE_START.test(trimmed) &&
+        matchSection(trimmed, isHeading) === null && !isMeta(trimmed) &&
+        (isHeading || isAllCaps(trimmed)) && trimmed.length <= 80) {
       title = trimmed
       continue
     }
