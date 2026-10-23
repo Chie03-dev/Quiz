@@ -100,8 +100,11 @@ export const SECTION_LABELS: Record<QuestionType, string> = {
  */
 const SECTION_TYPES: { re: RegExp; type: QuestionType }[] = [
   { re: /^multiple\s*choice\b/i, type: 'mcq' },
-  // "or", never "/": a question prints "True / False" as its own answer line.
-  { re: /^true\s+or\s+false\b/i, type: 'tf' },
+  // A printed-exam header spells the pair out, but a True/False question is
+  // "True / False" (with a slash) or "T/F", never the sentence "True or False".
+  // The slash form allows at most one space on each side so a printed-answer
+  // line such as "True        /        False" is not mistaken for a header.
+  { re: /^(?:true\s+or\s+false|true\s?\/\s?false|t\/f)\b/i, type: 'tf' },
   { re: /^identification\b/i, type: 'identification' },
   // "Part B: Short Answer" is a printed exam's identification section; anchored
   // on the end so a stem that merely starts with "short answer:" is not swallowed.
@@ -117,6 +120,11 @@ const SECTION_TYPES: { re: RegExp; type: QuestionType }[] = [
 /** A section header is short. A long line is a sentence, not a header. */
 const SECTION_MAX_LEN = 40
 
+/** A roman-numeral section header ("V. Enumeration") starts with a single-letter
+ * choice-looking token only when it is a one-letter roman (I. or V. or X.), so
+ * such headers must not be mistaken for "A. ..." choices mid-question. */
+const ROMAN_PREFIX = /^\s*[IVXivx]+\s*[.)]\s+/u
+
 interface SectionHit {
   type: QuestionType
   points: number | null
@@ -127,17 +135,36 @@ function matchSection(raw: string, isHeading = false): SectionHit | null {
   if (QUESTION_START.test(raw)) return null // "1. ..." is a question, not a header
   if (PLAIN_STEM.test(raw)) return null // a question is not a header either
   let t = raw.trim().replace(/[:\s]+$/, '')
-  t = t.replace(/^[IVXivx]{1,6}\s*[.)]\s*/, '') // optional roman prefix
-  t = t.replace(/^[A-Za-z]\s*[.)]\s*/, '') // optional letter prefix
-  t = t.replace(/^part\s+[A-Za-z]\s*[:\-]?\s*/i, '') // optional "Part A:" section label
+  // Track whether a numbered prefix (roman "II.", letter "A:", "Part A:") was
+  // actually stripped; a bare "True / False" answer line has none and must not
+  // be promoted to a section header on its own.
+  let hadPrefix = false
+  if (/^[IVXiv]{1,6}\s*[.)]\s*/u.test(t)) {
+    hadPrefix = true
+    t = t.replace(/^[IVXiv]{1,6}\s*[.)]\s*/, '') // optional roman prefix
+  }
+  if (/^[A-Za-z]\s*[.)]\s*/u.test(t)) {
+    hadPrefix = true
+    t = t.replace(/^[A-Za-z]\s*[.)]\s*/, '') // optional letter prefix
+  }
+  if (/^part\s+[A-Za-z]\s*[:\-]?\s*/i.test(t)) {
+    hadPrefix = true
+    t = t.replace(/^part\s+[A-Za-z]\s*[:\-]?\s*/i, '') // optional "Part A:" section label
+  }
   const points = t.match(POINTS_RE)
   const name = t.replace(/\([^)]*\)/g, ' ').replace(/\s+/g, ' ').trim()
   if (!name) return null
+  // A printed-exam True/False answer line ("True        /        False") is
+  // normalized to "True / False" here, so the tf section regex would match it.
+  // Only treat it as a header when the line arrived as one: a heading, or with
+  // a number/letter/part prefix like "II. True / False".
+  const header = isHeading || hadPrefix
   for (const s of SECTION_TYPES) {
     if (!s.re.test(name)) continue
     // A header is short. A long line that starts with a section word is a
     // sentence, not a header.
     if (!isHeading && name.length > SECTION_MAX_LEN) continue
+    if (s.type === 'tf' && !header) continue
     return { type: s.type, points: points ? Number(points[1]) : null }
   }
   return null
@@ -427,6 +454,10 @@ interface PairTable {
   right: Choice[]
   key: Record<string, string>
   warnings: string[]
+  /** Source question numbers for each left item (line-based matching only). */
+  leftNumbers?: number[]
+  /** The letter id of each right item (line-based matching only). */
+  rightLetters?: string[]
 }
 
 /**
@@ -540,6 +571,70 @@ function tableSourceText(table: Table): string {
   return table.rows.map((row) => row.map(cellText).join(' | ')).join('\n')
 }
 
+// --- line-based matching (PDFs give lines, not tables) -----------------------
+
+/**
+ * A matching row printed on one line: "____ 38. Wegener A. World-systems..."
+ * or, without the answer box, "38. Wegener A. World-systems...".
+ * The left number runs first; the right item is a single letter followed by a dot.
+ */
+const MATCHING_ROW = /^\s*(?:_{2,}\s*)?(\d+)\.\s+(.+?)\s+([A-H])\.\s+(.+)$/su
+/** A right-column label on its own line, e.g. "G. Population grows geometrically". */
+const RIGHT_LABEL_LINE = /^\s*([A-H])\.\s+(.+)$/su
+
+/**
+ * Rebuilds a matching pair table from the paragraph lines of a matching section
+ * that came through as text (typically a PDF), since PDFs do not yield table
+ * blocks. Returns the left/right items plus the letter and number each was
+ * aligned with, so the answer key can supply the mapping.
+ */
+function parseMatchingFromLines(lines: Line[]): PairTable | null {
+  const left: Choice[] = []
+  const leftNumbers: number[] = []
+  const rightByLetter = new Map<string, { id: string; text: string }>()
+  const rightOrder: string[] = []
+  let lastName = ''
+  let lastLetter: string | null = null
+
+  const addRight = (letter: string, text: string): void => {
+    if (!rightByLetter.has(letter)) {
+      rightByLetter.set(letter, { id: `r${rightByLetter.size + 1}`, text })
+      rightOrder.push(letter)
+    } else if (text.trim()) {
+      rightByLetter.get(letter)!.text += ' ' + text.trim()
+    }
+    lastLetter = letter
+  }
+
+  for (const line of lines) {
+    const t = line.text.trim()
+    if (!t) continue
+    const row = t.match(MATCHING_ROW)
+    if (row) {
+      left.push({ id: `l${left.length + 1}`, text: row[2]!.trim() })
+      leftNumbers.push(Number(row[1]))
+      addRight((row[3] ?? '').toUpperCase(), (row[4] ?? '').trim())
+    } else {
+      const lab = t.match(RIGHT_LABEL_LINE)
+      if (lab) {
+        addRight((lab[1] ?? '').toUpperCase(), (lab[2] ?? '').trim())
+    } else if (lastLetter && /\S/.test(t) && !/\bpage\s*\d+\b/i.test(t)) {
+      // A wrapped continuation of the previous right item. Page markers and the
+      // exam title are skipped here so they do not pollute a right item.
+      rightByLetter.get(lastLetter)!.text += ' ' + t
+    }
+      // Directive / "Column A Column B" / page markers carry no pairs and are
+      // left where they are; they simply do not add an item here.
+    }
+  }
+
+  if (left.length === 0) return null
+  const right = rightOrder.map((letter) => rightByLetter.get(letter)!)
+  const rightLetters = rightOrder
+  const key: Record<string, string> = {}
+  return { left, right, key, warnings: [], leftNumbers, rightLetters }
+}
+
 // --- question assembly ----------------------------------------------------
 
 interface Line {
@@ -569,6 +664,9 @@ interface DraftItem {
   markKey: StoredKey | null
   explicitKey: StoredKey | null
   tableKey: Record<string, string> | null
+  /** Line-derived matching pairs need their source numbers/letters at key time. */
+  matchLeftNumbers: number[]
+  matchRightLetters: string[]
   /** Structural problems, always reported (missing count, missing table). */
   immediate: string[]
   /** Answer-not-determined problems, reported only if the key stays empty. */
@@ -636,6 +734,8 @@ function finalize(b: Builder, mark: ResolvedMark): DraftItem {
   let markKey: StoredKey | null = null
   let explicitKey: StoredKey | null = null
   let tableKey: Record<string, string> | null = null
+  let matchLeftNumbers: number[] = []
+  let matchRightLetters: string[] = []
 
   switch (b.section) {
     case 'mcq': {
@@ -789,7 +889,8 @@ function finalize(b: Builder, mark: ResolvedMark): DraftItem {
       body = stemText
       const countMatch = stemText.match(COUNT_RE)
       const count = countMatch ? Number(countMatch[1]) : 0
-      if (!countMatch) immediate.push('the item count (for example "(3)") was not found in the question')
+      // A missing count is not fatal here: a printed exam may say "List four"
+      // in words, and the answer key below can still supply the item count.
       data = { count }
       for (const line of others) {
         let vs = -1
@@ -848,12 +949,7 @@ function finalize(b: Builder, mark: ResolvedMark): DraftItem {
       body = stemText
       const perPair = Math.max(1, b.sectionPoints ?? 1)
       const table = b.tables[0]
-      if (!table) {
-        immediate.push('no table was found for this item')
-        data = b.section === 'matching' ? { left: [], right: [] } : { prompts: [], answers: [] }
-        tableKey = {}
-        points = perPair
-      } else {
+      if (table) {
         const parsed = parsePairTable(table, b.section)
         immediate.push(...parsed.warnings)
         const pairs = Object.keys(parsed.key).length
@@ -863,6 +959,30 @@ function finalize(b: Builder, mark: ResolvedMark): DraftItem {
             ? { left: parsed.left, right: parsed.right }
             : { prompts: parsed.left, answers: parsed.right }
         tableKey = parsed.key
+      } else if (b.section === 'matching') {
+        // No table block (e.g. a PDF that only yields lines): rebuild the pair
+        // table from the section's paragraph lines. The answer key supplies the
+        // mapping, so the key starts empty and is filled in during resolution.
+        const ml = parseMatchingFromLines(b.lines)
+        if (ml) {
+          const left = ml.left
+          const right = ml.right
+          data = { left, right }
+          tableKey = {}
+          matchLeftNumbers = ml.leftNumbers ?? []
+          matchRightLetters = ml.rightLetters ?? []
+          points = Math.max(1, (matchLeftNumbers.length || 1) * perPair)
+        } else {
+          immediate.push('no table was found for this item')
+          data = { left: [], right: [] }
+          tableKey = {}
+          points = perPair
+        }
+      } else {
+        // connect without a table: the answer key may still name the pairs.
+        data = { prompts: [], answers: [] }
+        tableKey = {}
+        points = perPair
       }
       break
     }
@@ -878,15 +998,44 @@ function finalize(b: Builder, mark: ResolvedMark): DraftItem {
     tableKey,
     immediate,
     deferred,
-    missingKey
+    missingKey,
+    matchLeftNumbers,
+    matchRightLetters
   }
 }
 
 // --- key resolution -------------------------------------------------------
 
+/** Matches the leading "1." / "Q12." number of a question, without trailing space. */
+const QSTART_PREFIX = /^\s*(?:q\s*(\d+)\s*[.)]|(\d+)\s*[.)])/i
+
+/**
+ * The number and kind of the question a line starts, or null when the line is
+ * not a question start.
+ *
+ * A line that only holds a number followed by blank space ("6.5°C per 1,000 m")
+ * is a fragment of the previous question's text, not a new question; a line
+ * that is a number followed by nothing but underscores and dashes ("1. ____")
+ * is an answer box the student writes in, not a question either. Both would
+ * otherwise match the number prefix above, so they are rejected here.
+ */
+/**
+ * The number and kind of the question a line starts, or null when the line is
+ * not a question start.
+ *
+ * A line that only holds a number followed by blank space ("6.5°C per 1,000 m")
+ * is a fragment of the previous question's text, not a new question; a line
+ * that is a number followed by nothing but underscores and dashes ("1. ____")
+ * is an answer box the student writes in, not a question either. Both would
+ * otherwise match the number prefix above, so they are rejected here.
+ */
 function matchQuestionStart(text: string): number | null {
-  const m = text.match(/^\s*(?:Q\s*(\d+)\s*[.)]|(\d+)\s*[.)])\s*/i)
+  const m = text.match(QSTART_PREFIX)
   if (!m) return null
+  const after = text.slice(m[0].length)
+  if (/^\d/u.test(after)) return null
+  const rest = after.trim()
+  if (rest === '' || /^[._\-– —]*$/u.test(rest)) return null
   return Number(m[1] ?? m[2])
 }
 
@@ -912,7 +1061,8 @@ function applyKeyEntry(item: DraftItem, entry: string): StoredKey | null {
     }
     case 'tf': {
       const v = entry.trim().toLowerCase()
-      return v === 'true' ? true : v === 'false' ? false : null
+      const m = v.match(/^(true|false)\b/)
+      return m ? m[1] === 'true' : null
     }
     case 'identification': {
       const parts = splitAlternates(entry)
@@ -1025,8 +1175,10 @@ export function parseBlocks(blocks: Block[], options: ParseOptions = {}): ParseR
     // header - a heading, or a line in capitals - can end the question.
     const insidePlain: boolean = current !== null && current.plain
     const headerish = isHeading || (isAllCaps(trimmed) && trimmed.length <= SECTION_MAX_LEN)
+    const isRomanHeader = ROMAN_PREFIX.test(trimmed)
     const sec: SectionHit | null =
-      (!insidePlain || headerish) && (isHeading || current === null || !CHOICE_START.test(trimmed))
+      (!insidePlain || headerish) &&
+      (isHeading || current === null || !CHOICE_START.test(trimmed) || isRomanHeader)
         ? matchSection(trimmed, headerish)
         : null
     if (sec) {
@@ -1034,6 +1186,19 @@ export function parseBlocks(blocks: Block[], options: ParseOptions = {}): ParseR
       sectionType = sec.type
       sectionPoints = sec.points
       lastNumberInSection = 0
+      // A matching section is a single question (with several pairs) even when
+      // it is printed as lines without table blocks, so open it here and let the
+      // rows attach to it. docx tables still append to this same question below.
+      if (sec.type === 'matching') {
+        current = {
+          section: 'matching',
+          sectionPoints,
+          number: 1,
+          lines: [],
+          tables: [],
+          plain: false
+        }
+      }
       continue
     }
 
@@ -1108,8 +1273,49 @@ export function parseBlocks(blocks: Block[], options: ParseOptions = {}): ParseR
   items.forEach((item, index) => {
     const q = questions[index]
     if (item.section === 'matching' || item.section === 'connect') {
-      q.key = item.tableKey ?? {}
-      keyed[index] = Object.keys(item.tableKey ?? {}).length > 0
+      const tk = item.tableKey ?? {}
+      if (Object.keys(tk).length > 0) {
+        q.key = tk
+        keyed[index] = true
+        return
+      }
+      // No table pairs (a PDF that only yielded lines): let the answer key name
+      // them. Matching rows are numbered, so each left item is matched by its
+      // source number and the right item by its letter; connect rows are each
+      // their own question, so they match by question number.
+      if (item.section === 'matching' && item.matchLeftNumbers.length > 0) {
+        const leftChoices = (q.data.left as Choice[] | undefined) ?? []
+        const rightChoices = (q.data.right as Choice[] | undefined) ?? []
+        const mk: Record<string, string> = {}
+        for (const e of keyEntries) {
+          if (e.type !== 'matching') continue
+          const li = item.matchLeftNumbers.indexOf(e.number)
+          const ri = item.matchRightLetters.indexOf(e.value.trim().toUpperCase())
+          if (li >= 0 && ri >= 0 && leftChoices[li] && rightChoices[ri]) {
+            mk[leftChoices[li].id] = rightChoices[ri].id
+          }
+        }
+        q.key = mk
+        keyed[index] = Object.keys(mk).length > 0
+        if (!keyed[index]) item.immediate.push('the matching pairs were not found in the answer key')
+        return
+      }
+      if (item.section === 'connect') {
+        const entry = keyEntries.find((e) => e.type === 'connect' && e.number === item.number)
+        if (entry) {
+          const parts = entry.value.split(/ - /)
+          if (parts.length >= 2 && parts[0]!.trim() && parts[1]!.trim()) {
+            q.data = { prompts: [{ id: 'p1', text: parts[0]!.trim() }], answers: [{ id: 'a1', text: parts.slice(1).join(' - ').trim() }] }
+            q.key = { p1: 'a1' }
+            keyed[index] = true
+            return
+          }
+        }
+        item.immediate.push('no table was found for this item')
+        q.key = {}
+        return
+      }
+      q.key = {}
       return
     }
     if (item.markKey !== null) {
@@ -1123,6 +1329,12 @@ export function parseBlocks(blocks: Block[], options: ParseOptions = {}): ParseR
       if (applied !== null) {
         q.key = applied
         keyed[index] = true
+        if (item.section === 'enumeration') {
+          const d = q.data as { count?: number }
+          if (typeof d.count === 'number' && d.count === 0 && Array.isArray(applied)) {
+            d.count = applied.length
+          }
+        }
         return
       }
       if (item.explicitKey !== null) {
