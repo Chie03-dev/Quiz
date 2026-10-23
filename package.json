@@ -18,7 +18,8 @@
     "typecheck:web": "tsc -p tsconfig.web.json --noEmit",
     "fake-student": "tsx scripts/fake-student.ts",
     "check": "tsx scripts/check.ts && tsx scripts/import-check.ts",
-    "ui-check": "tsx scripts/ui-check.ts"
+    "ui-check": "tsx scripts/ui-check.ts",
+    "shots-mock": "tsx scripts/shots-mock.ts"
   },
   "dependencies": {
     "@fastify/websocket": "^11.0.2",
@@ -42,6 +43,7 @@
     "electron": "^34.0.0",
     "electron-builder": "^26.15.3",
     "electron-vite": "^3.0.0",
+    "puppeteer": "^25.16.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "tsx": "^4.19.2",

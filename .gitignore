@@ -13,6 +13,8 @@ screen*.png
 # The meme tray ships a sample image and the UI check uploads a fixture.
 !resources/sample-meme.png
 !scripts/fixtures/meme-sample.png
+# Demo screenshots referenced by the README.
+!shots/*.png
 
 server-info.json
 .fake-student-token.json
