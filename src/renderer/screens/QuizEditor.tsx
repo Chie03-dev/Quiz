@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import type { ImportQuizReport, QuestionType, StoredQuestion, StoredQuiz } from '../../shared/types'
+import type { AiStatus, ImportQuizReport, ModelInfo, QuestionType, StoredQuestion, StoredQuiz } from '../../shared/types'
 import { QUESTION_TYPES } from '../../shared/types'
 import { validateQuestion } from '../../shared/validation'
 import { QuestionForm, TYPE_LABELS, newQuestion } from '../QuestionForms'
@@ -98,6 +98,8 @@ export function QuizEditor({
   const [autoKeying, setAutoKeying] = useState(false)
   const [autoKeyError, setAutoKeyError] = useState('')
   const [autoKeyElapsed, setAutoKeyElapsed] = useState(0)
+  const [aiStatus, setAiStatus] = useState<AiStatus | null>(null)
+  const [models, setModels] = useState<ModelInfo[]>([])
 
   useEffect(() => {
     let active = true
@@ -127,6 +129,15 @@ export function QuizEditor({
     const timer = setInterval(() => setAutoKeyElapsed(Date.now() - started), 500)
     return () => clearInterval(timer)
   }, [autoKeying])
+
+  // The AI model state: which model is active and whether any are downloaded,
+  // so the auto-select button can warn when there is nothing to run on.
+  useEffect(() => {
+    let active = true
+    void window.quiz.aiStatus().then((s) => { if (active) setAiStatus(s) })
+    void window.quiz.aiModels().then((m) => { if (active) setModels(m) })
+    return () => { active = false }
+  }, [])
 
   const update = useCallback((next: StoredQuiz) => {
     setQuiz(next)
@@ -189,27 +200,42 @@ export function QuizEditor({
      })
    }
 
-    const autoKey = (): void => {
-      setAutoKeying(true)
-      setAutoKeyError('')
-      void window.quiz
-        .aiAutoKey(quiz.questions)
-        .then((result) => {
-          setAutoKeying(false)
-          if (result.error) {
-            setAutoKeyError(result.error)
-          } else if (result.questions.length > 0) {
-            patch((q) => ({ ...q, questions: result.questions }))
-            setSaved(false)
-          } else {
-            setAutoKeyError('No answers could be auto-selected.')
-          }
-        })
-        .catch((err) => {
-          setAutoKeying(false)
-          setAutoKeyError(err instanceof Error ? err.message : String(err))
-        })
+  const autoKey = async (): Promise<void> => {
+    // Refresh the model state in case the instructor just downloaded one in
+    // Settings, then refuse to run the stub generator when no model is active -
+    // otherwise it silently fills placeholder keys and the click looks broken.
+    const [status, list] = await Promise.all([window.quiz.aiStatus(), window.quiz.aiModels()])
+    setAiStatus(status)
+    setModels(list)
+    if (status?.provider === 'stub') {
+      const downloadedLLM = list.some((m) => m.kind !== 'embedding' && m.downloaded)
+      setAutoKeyError(
+        downloadedLLM
+          ? 'No AI model is selected. Choose one in Settings, then auto-select answers.'
+          : 'No AI model is downloaded. Open Settings, download a model, and select it before auto-selecting answers.'
+      )
+      return
     }
+    setAutoKeying(true)
+    setAutoKeyError('')
+    void window.quiz
+      .aiAutoKey(quiz.questions)
+      .then((result) => {
+        setAutoKeying(false)
+        if (result.error) {
+          setAutoKeyError(result.error)
+        } else if (result.questions.length > 0) {
+          patch((q) => ({ ...q, questions: result.questions }))
+          setSaved(false)
+        } else {
+          setAutoKeyError('No answers could be auto-selected.')
+        }
+      })
+      .catch((err) => {
+        setAutoKeying(false)
+        setAutoKeyError(err instanceof Error ? err.message : String(err))
+      })
+  }
 
   const back = (): void => {
     if (dirty && !window.confirm('Discard unsaved changes?')) return
@@ -221,6 +247,10 @@ export function QuizEditor({
     if (!Number.isFinite(minutes)) return
     patch((q) => ({ ...q, timeLimitSec: Math.max(1, Math.round(minutes * 60)) }))
   }
+
+  // The active non-embedding model, if any, drives auto-select. null (stub)
+  // means the click should warn instead of silently filling placeholder keys.
+  const activeModel = models.find((m) => m.active && m.kind !== 'embedding')
 
   return (
     <div className="ed">
@@ -332,6 +362,11 @@ export function QuizEditor({
         >
           {autoKeying ? 'Auto-selecting…' : 'Auto-select answers'}
         </Button>
+        {activeModel ? (
+          <Badge tone="accent">AI: {activeModel.name}</Badge>
+        ) : (
+          <Badge tone="warn">No AI model</Badge>
+        )}
         <Button variant="primary" testId="save-quiz" onClick={save}>
           Save
         </Button>
