@@ -620,6 +620,48 @@ function registerIpc(): void {
     return resultsStore.updateAnswer({ answerId, pointsAwarded, correct, notes })
   })
 
+  // Exports one saved session as a CSV score sheet.
+  ipcMain.handle('results:exportCsv', async (_event, id: unknown): Promise<{ ok: boolean; path?: string; error?: string }> => {
+    if (!resultsStore) return { ok: false, error: 'The results are not open.' }
+    if (typeof id !== 'string') return { ok: false, error: 'Invalid session id.' }
+    const detail = resultsStore.get(id)
+    if (!detail) return { ok: false, error: 'That session is no longer available.' }
+    if (!win) return { ok: false, error: 'The window is not available.' }
+    try {
+      const save = await dialog.showSaveDialog(win, {
+        title: 'Export results as CSV',
+        defaultPath: `${detail.meta.quizTitle.replace(/[\\/:*?"<>|]/g, '_')}.csv`,
+        filters: [{ name: 'CSV', extensions: ['csv'] }]
+      })
+      if (save.canceled || !save.filePath) return { ok: false, error: 'Export was cancelled.', cancelled: true } as any
+      const esc = (v: unknown): string => {
+        const text = v === null || v === undefined ? '' : String(v)
+        return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text
+      }
+      const lines: string[] = []
+      lines.push(['Student', 'Finished', 'Total awarded', 'Total possible', ...detail.questions.map((q) => `Q${q.number}`)].join(','))
+      for (const student of detail.students) {
+        const byQuestion = new Map(student.answers.map((a) => [a.questionId, a]))
+        const row = [
+          esc(student.studentName),
+          student.finished ? 'yes' : 'no',
+          student.totalPointsAwarded,
+          student.totalPointsPossible,
+          ...detail.questions.map((q) => {
+            const a = byQuestion.get(q.id)
+            if (!a) return ''
+            return `${a.pointsAwarded}/${a.pointsPossible}`
+          })
+        ]
+        lines.push(row.join(','))
+      }
+      await fs.writeFile(save.filePath, lines.join('\r\n') + '\r\n', 'utf8')
+      return { ok: true, path: save.filePath }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+
   // Saves the running session as it stands; the end of the quiz saves again.
   ipcMain.handle('results:createFromCurrent', () => {
     if (!server || !resultsStore) return null

@@ -94,6 +94,9 @@ const api = {
   /** Saves the running session as it stands. */
   saveCurrentResult: (): Promise<ResultSessionMeta | null> =>
     ipcRenderer.invoke('results:createFromCurrent'),
+  /** Exports one saved session as a CSV score sheet. */
+  exportResultCsv: (id: string): Promise<{ ok: boolean; path?: string; error?: string }> =>
+    ipcRenderer.invoke('results:exportCsv', id),
   // --- AI question generation ---
   /** Whether the AI provider is ready and which one it is. */
   aiStatus: (): Promise<AiStatus> => ipcRenderer.invoke('ai:status'),

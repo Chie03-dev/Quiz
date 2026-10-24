@@ -100,6 +100,14 @@ function SessionRow({
       </span>
       <span className="res__actions">
         <Button
+          variant="ghost"
+          size="sm"
+          testId={`export-result-${session.id}`}
+          onClick={() => void window.quiz.exportResultCsv(session.id)}
+        >
+          Export CSV
+        </Button>
+        <Button
           variant="primary"
           size="sm"
           testId={`open-result-${session.id}`}
