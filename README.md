@@ -1,6 +1,6 @@
 # Quiz Instructor
 
-A Windows Electron app for running LAN quiz sessions. Scan the QR code from a phone, students join with a PIN, and you control the quiz from your PC. Answer keys never leave the instructor machine.
+A Windows Electron app for running LAN quiz sessions. Scan the QR code from a phone, students join with a PIN, and you control the quiz from your PC. Answer keys never leave the instructor machine. Parent App for [Quiz Desktop App](https://github.com/Chie03-dev/QuizStudent).
 
 ## Screenshots
 
