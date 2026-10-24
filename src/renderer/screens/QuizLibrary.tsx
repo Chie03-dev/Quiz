@@ -99,6 +99,7 @@ export function QuizLibrary({
   const [quizzes, setQuizzes] = useState<QuizMeta[] | null>(null)
   const [error, setError] = useState('')
   const [showAiDialog, setShowAiDialog] = useState(false)
+  const [search, setSearch] = useState('')
 
   const refresh = useCallback(() => {
     void window.quiz.listQuizzes().then(setQuizzes)
@@ -130,6 +131,10 @@ export function QuizLibrary({
       }
     })
   }
+
+  const filteredQuizzes = quizzes === null
+    ? null
+    : quizzes.filter((q) => q.title.toLowerCase().includes(search.trim().toLowerCase()))
 
   return (
     <div className="lib">
@@ -189,6 +194,14 @@ export function QuizLibrary({
                 Generate with AI
               </Button>
             )}
+            <input
+              className="ui-input"
+              type="search"
+              placeholder="Search quizzes…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              style={{ minWidth: 180 }}
+            />
             <Button variant="secondary" icon={<Icon name="upload" />} onClick={importQuiz}>
               Import…
             </Button>
@@ -200,25 +213,27 @@ export function QuizLibrary({
       >
         {quizzes === null ? (
           <EmptyState title="Loading…" />
-        ) : quizzes.length === 0 ? (
+        ) : filteredQuizzes && filteredQuizzes.length === 0 ? (
           <EmptyState
-            title="No quizzes yet"
-            body="Create a quiz from scratch, or import a quiz file you already have."
+            title={search.trim() ? 'No matching quizzes' : 'No quizzes yet'}
+            body={search.trim() ? 'Try a different search term.' : 'Create a quiz from scratch, or import a quiz file you already have.'}
             icon={<Icon name="quizzes" />}
             action={
-              <div className="live__controls">
-                <Button variant="primary" icon={<Icon name="plus" />} onClick={create}>
-                  New quiz
-                </Button>
-                <Button variant="secondary" icon={<Icon name="upload" />} onClick={importQuiz}>
-                  Import…
-                </Button>
-              </div>
+              search.trim() ? undefined : (
+                <div className="live__controls">
+                  <Button variant="primary" icon={<Icon name="plus" />} onClick={create}>
+                    New quiz
+                  </Button>
+                  <Button variant="secondary" icon={<Icon name="upload" />} onClick={importQuiz}>
+                    Import…
+                  </Button>
+                </div>
+              )
             }
           />
         ) : (
           <ul className="lib__list">
-            {quizzes.map((q) => (
+            {(filteredQuizzes ?? []).map((q) => (
               <QuizRow key={q.id} quiz={q} onOpen={onOpen} onChanged={refresh} />
             ))}
           </ul>

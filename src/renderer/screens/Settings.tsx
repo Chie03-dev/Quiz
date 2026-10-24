@@ -20,6 +20,7 @@ function formatSize(bytes: number): string {
 
 export function Settings(): React.JSX.Element {
   const [models, setModels] = useState<ModelInfo[]>([])
+  const [modelSearch, setModelSearch] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState<string | null>(null)
@@ -130,6 +131,9 @@ export function Settings(): React.JSX.Element {
   }
 
   const activeModel = models.find((m) => m.active) ?? null
+  const filteredModels = models.filter((m) =>
+    `${m.name} ${m.description}`.toLowerCase().includes(modelSearch.trim().toLowerCase())
+  )
   const searchModel =
     models.find((m) => m.kind === 'embedding' && m.active) ??
     models.find((m) => m.kind === 'embedding' && m.downloaded) ??
@@ -188,7 +192,15 @@ export function Settings(): React.JSX.Element {
         )}
 
         <div className="settings-models">
-          {models.map((model) => (
+          <input
+            className="ui-input"
+            type="search"
+            placeholder="Search models…"
+            value={modelSearch}
+            onChange={(e) => setModelSearch(e.target.value)}
+            style={{ marginBottom: 12, maxWidth: 320 }}
+          />
+          {filteredModels.map((model) => (
             <div key={model.id} className="settings-model-card" data-testid={`settings-model-${model.id}`}>
               <div className="settings-model-info">
                 <h3>{model.name}</h3>

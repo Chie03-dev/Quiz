@@ -142,23 +142,42 @@ export function Results({
   onBack: () => void
 }): React.JSX.Element {
   const [sessions, setSessions] = useState<ResultSessionMeta[] | null>(null)
+  const [search, setSearch] = useState('')
 
   const refresh = useCallback(() => {
     void window.quiz.listResults().then(setSessions)
   }, [])
   useEffect(refresh, [refresh])
 
+  const filteredSessions = sessions === null
+    ? null
+    : sessions.filter((s) => s.quizTitle.toLowerCase().includes(search.trim().toLowerCase()))
+
   return (
     <div className="res">
       <Panel
         title="Saved sessions"
         actions={
-          sessions && sessions.length > 0 ? <Badge tone="neutral">{sessions.length}</Badge> : undefined
+          <>
+            {sessions && sessions.length > 0 && (
+              <input
+                className="ui-input"
+                type="search"
+                placeholder="Search sessions…"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                style={{ minWidth: 180 }}
+              />
+            )}
+            {sessions && sessions.length > 0 ? <Badge tone="neutral">{sessions.length}</Badge> : undefined}
+          </>
         }
       >
         {sessions === null ? (
           <EmptyState title="Loading…" />
-        ) : sessions.length === 0 ? (
+        ) : filteredSessions && filteredSessions.length === 0 && search.trim() ? (
+          <EmptyState title="No matching sessions" body="Try a different search term." icon={<Icon name="results" />} />
+        ) : filteredSessions && filteredSessions.length === 0 ? (
           <EmptyState
             title="No results yet"
             body="Every finished session is saved here with its score sheet."
@@ -166,7 +185,7 @@ export function Results({
           />
         ) : (
           <ul className="res__list">
-            {sessions.map((s) => (
+            {(filteredSessions ?? []).map((s) => (
               <SessionRow key={s.id} session={s} onOpen={onOpen} onChanged={refresh} />
             ))}
           </ul>
