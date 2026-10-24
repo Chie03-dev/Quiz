@@ -42,36 +42,51 @@ async function readTextBounded(filePath: string): Promise<string> {
  * comes back as a readable error so the dialog can show it and the app keeps
  * running.
  */
+const IMPORT_TIMEOUT_MS = 30_000
+
 export async function importQuizFile(filePath: string, markStyle: AnswerMarking = 'auto'): Promise<ImportResult> {
+  let timer: NodeJS.Timeout | null = null
+  const timeout = new Promise<ImportResult>((resolve) => {
+    timer = setTimeout(() => {
+      resolve({ ok: false, error: 'Importing this file took too long and was cancelled.' })
+    }, IMPORT_TIMEOUT_MS)
+  })
+  const work = (async (): Promise<ImportResult> => {
+    try {
+      const ext = extname(filePath).toLowerCase()
+      if (ext === '.json') {
+        const text = await readTextBounded(filePath)
+        const parsed = parseQuizJson(text)
+        if (!parsed.ok) return { ok: false, error: parsed.error }
+        return { ok: true, quiz: parsed.quiz, warnings: [] }
+      }
+      if (ext === '.docx') {
+        const blocks = await extractDocx(filePath)
+        const { quiz, warnings } = parseBlocks(blocks, { markStyle })
+        return { ok: true, quiz, warnings }
+      }
+      if (ext === '.md' || ext === '.markdown') {
+        const text = await readTextBounded(filePath)
+        const blocks = extractMarkdown(text)
+        const { quiz, warnings } = parseBlocks(blocks, { markStyle })
+        return { ok: true, quiz, warnings }
+      }
+      if (ext === '.pdf') {
+        const blocks = await extractPdf(filePath)
+        const { quiz, warnings } = parseBlocks(blocks, { markStyle })
+        return { ok: true, quiz, warnings }
+      }
+      return {
+        ok: false,
+        error: `unsupported file type${ext ? ` ${ext}` : ''}; use .docx, .pdf, .md, .markdown or .json`
+      }
+    } catch (err) {
+      return { ok: false, error: describeError(err) }
+    }
+  })()
   try {
-    const ext = extname(filePath).toLowerCase()
-    if (ext === '.json') {
-      const text = await readTextBounded(filePath)
-      const parsed = parseQuizJson(text)
-      if (!parsed.ok) return { ok: false, error: parsed.error }
-      return { ok: true, quiz: parsed.quiz, warnings: [] }
-    }
-    if (ext === '.docx') {
-      const blocks = await extractDocx(filePath)
-      const { quiz, warnings } = parseBlocks(blocks, { markStyle })
-      return { ok: true, quiz, warnings }
-    }
-    if (ext === '.md' || ext === '.markdown') {
-      const text = await readTextBounded(filePath)
-      const blocks = extractMarkdown(text)
-      const { quiz, warnings } = parseBlocks(blocks, { markStyle })
-      return { ok: true, quiz, warnings }
-    }
-    if (ext === '.pdf') {
-      const blocks = await extractPdf(filePath)
-      const { quiz, warnings } = parseBlocks(blocks, { markStyle })
-      return { ok: true, quiz, warnings }
-    }
-    return {
-      ok: false,
-      error: `unsupported file type${ext ? ` ${ext}` : ''}; use .docx, .pdf, .md, .markdown or .json`
-    }
-  } catch (err) {
-    return { ok: false, error: describeError(err) }
+    return await Promise.race([work, timeout])
+  } finally {
+    if (timer) clearTimeout(timer)
   }
 }
