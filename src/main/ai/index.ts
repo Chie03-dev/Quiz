@@ -50,7 +50,6 @@ export function createAiManagerWithStore(
   onProgress?: (progress: GenerateProgress) => void
 ): AiManager {
   const manager = new AiManager(createProviderForStore(store))
-  if (rag) manager.setRetrieval(rag)
   if (onProgress) manager.setProgress(onProgress)
   return manager
 }

@@ -79,7 +79,6 @@ export interface AiProvider {
   status(): AiStatus
   /** Checks the engine for real; the manager calls it before reporting status. */
   refresh?(): Promise<AiStatus>
-  generate(opts: GenerateOptions): Promise<GenerateResult>
   autoKey(opts: AutoKeyOptions): Promise<AutoKeyResult>
 }
 
