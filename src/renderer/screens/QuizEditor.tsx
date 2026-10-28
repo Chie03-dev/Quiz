@@ -219,6 +219,12 @@ export function QuizEditor({
       )
       return
     }
+    if (status?.model?.toLowerCase().includes('golden generate')) {
+      setAutoKeyError(
+        'The Golden Generate model writes questions but cannot choose answer keys. Switch to Qwen2.5 1.5B or Phi-3 Mini in Settings, then auto-select answers.'
+      )
+      return
+    }
     setAutoKeying(true)
     setAutoKeyError('')
     void window.quiz
