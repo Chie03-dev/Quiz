@@ -148,6 +148,23 @@ export function Settings(): React.JSX.Element {
   return (
     <div className="settings-page">
       <section className="settings-section">
+        <h2>How to make AI work</h2>
+        <p className="settings-subtitle">
+          The app downloads the model, but it does not bundle llama.cpp. Follow these steps once.
+        </p>
+        <ol className="settings-steps" style={{ margin: 0, paddingLeft: 20, lineHeight: 1.7 }}>
+          <li>Download a Windows build of llama.cpp and keep <code>llama-cli.exe</code>.</li>
+          <li>In <strong>Inference engine</strong>, click <strong>Browse…</strong>, select <code>llama-cli.exe</code>, then click <strong>Save</strong>.</li>
+          <li>Download a model below. <strong>Qwen2.5 0.5B</strong> is the smallest and fastest to try.</li>
+          <li>Click <strong>Use this model</strong> on the downloaded model.</li>
+          <li>Generate questions. If you see <code>spawn llama-cli ENOENT</code>, the binary path is missing or wrong.</li>
+        </ol>
+        <p className="settings-note" style={{ marginTop: 10 }}>
+          You can also add the folder containing <code>llama-cli.exe</code> to your Windows PATH and restart the app.
+        </p>
+      </section>
+
+      <section className="settings-section">
         <h2>AI models</h2>
         <p className="settings-subtitle">
           Download a model once and it stays on this machine. Nothing is sent anywhere. The chosen
