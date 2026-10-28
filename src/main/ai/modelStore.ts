@@ -16,17 +16,6 @@ export const DEFAULT_START_UP_SECONDS = 10
 /** The catalog of models the app knows how to download. */
 export const AVAILABLE_MODELS: Omit<ModelInfo, 'downloaded'>[] = [
   {
-    id: 'qwen2.5-0.5b-instruct-q4',
-    name: 'Qwen2.5 0.5B Instruct (Q4_K_M)',
-    description:
-      'The smallest download (about 470 MB). It runs anywhere, but it writes rough questions - check every answer.',
-    sizeBytes: 491_400_032,
-    fileName: 'qwen2.5-0.5b-instruct-q4_k_m.gguf',
-    downloadUrl:
-      'https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf',
-    version: 'q4_k_m'
-  },
-  {
     id: 'qwen2.5-1.5b-instruct-q4',
     name: 'Qwen2.5 1.5B Instruct (Q4_K_M)',
     description:
