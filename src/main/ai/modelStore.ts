@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { get as httpGet, type ClientRequest, type IncomingMessage } from 'node:http'
 import { get as httpsGet } from 'node:https'
 import { URL } from 'node:url'
+import JSZip from 'jszip'
 
 import type { AiTiming, DownloadProgress, DownloadResult, ModelInfo } from '../../shared/types'
 import type { ModelConfig } from './types'
@@ -75,6 +76,11 @@ export const AVAILABLE_MODELS: Omit<ModelInfo, 'downloaded'>[] = [
 
 /** How many redirects a download may follow before it gives up. */
 const MAX_REDIRECTS = 5
+
+/** The pinned llama.cpp release used for the automatic engine download. */
+const LLAMA_CPP_TAG = 'b11960'
+const LLAMA_CPP_ASSET = 'llama-b11960-bin-win-cpu-x64.zip'
+const LLAMA_CPP_URL = `https://github.com/ggml-org/llama.cpp/releases/download/${LLAMA_CPP_TAG}/${LLAMA_CPP_ASSET}`
 
 /**
  * Where the downloaded models live and which one the AI layer uses.
@@ -192,15 +198,21 @@ export class ModelStore {
   /** The llama.cpp binary the app should use, or null for the auto-detected one. */
   getEnginePath(): string | null {
     const path = this.engineFile()
-    if (!existsSync(path)) return null
-    try {
-      const raw = statSync(path)
-      if (raw.size === 0) return null
-      const { enginePath } = JSON.parse(readFileSync(path, 'utf8')) as { enginePath?: unknown }
-      return typeof enginePath === 'string' && enginePath.length > 0 ? enginePath : null
-    } catch {
-      return null
+    if (existsSync(path)) {
+      try {
+        const raw = statSync(path)
+        if (raw.size > 0) {
+          const { enginePath } = JSON.parse(readFileSync(path, 'utf8')) as { enginePath?: unknown }
+          if (typeof enginePath === 'string' && enginePath.length > 0 && existsSync(enginePath)) {
+            return enginePath
+          }
+        }
+      } catch {
+        // Fall through to the bundled engine.
+      }
     }
+    const bundled = this.bundledEnginePath()
+    return bundled && existsSync(bundled) ? bundled : null
   }
 
   /** Remembers the llama.cpp binary to run. An empty path clears it. */
@@ -209,6 +221,70 @@ export class ModelStore {
     const value = enginePath && enginePath.trim().length > 0 ? enginePath.trim() : null
     writeFileSync(this.engineFile(), JSON.stringify({ enginePath: value }, null, 2), 'utf8')
     return true
+  }
+
+  /** Where the automatically downloaded llama.cpp build is unpacked. */
+  private engineDir(): string {
+    return join(this.modelsDir, '..', 'llama-cpp', LLAMA_CPP_TAG)
+  }
+
+  /** The binary inside the unpacked build, when present. */
+  private bundledEnginePath(): string {
+    return join(this.engineDir(), 'llama-cli.exe')
+  }
+
+  /** Downloads and unpacks the llama.cpp Windows CPU build. */
+  async downloadEngine(onProgress: (percent: number) => void = () => {}): Promise<{ ok: boolean; error?: string }> {
+    this.ensureDir()
+    const dir = this.engineDir()
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
+    if (existsSync(this.bundledEnginePath())) return { ok: true }
+
+    try {
+      onProgress(0)
+      const response = await fetch(LLAMA_CPP_URL)
+      if (!response.ok) return { ok: false, error: `Download failed: HTTP ${response.status}` }
+      const total = Number(response.headers.get('content-length') ?? 0)
+      const reader = response.body?.getReader()
+      if (!reader) return { ok: false, error: 'The download stream is unavailable.' }
+      const chunks: Uint8Array[] = []
+      let received = 0
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        if (value) {
+          chunks.push(value)
+          received += value.byteLength
+          if (total > 0) onProgress(Math.min(95, Math.round((received / total) * 100)))
+        }
+      }
+      const buffer = Buffer.concat(chunks.map((c) => Buffer.from(c)))
+      onProgress(96)
+      const zip = await JSZip.loadAsync(buffer)
+      const entries = Object.keys(zip.files)
+      let written = 0
+      for (const name of entries) {
+        const file = zip.files[name]
+        if (file.dir) continue
+        // Guard against path traversal in the archive.
+        const relative = name.replace(/^[/\\]+/, '')
+        if (relative.includes('..')) continue
+        const target = join(dir, relative)
+        const parent = join(target, '..')
+        if (!existsSync(parent)) mkdirSync(parent, { recursive: true })
+        const data = await file.async('nodebuffer')
+        writeFileSync(target, data)
+        written++
+        onProgress(96 + Math.round((written / Math.max(1, entries.length)) * 4))
+      }
+      if (!existsSync(this.bundledEnginePath())) {
+        return { ok: false, error: 'The downloaded archive did not contain llama-cli.exe.' }
+      }
+      onProgress(100)
+      return { ok: true }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
   }
 
   /** Downloads a model. Calls onProgress with 0..100. */

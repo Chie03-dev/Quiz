@@ -147,6 +147,15 @@ const api = {
     ipcRenderer.invoke('ai:setEngine', enginePath),
   /** Opens a file dialog to pick the llama.cpp binary. */
   aiSelectEngine: (): Promise<string | null> => ipcRenderer.invoke('ai:selectEngine'),
+  /** Downloads the llama.cpp Windows CPU build automatically. */
+  aiDownloadEngine: (): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('ai:downloadEngine'),
+  /** Reports how far an engine download has come. */
+  onEngineProgress: (cb: (progress: { percent: number }) => void): (() => void) => {
+    const listener = (_e: unknown, progress: { percent: number }): void => cb(progress)
+    ipcRenderer.on('ai:engineProgress', listener)
+    return () => ipcRenderer.removeListener('ai:engineProgress', listener)
+  },
   /** Reports how far a model download has come. */
   onModelProgress: (cb: (progress: ModelProgress) => void): (() => void) => {
     const listener = (_e: unknown, progress: ModelProgress): void => cb(progress)

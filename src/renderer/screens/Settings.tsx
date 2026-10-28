@@ -28,6 +28,8 @@ export function Settings(): React.JSX.Element {
   const [status, setStatus] = useState<AiStatus | null>(null)
   const [modelsDir, setModelsDir] = useState('')
   const [enginePath, setEnginePath] = useState('')
+  const [engineDownloading, setEngineDownloading] = useState(false)
+  const [engineProgress, setEngineProgress] = useState<number | null>(null)
 
   const loadModels = useCallback(async (): Promise<void> => {
     try {
@@ -66,6 +68,8 @@ export function Settings(): React.JSX.Element {
       }),
     []
   )
+
+  useEffect(() => window.quiz.onEngineProgress((p) => setEngineProgress(p.percent)), [])
 
   const download = async (id: string): Promise<void> => {
     setBusy(id)
@@ -128,6 +132,22 @@ export function Settings(): React.JSX.Element {
     setEnginePath(picked)
     await window.quiz.aiSetEngine(picked)
     await loadStatus()
+  }
+
+  const downloadEngine = async (): Promise<void> => {
+    setEngineDownloading(true)
+    setEngineProgress(0)
+    setError('')
+    try {
+      const result = await window.quiz.aiDownloadEngine()
+      if (!result.ok) setError(result.error ?? 'The engine could not be downloaded.')
+      await loadStatus()
+    } catch (err) {
+      setError(String(err))
+    } finally {
+      setEngineDownloading(false)
+      setEngineProgress(null)
+    }
   }
 
   const activeModel = models.find((m) => m.active) ?? null
@@ -326,6 +346,16 @@ export function Settings(): React.JSX.Element {
             </Button>
             <Button size="sm" variant="primary" testId="settings-engine-save" onClick={() => void saveEngine()}>
               Save
+            </Button>
+            <Button
+              size="sm"
+              variant="secondary"
+              icon={<Icon name="download" />}
+              testId="settings-engine-download"
+              disabled={engineDownloading}
+              onClick={() => void downloadEngine()}
+            >
+              {engineDownloading ? `Downloading… ${engineProgress ?? 0}%` : 'Download engine automatically'}
             </Button>
           </div>
         </div>

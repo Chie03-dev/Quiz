@@ -863,6 +863,15 @@ function registerIpc(): void {
     return true
   })
 
+  ipcMain.handle('ai:downloadEngine', async (): Promise<{ ok: boolean; error?: string }> => {
+    if (!modelStore || !aiManager) return { ok: false, error: 'The model store is not initialized.' }
+    const result = await modelStore.downloadEngine((percent) => {
+      win?.webContents.send('ai:engineProgress', { percent })
+    })
+    if (result.ok) aiManager.setProvider(createProviderForStore(modelStore))
+    return result
+  })
+
   ipcMain.handle('ai:setEmbeddingModel', (_event, modelId: unknown): boolean => {
     if (!modelStore) return false
     if (modelId !== null && typeof modelId !== 'string') return false
