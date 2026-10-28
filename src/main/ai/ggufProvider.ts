@@ -528,6 +528,7 @@ export class GgufProvider implements AiProvider {
     const sourceText = opts.sourceText?.slice(0, 6000)
     const questions = opts.questions.map((q) => ({ ...q }))
     const reasons: string[] = []
+    const deadline = Date.now() + 120_000
 
     const applyKey = (question: StoredQuestion, raw: unknown): void => {
       const value = this.readKeyOf(raw)
@@ -546,39 +547,51 @@ export class GgufProvider implements AiProvider {
       }
     }
 
-    // First try one call for every question: it is faster and keeps the
-    // model loaded once.
-    const prompt = PROMPT_AUTO_KEY({
-      questions: opts.questions.map((q) => ({
-        type: q.type,
-        body: q.body,
-        options: q.data.options
-      })),
-      sourceText
-    })
-    const run = await this.runModel(prompt)
-    if (run.ok) {
-      let parsed = extractJsonArray(run.output)
+    const parseOutput = (output: string): unknown[] | null => {
+      let parsed = extractJsonArray(output)
       if (!parsed) {
         try {
-          const single = JSON.parse(run.output.trim())
+          const single = JSON.parse(output.trim())
           if (single && typeof single === 'object' && !Array.isArray(single)) parsed = [single]
         } catch {
           parsed = null
         }
       }
-      if (parsed) {
-        opts.questions.forEach((question, i) => {
-          if (parsed[i] !== undefined) applyKey(question, parsed[i])
-        })
-      }
-    } else {
-      // Keep going with per-question calls below.
+      return parsed
     }
 
-    // A small model often answers only the first question. Ask for the
-    // missing keys one at a time so the rest are not left empty.
-    for (const question of opts.questions) {
+    // Smaller batches keep each answer short and the model responsive. A
+    // single call for 50 questions makes a small model ramble for minutes.
+    const batchSize = 8
+    const batches: StoredQuestion[][] = []
+    for (let i = 0; i < opts.questions.length; i += batchSize) {
+      batches.push(opts.questions.slice(i, i + batchSize))
+    }
+
+    for (const batch of batches) {
+      if (Date.now() > deadline) break
+      const prompt = PROMPT_AUTO_KEY({
+        questions: batch.map((q) => ({
+          type: q.type,
+          body: q.body,
+          options: q.data.options
+        })),
+        sourceText
+      })
+      const run = await this.runModel(prompt)
+      if (!run.ok) continue
+      const parsed = parseOutput(run.output)
+      if (!parsed) continue
+      batch.forEach((question, i) => {
+        if (parsed[i] !== undefined) applyKey(question, parsed[i])
+      })
+    }
+
+    // Retry only a handful of the stragglers individually, so a single
+    // unresolvable question cannot keep the model busy for minutes.
+    const missing = opts.questions.filter((q) => questions.find((x) => x.id === q.id)?.key === null)
+    for (const question of missing.slice(0, 3)) {
+      if (Date.now() > deadline) break
       const current = questions.find((q) => q.id === question.id)
       if (current && current.key !== null) continue
       const singlePrompt = PROMPT_AUTO_KEY({
@@ -587,21 +600,13 @@ export class GgufProvider implements AiProvider {
       })
       const singleRun = await this.runModel(singlePrompt, 0.4)
       if (!singleRun.ok) continue
-      let parsed = extractJsonArray(singleRun.output)
-      if (!parsed) {
-        try {
-          const one = JSON.parse(singleRun.output.trim())
-          if (one && typeof one === 'object' && !Array.isArray(one)) parsed = [one]
-        } catch {
-          parsed = null
-        }
-      }
+      const parsed = parseOutput(singleRun.output)
       if (parsed && parsed.length > 0) applyKey(question, parsed[0])
     }
 
-    const missing = questions.filter((q) => q.key === null).length
+    const stillMissing = questions.filter((q) => q.key === null).length
     const detail = reasons.length > 0 ? ` (${reasons.slice(0, 3).join('; ')})` : ''
-    return { questions, error: missing > 0 ? `${missing} answer key${missing === 1 ? '' : 's'} could not be found.${detail}` : undefined }
+    return { questions, error: stillMissing > 0 ? `${stillMissing} answer key${stillMissing === 1 ? '' : 's'} could not be found.${detail}` : undefined }
   }
 
   /**
