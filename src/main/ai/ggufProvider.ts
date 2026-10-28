@@ -913,6 +913,19 @@ export class GgufProvider implements AiProvider {
     const ids = options.map((o) => o.id)
     if (options.length === 0) return null
 
+    // A small model sometimes returns a list or a boolean for a multiple
+    // choice question. Try every element and accept the first that fits.
+    if (Array.isArray(raw)) {
+      for (const item of raw) {
+        const resolved = this.resolveOptionId(item, options)
+        if (resolved) return resolved
+      }
+      return null
+    }
+    if (typeof raw === 'boolean') {
+      return this.resolveOptionId(raw ? 'true' : 'false', options)
+    }
+
     // Unwrap the shapes a small model tends to use.
     if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
       const record = raw as Record<string, unknown>
