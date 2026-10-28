@@ -16,6 +16,28 @@ export const DEFAULT_START_UP_SECONDS = 10
 /** The catalog of models the app knows how to download. */
 export const AVAILABLE_MODELS: Omit<ModelInfo, 'downloaded'>[] = [
   {
+    id: 'golden-generate-qwen-0.6b-q4',
+    name: 'Golden Generate Qwen 0.6B (Q4_K_M)',
+    description:
+      'A 0.6B model fine-tuned to emit grounded question/answer pairs as JSON. Small and fast; best for the answer-key and question generation tasks.',
+    sizeBytes: 397_000_000,
+    fileName: 'Qwen3-0.6B.Q4_K_M.gguf',
+    downloadUrl:
+      'https://huggingface.co/mburaksayici/golden_generate_qwen_0.6b_v2_gguf/resolve/main/Qwen3-0.6B.Q4_K_M.gguf',
+    version: 'q4_k_m'
+  },
+  {
+    id: 'tiny-json-smollm-360m-q8',
+    name: 'Tiny JSON SmolLM 360M (Q8_0)',
+    description:
+      'A 360M model trained to emit JSON structures. Very small and fast; useful on low-end machines.',
+    sizeBytes: 386_000_000,
+    fileName: 'json_smollm_360m_rev2_Q8_0.gguf',
+    downloadUrl:
+      'https://huggingface.co/ChristianAzinn/tiny-json/resolve/main/json_smollm_360m_rev2_Q8_0.gguf',
+    version: 'q8_0'
+  },
+  {
     id: 'qwen2.5-1.5b-instruct-q4',
     name: 'Qwen2.5 1.5B Instruct (Q4_K_M)',
     description:
