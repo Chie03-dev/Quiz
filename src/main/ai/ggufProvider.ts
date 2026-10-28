@@ -530,9 +530,10 @@ export class GgufProvider implements AiProvider {
     const reasons: string[] = []
 
     const applyKey = (question: StoredQuestion, raw: unknown): void => {
-      const key = this.buildKey(question.type, this.readKeyOf(raw), question.data, question.body)
+      const value = this.readKeyOf(raw)
+      const key = this.buildKey(question.type, value, question.data, question.body)
       if (key === null) {
-        reasons.push(`${question.type} question: the model's answer did not fit`)
+        reasons.push(`${question.type} question: the model answered ${JSON.stringify(value)}`)
         return
       }
       const merged: StoredQuestion = { ...question, key }
