@@ -910,18 +910,51 @@ export class GgufProvider implements AiProvider {
   /** Finds the option a model marked as correct. */
   private resolveOptionId(raw: unknown, options: Choice[]): string | null {
     const ids = options.map((o) => o.id)
+    if (options.length === 0) return null
+
+    // Unwrap the shapes a small model tends to use.
+    if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+      const record = raw as Record<string, unknown>
+      for (const key of ['id', 'option', 'optionId', 'answer', 'choice', 'value', 'key']) {
+        if (record[key] !== undefined) {
+          const resolved = this.resolveOptionId(record[key], options)
+          if (resolved) return resolved
+        }
+      }
+      // Fall back to matching the option text, when the model writes the
+      // answer instead of its id.
+      for (const key of ['text', 'label']) {
+        if (typeof record[key] === 'string') {
+          const byText = options.find((o) => o.text.toLowerCase() === String(record[key]).trim().toLowerCase())
+          if (byText) return byText.id
+        }
+      }
+    }
+
     if (typeof raw === 'string') {
       const text = raw.trim()
       if (ids.includes(text)) return text
-      const letter = LETTERS.indexOf(text.toLowerCase())
-      if (letter >= 0 && letter < ids.length) return ids[letter]
+      // "a)" or "a." or "a - text"
+      const lead = text.match(/^([A-Za-z0-9]+)/)?.[1] ?? ''
+      if (lead && ids.includes(lead)) return lead
+      const letter = LETTERS.indexOf(text.toLowerCase().charAt(0))
+      if (letter >= 0 && letter < ids.length && text.length <= 3) return ids[letter]
+      // 1-based as well as 0-based positions.
       const index = Number(text)
-      if (Number.isInteger(index) && index >= 0 && index < ids.length) return ids[index]
-      const byText = options.find((o) => o.text.toLowerCase() === text.toLowerCase())
-      return byText ? byText.id : null
+      if (Number.isInteger(index)) {
+        if (index >= 0 && index < ids.length) return ids[index]
+        if (index >= 1 && index <= ids.length) return ids[index - 1]
+      }
+      const lowered = text.toLowerCase()
+      const exact = options.find((o) => o.text.toLowerCase() === lowered)
+      if (exact) return exact.id
+      const contains = options.find((o) => lowered.includes(o.text.toLowerCase()) || o.text.toLowerCase().includes(lowered))
+      if (contains) return contains.id
+      return null
     }
-    if (typeof raw === 'number' && Number.isInteger(raw) && raw >= 0 && raw < ids.length) {
-      return ids[raw]
+    if (typeof raw === 'number' && Number.isInteger(raw)) {
+      if (raw >= 0 && raw < ids.length) return ids[raw]
+      if (raw >= 1 && raw <= ids.length) return ids[raw - 1]
     }
     return null
   }
