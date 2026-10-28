@@ -195,6 +195,12 @@ export class GgufProvider implements AiProvider {
   }
 
   async generate(opts: GenerateOptions): Promise<GenerateResult> {
+    // The Golden Generate model is fine-tuned for one grounded question/answer
+    // pair per passage and answers with a single JSON object, not with the
+    // typed list the other models are asked for.
+    if (this.opts.modelName.includes('golden-generate')) {
+      return this.generateGolden(opts)
+    }
     const types: QuestionType[] = opts.questionTypes.length > 0 ? opts.questionTypes : ['mcq']
     const sourceText = opts.sourceText.slice(0, 6000)
 
@@ -417,6 +423,88 @@ export class GgufProvider implements AiProvider {
    * The retrieval has already chosen the sentence, so the model is only
    * asked for the question; the answer has to come from that sentence.
    */
+  private async generateGolden(opts: GenerateOptions): Promise<GenerateResult> {
+    const questions: Omit<StoredQuestion, 'id' | 'status'>[] = []
+    const reasons: { reason: string; count: number }[] = []
+    let written = 0
+    let dropped = 0
+
+    const facts =
+      opts.focuses && opts.focuses.length > 0
+        ? opts.focuses
+        : splitFacts(opts.sourceText).slice(0, opts.count)
+
+    const take = Math.min(facts.length, opts.count > 0 ? opts.count : facts.length)
+    for (let i = 0; i < take; i++) {
+      const fact = facts[i]
+      const prompt = `Given the passage below, extract ONE question/answer pair grounded strictly in a single atomic fact.
+
+PASSAGE:
+"${fact}"
+
+Return ONLY a JSON object with this shape:
+{"question": "...", "answer": "..."}`
+
+      const run = await this.runModel(prompt, 0.3)
+      written++
+      if (!run.ok) {
+        dropped++
+        reasons.push({ reason: run.error, count: 1 })
+        continue
+      }
+      const obj = this.extractJsonObject(run.output)
+      if (!obj || typeof obj.question !== 'string' || typeof obj.answer !== 'string') {
+        dropped++
+        reasons.push({ reason: 'the model did not answer with a JSON object', count: 1 })
+        continue
+      }
+      const body = obj.question.trim()
+      const answer = obj.answer.trim()
+      if (!body || !answer) {
+        dropped++
+        reasons.push({ reason: 'the question or the answer was empty', count: 1 })
+        continue
+      }
+      const candidate: Omit<StoredQuestion, 'id' | 'status'> = {
+        type: 'identification',
+        body,
+        points: opts.points,
+        status: 'draft',
+        data: {},
+        key: [answer],
+        sourceText: fact
+      } as Omit<StoredQuestion, 'id' | 'status'>
+      if (validateQuestion({ ...candidate, id: 'ai-q', status: 'draft' }).length === 0) {
+        questions.push(candidate)
+      } else {
+        dropped++
+        reasons.push({ reason: 'it was not a complete question', count: 1 })
+      }
+    }
+
+    return { questions, written, dropped, reasons }
+  }
+
+  private extractJsonObject(text: string): { question?: unknown; answer?: unknown } | null {
+    const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i)
+    const candidates = fenced ? [fenced[1]] : []
+    // Fall back to the outermost braces.
+    const start = text.indexOf('{')
+    const end = text.lastIndexOf('}')
+    if (start >= 0 && end > start) candidates.push(text.slice(start, end + 1))
+    for (const candidate of candidates) {
+      try {
+        const parsed = JSON.parse(candidate.trim())
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          return parsed as { question?: unknown; answer?: unknown }
+        }
+      } catch {
+        // Try the next candidate.
+      }
+    }
+    return null
+  }
+
   private async generateAbout(
     opts: GenerateOptions,
     sourceText: string,
