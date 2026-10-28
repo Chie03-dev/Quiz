@@ -525,33 +525,74 @@ export class GgufProvider implements AiProvider {
   }
 
   async autoKey(opts: AutoKeyOptions): Promise<AutoKeyResult> {
+    const sourceText = opts.sourceText?.slice(0, 6000)
+    const questions = opts.questions.map((q) => ({ ...q }))
+
+    const applyKey = (question: StoredQuestion, raw: unknown): void => {
+      const key = this.buildKey(question.type, this.readKeyOf(raw), question.data, question.body)
+      if (key === null) return
+      const merged: StoredQuestion = { ...question, key }
+      if (validateQuestion(merged).length === 0) {
+        const index = questions.findIndex((q) => q.id === question.id)
+        if (index >= 0) questions[index] = merged
+      }
+    }
+
+    // First try one call for every question: it is faster and keeps the
+    // model loaded once.
     const prompt = PROMPT_AUTO_KEY({
       questions: opts.questions.map((q) => ({
         type: q.type,
         body: q.body,
         options: q.data.options
       })),
-      sourceText: opts.sourceText?.slice(0, 6000)
+      sourceText
     })
-
     const run = await this.runModel(prompt)
-    if (!run.ok) return { questions: [], error: run.error }
-
-    const parsed = extractJsonArray(run.output)
-    if (!parsed) {
-      return { questions: [], error: 'The model did not answer with a JSON list of keys.' }
+    if (run.ok) {
+      let parsed = extractJsonArray(run.output)
+      if (!parsed) {
+        try {
+          const single = JSON.parse(run.output.trim())
+          if (single && typeof single === 'object' && !Array.isArray(single)) parsed = [single]
+        } catch {
+          parsed = null
+        }
+      }
+      if (parsed) {
+        opts.questions.forEach((question, i) => {
+          if (parsed[i] !== undefined) applyKey(question, parsed[i])
+        })
+      }
+    } else {
+      // Keep going with per-question calls below.
     }
 
-    const questions = opts.questions.map((question, i) => {
-      const raw = parsed[i]
-      if (raw === undefined) return question
-      const key = this.buildKey(question.type, this.readKeyOf(raw), question.data, question.body)
-      if (key === null) return question
-      const merged: StoredQuestion = { ...question, key }
-      return validateQuestion(merged).length === 0 ? merged : question
-    })
+    // A small model often answers only the first question. Ask for the
+    // missing keys one at a time so the rest are not left empty.
+    for (const question of opts.questions) {
+      const current = questions.find((q) => q.id === question.id)
+      if (current && current.key !== null) continue
+      const singlePrompt = PROMPT_AUTO_KEY({
+        questions: [{ type: question.type, body: question.body, options: question.data.options }],
+        sourceText
+      })
+      const singleRun = await this.runModel(singlePrompt, 0.4)
+      if (!singleRun.ok) continue
+      let parsed = extractJsonArray(singleRun.output)
+      if (!parsed) {
+        try {
+          const one = JSON.parse(singleRun.output.trim())
+          if (one && typeof one === 'object' && !Array.isArray(one)) parsed = [one]
+        } catch {
+          parsed = null
+        }
+      }
+      if (parsed && parsed.length > 0) applyKey(question, parsed[0])
+    }
 
-    return { questions }
+    const missing = questions.filter((q) => q.key === null).length
+    return { questions, error: missing > 0 ? `${missing} answer key${missing === 1 ? '' : 's'} could not be found.` : undefined }
   }
 
   /**
