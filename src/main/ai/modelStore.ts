@@ -27,17 +27,6 @@ export const AVAILABLE_MODELS: Omit<ModelInfo, 'downloaded'>[] = [
     version: 'q4_k_m'
   },
   {
-    id: 'tiny-json-smollm-360m-q8',
-    name: 'Tiny JSON SmolLM 360M (Q8_0)',
-    description:
-      'A 360M model trained to emit JSON structures. Very small and fast; useful on low-end machines.',
-    sizeBytes: 386_000_000,
-    fileName: 'json_smollm_360m_rev2_Q8_0.gguf',
-    downloadUrl:
-      'https://huggingface.co/ChristianAzinn/tiny-json/resolve/main/json_smollm_360m_rev2_Q8_0.gguf',
-    version: 'q8_0'
-  },
-  {
     id: 'qwen2.5-1.5b-instruct-q4',
     name: 'Qwen2.5 1.5B Instruct (Q4_K_M)',
     description:
