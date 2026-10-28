@@ -225,12 +225,15 @@ export function QuizEditor({
       .aiAutoKey(quiz.questions)
       .then((result) => {
         setAutoKeying(false)
-        if (result.error) {
-          setAutoKeyError(result.error)
-        } else if (result.questions.length > 0) {
+        // Apply whatever keys were found, even when a few could not be
+        // resolved, so the instructor only has to fill in the gaps.
+        if (result.questions.length > 0) {
           patch((q) => ({ ...q, questions: result.questions }))
           setSaved(false)
-        } else {
+        }
+        if (result.error) {
+          setAutoKeyError(result.error)
+        } else if (result.questions.length === 0) {
           setAutoKeyError('No answers could be auto-selected.')
         }
       })
