@@ -527,14 +527,21 @@ export class GgufProvider implements AiProvider {
   async autoKey(opts: AutoKeyOptions): Promise<AutoKeyResult> {
     const sourceText = opts.sourceText?.slice(0, 6000)
     const questions = opts.questions.map((q) => ({ ...q }))
+    const reasons: string[] = []
 
     const applyKey = (question: StoredQuestion, raw: unknown): void => {
       const key = this.buildKey(question.type, this.readKeyOf(raw), question.data, question.body)
-      if (key === null) return
+      if (key === null) {
+        reasons.push(`${question.type} question: the model's answer did not fit`)
+        return
+      }
       const merged: StoredQuestion = { ...question, key }
-      if (validateQuestion(merged).length === 0) {
+      const problems = validateQuestion(merged)
+      if (problems.length === 0) {
         const index = questions.findIndex((q) => q.id === question.id)
         if (index >= 0) questions[index] = merged
+      } else {
+        reasons.push(`${question.type} question: ${problems.join(', ')}`)
       }
     }
 
@@ -592,7 +599,8 @@ export class GgufProvider implements AiProvider {
     }
 
     const missing = questions.filter((q) => q.key === null).length
-    return { questions, error: missing > 0 ? `${missing} answer key${missing === 1 ? '' : 's'} could not be found.` : undefined }
+    const detail = reasons.length > 0 ? ` (${reasons.slice(0, 3).join('; ')})` : ''
+    return { questions, error: missing > 0 ? `${missing} answer key${missing === 1 ? '' : 's'} could not be found.${detail}` : undefined }
   }
 
   /**
