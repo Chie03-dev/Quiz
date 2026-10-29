@@ -125,7 +125,8 @@ interface SectionHit {
 
 /** Recognises a section header ("I. Multiple Choice (2 points each)"). */
 function matchSection(raw: string, isHeading = false): SectionHit | null {
-  if (QUESTION_START.test(raw)) return null // "1. ..." is a question, not a header
+  if (/^multiple[-\s]*choice/i.test(raw.trim())) return { type: 'mcq', points: null }
+  if (/^column\s+[ab]$/i.test(raw.trim())) return null
   if (PLAIN_STEM.test(raw)) return null // a question is not a header either
   let t = raw.trim()
   let hadPrefix = false
@@ -973,7 +974,27 @@ function finalize(b: Builder, mark: ResolvedMark): DraftItem {
         }
       } else {
         // connect without a table: the answer key may still name the pairs.
-        data = { prompts: [], answers: [] }
+        const prompts = []
+        const answers = []
+        let side = 'left'
+        const letters = 'abcdefghijklmnopqrstuvwxyz'
+        for (const ln of b.lines) {
+          const t = ln.text.trim()
+          if (!t) continue
+          if (/^column\s*a\b/i.test(t)) { side = 'left'; continue }
+          if (/^column\s*b\b/i.test(t)) { side = 'right'; continue }
+          const leftMatch = t.match(/^(\d+)\.\s*(.+)$/)
+          if (leftMatch && side === 'left' && !/connect each/i.test(t)) {
+            prompts.push({ id: 'p' + (prompts.length + 1), text: leftMatch[2].trim() })
+            continue
+          }
+          const rightMatch = t.match(/^([a-z])\.\s*(.+)$/i)
+          if (rightMatch && side === 'right') {
+            answers.push({ id: letters[answers.length] || ('a' + (answers.length + 1)), text: rightMatch[2].trim() })
+            continue
+          }
+        }
+        data = { prompts, answers }
         tableKey = {}
         points = perPair
       }
@@ -1220,6 +1241,11 @@ export function parseBlocks(blocks: Block[], options: ParseOptions = {}): ParseR
     }
 
     const num = matchQuestionStart(trimmed)
+    if ((sectionType === 'connect' || sectionType === 'matching') && current &&
+        !/\?/.test(trimmed) && !/(?:connect|match|pair)/i.test(trimmed)) {
+      current.lines.push({ runs: block.runs, text })
+      continue
+    }
     if (num !== null) {
       finalizeCurrent()
       if (sectionType === null) {

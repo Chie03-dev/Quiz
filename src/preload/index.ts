@@ -104,6 +104,15 @@ const api = {
   aiSelectFile: (): Promise<string | null> => ipcRenderer.invoke('ai:selectFile'),
   /** Reads text from a .docx, .pdf, .md, or .txt file. */
   aiReadFile: (filePath: string): Promise<string> => ipcRenderer.invoke('ai:readFile', filePath),
+  /** Generates questions from source text; creates a new quiz in the library. */
+  aiGenerate: (opts: {
+    sourceText: string
+    filePath?: string
+    topic?: string
+    questionTypes: QuestionType[]
+    count: number
+    points: number
+  }): Promise<ImportQuizResult> => ipcRenderer.invoke('ai:generate', opts),
   /** Fills in missing answer keys for the given questions. */
   aiAutoKey: (questions: StoredQuestion[]): Promise<{ questions: StoredQuestion[]; error?: string }> =>
     ipcRenderer.invoke('ai:autoKey', { questions }),

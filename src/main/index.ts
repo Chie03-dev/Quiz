@@ -714,6 +714,82 @@ function registerIpc(): void {
   })
 
 
+  ipcMain.handle('ai:generate', async (_event, opts: unknown): Promise<ImportQuizResult> => {
+    if (!library || !aiManager) return { ok: false, error: 'The AI provider is not available.' }
+    try {
+      if (!opts || typeof opts !== 'object') return { ok: false, error: 'Invalid generation options.' }
+      const o = opts as {
+        sourceText?: string
+        filePath?: string
+        topic?: string
+        questionTypes?: string[]
+        count?: number
+        points?: number
+      }
+      const sourceText = typeof o.sourceText === 'string' ? o.sourceText : ''
+      const filePath = typeof o.filePath === 'string' && o.filePath.length > 0 ? o.filePath : undefined
+      const topic = typeof o.topic === 'string' ? o.topic : ''
+      const questionTypes = Array.isArray(o.questionTypes)
+        ? o.questionTypes.filter((t): t is QuestionType => typeof t === 'string' && QUESTION_TYPES.includes(t as QuestionType))
+        : []
+      const count = typeof o.count === 'number' && o.count > 0 ? o.count : 5
+      const points = typeof o.points === 'number' && o.points > 0 ? o.points : 1
+
+      const result = await aiManager.generate({
+        sourceText,
+        filePath,
+        topic,
+        questionTypes,
+        count,
+        points
+      })
+
+      if (result.error) return { ok: false, error: result.error }
+      if (result.questions.length === 0) {
+        return { ok: false, error: 'The AI did not write a single valid question.' }
+      }
+
+      const quiz = library.create('AI generated quiz')
+      quiz.questions = result.questions.map((q) => ({
+        ...q,
+        id: randomUUID(),
+        status: 'draft' as const
+      }))
+      const saved = library.save(quiz)
+
+      const warnings: { questionIndex: number | null; message: string }[] = []
+      if (result.dropped && result.dropped > 0) {
+        const reasons = (result.reasons ?? [])
+          .sort((a, b) => b.count - a.count)
+          .map((r) => `${r.count} because ${r.reason}`)
+          .join(', ')
+        warnings.push({
+          questionIndex: null,
+          message: `The model wrote ${result.written ?? result.dropped} questions. ${
+            result.dropped
+          } were left out${reasons ? ` (${reasons})` : ''}. Fewer question types give more questions.`
+        })
+      }
+
+      return {
+        ok: true,
+        report: {
+          id: saved.id,
+          title: saved.title,
+          questionCount: saved.questions.length,
+          warnings,
+          questions: saved.questions.map((q) => ({
+            id: q.id,
+            type: q.type,
+            body: q.body,
+            sourceText: q.sourceText
+          }))
+        }
+      }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
   ipcMain.handle('ai:autoKey', async (_event, input: unknown): Promise<AutoKeyResult> => {
     if (!aiManager) return { questions: [] }
     try {
@@ -932,3 +1008,4 @@ app.on('before-quit', () => {
   embedder?.stop()
   embedder = null
 })
+

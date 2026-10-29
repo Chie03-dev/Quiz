@@ -6,11 +6,13 @@ import { ConfirmButton } from '../components/ConfirmButton'
 import { EmptyState } from '../components/EmptyState'
 import { Icon } from '../components/Icon'
 import { Panel } from '../components/Panel'
+import { AiGenerateDialog } from '../AiGenerateDialog'
 
 /**
  * The "Generate with AI" flow is temporarily hidden while it is being made
  * reliable. Flip this to `true` to restore the button and the generator dialog.
  */
+const SHOW_GENERATE_WITH_AI = false
 
 /** Minutes shown for a time limit stored in seconds. */
 const minutes = (sec: number): string => {
@@ -182,16 +184,26 @@ export function QuizLibrary({
         title="Your quizzes"
         actions={
           <>
+            {SHOW_GENERATE_WITH_AI && (
+              <Button
+                variant="secondary"
+                icon={<Icon name="sparkle" />}
+                testId="ai-open"
+                onClick={() => setShowAiDialog(true)}
+              >
+                Generate with AI
+              </Button>
+            )}
             <input
               className="ui-input"
               type="search"
-              placeholder="Search quizzesâ€¦"
+              placeholder="Search quizzes…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               style={{ minWidth: 180 }}
             />
             <Button variant="secondary" icon={<Icon name="upload" />} onClick={importQuiz}>
-              Importâ€¦
+              Import…
             </Button>
             <Button variant="primary" icon={<Icon name="plus" />} onClick={create}>
               New quiz
@@ -200,7 +212,7 @@ export function QuizLibrary({
         }
       >
         {quizzes === null ? (
-          <EmptyState title="Loadingâ€¦" />
+          <EmptyState title="Loading…" />
         ) : filteredQuizzes && filteredQuizzes.length === 0 ? (
           <EmptyState
             title={search.trim() ? 'No matching quizzes' : 'No quizzes yet'}
@@ -213,7 +225,7 @@ export function QuizLibrary({
                     New quiz
                   </Button>
                   <Button variant="secondary" icon={<Icon name="upload" />} onClick={importQuiz}>
-                    Importâ€¦
+                    Import…
                   </Button>
                 </div>
               )
@@ -234,7 +246,20 @@ export function QuizLibrary({
         </Button>
       </div>
 
+      {SHOW_GENERATE_WITH_AI && (
+        <AiGenerateDialog
+          open={showAiDialog}
+          onClose={() => setShowAiDialog(false)}
+          onGenerated={(report) => {
+            setShowAiDialog(false)
+            setImportReport(report)
+            onOpen(report.id, report)
+            refresh()
+          }}
+        />
+      )}
 
     </div>
   )
 }
+

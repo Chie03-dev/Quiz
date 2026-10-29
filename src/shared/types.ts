@@ -147,6 +147,8 @@ export interface StoredQuestion {
   key: StoredKey
   /** Optional passage the question came from; empty until imports exist. */
   sourceText: string
+  /** Where the answer key came from, when it was auto-filled. */
+  keySource?: 'document' | 'model-confident' | 'model-unsure' | 'none'
   status: QuestionStatus
 }
 
@@ -695,3 +697,4 @@ export interface AiTiming {
   /** How many runs were measured. */
   runs: number
 }
+

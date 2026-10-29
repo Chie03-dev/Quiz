@@ -216,7 +216,7 @@ export const PROMPT_AUTO_KEY = (input: {
 
   return `You are an expert at completing answer keys for quiz questions. For each question below, write the correct answer key.
 
-Answer with a JSON array and nothing else: one entry per question, in the same order as the questions. Every entry must have exactly the shape that is written under its question.
+Answer with a JSON array and nothing else: one entry per question, in the same order as the questions. Every entry must have exactly the shape that is written under its question. For a multiple choice question, return ONLY the option id (such as a or b), never the option text.
 
 ${lines.join('\n')}
 
@@ -233,3 +233,4 @@ ${input.sourceText ?? 'Not provided'}
 """
 `
 }
+

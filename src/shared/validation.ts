@@ -191,3 +191,4 @@ export const asPairMap = (key: StoredKey): Record<string, string> => (isStringMa
 
 /** True when the value can be a choice list (mcq options, matching sides, ...). */
 export const isChoiceList = isChoiceArray
+export { QUESTION_GENERATION_SCHEMA, QUESTION_JSON_SCHEMA } from './questionSchema'

@@ -73,12 +73,15 @@ export interface AutoKeyResult {
   questions: StoredQuestion[]
   /** Why no key could be filled in, when the engine failed. */
   error?: string
+  /** Source label per question, parallel to questions. */
+  sources?: string[]
 }
 
 export interface AiProvider {
   status(): AiStatus
   /** Checks the engine for real; the manager calls it before reporting status. */
   refresh?(): Promise<AiStatus>
+  generate(opts: GenerateOptions): Promise<GenerateResult>
   autoKey(opts: AutoKeyOptions): Promise<AutoKeyResult>
 }
 
@@ -113,3 +116,5 @@ export const DEFAULT_MODEL_CONFIG: ModelConfig = {
   model: 'stub-v1',
   temperature: 0.7
 }
+
+

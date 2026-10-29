@@ -16,17 +16,6 @@ export const DEFAULT_START_UP_SECONDS = 10
 /** The catalog of models the app knows how to download. */
 export const AVAILABLE_MODELS: Omit<ModelInfo, 'downloaded'>[] = [
   {
-    id: 'golden-generate-qwen-0.6b-q4',
-    name: 'Golden Generate Qwen 0.6B (Q4_K_M)',
-    description:
-      'A 0.6B model fine-tuned to emit grounded question/answer pairs as JSON. Small and fast; best for the answer-key and question generation tasks.',
-    sizeBytes: 397_000_000,
-    fileName: 'Qwen3-0.6B.Q4_K_M.gguf',
-    downloadUrl:
-      'https://huggingface.co/mburaksayici/golden_generate_qwen_0.6b_v2_gguf/resolve/main/Qwen3-0.6B.Q4_K_M.gguf',
-    version: 'q4_k_m'
-  },
-  {
     id: 'qwen2.5-1.5b-instruct-q4',
     name: 'Qwen2.5 1.5B Instruct (Q4_K_M)',
     description:
@@ -48,30 +37,6 @@ export const AVAILABLE_MODELS: Omit<ModelInfo, 'downloaded'>[] = [
       'https://huggingface.co/microsoft/Phi-3-mini-4k-instruct-gguf/resolve/main/Phi-3-mini-4k-instruct-q4.gguf',
     version: 'q4'
   },
-  {
-    id: 'bge-small-en-v1.5-q4',
-    name: 'BGE small English v1.5 (Q4_K_M)',
-    description:
-      'About 25 MB. The search model: it reads the chapter and finds the passages that mean the same as the question. Optional; the app searches by words without it.',
-    sizeBytes: 24_808_576,
-    fileName: 'bge-small-en-v1.5-q4_k_m.gguf',
-    downloadUrl:
-      'https://huggingface.co/CompendiumLabs/bge-small-en-v1.5-gguf/resolve/main/bge-small-en-v1.5-q4_k_m.gguf',
-    version: 'q4_k_m',
-    kind: 'embedding'
-  },
-  {
-    id: 'bge-m3-q4',
-    name: 'BGE M3 (multilingual, Q4_K_M)',
-    description:
-      'About 438 MB. The multilingual search model: it also finds the passages that mean the same as the question in languages other than English, including Tagalog. Optional; the app searches by words without it.',
-    sizeBytes: 438_000_000,
-    fileName: 'bge-m3-q4_k_m.gguf',
-    downloadUrl:
-      'https://huggingface.co/groonga/bge-m3-Q4_K_M-GGUF/resolve/main/bge-m3-q4_k_m.gguf',
-    version: 'q4_k_m',
-    kind: 'embedding'
-  }
 ]
 
 /** How many redirects a download may follow before it gives up. */

@@ -26,6 +26,25 @@ export class StubProvider implements AiProvider {
     }
   }
 
+  async generate(opts: GenerateOptions): Promise<GenerateResult> {
+    const types: QuestionType[] = opts.questionTypes.length > 0 ? opts.questionTypes : ['mcq']
+    const questions: Omit<StoredQuestion, 'id' | 'status'>[] = []
+
+    for (let i = 0; i < opts.count; i++) {
+      const type = types[i % types.length]
+      const template = QUESTION_TYPE_DEFAULTS[type]
+      questions.push({
+        type,
+        body: `${template.body} (Variant ${i + 1})`,
+        points: opts.points > 0 ? opts.points : template.points,
+        data: template.data,
+        key: template.key,
+        sourceText: opts.sourceText ? opts.sourceText.substring(0, 200) : ''
+      })
+    }
+
+    return { questions }
+  }
   async autoKey(opts: AutoKeyOptions): Promise<AutoKeyResult> {
     const questions: StoredQuestion[] = opts.questions.map((q) => {
       if (this.keyIsValid(q)) return q
@@ -64,3 +83,4 @@ export class StubProvider implements AiProvider {
     }
   }
 }
+

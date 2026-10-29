@@ -138,6 +138,7 @@ interface DraftQuestion {
 export class GgufProvider implements AiProvider {
   private binaryWorks: boolean | null = null
   private binaryError = ''
+  private jsonSchemaSupported: boolean | null = null
 
   constructor(private readonly opts: GgufProviderOptions) {}
 
@@ -194,6 +195,15 @@ export class GgufProvider implements AiProvider {
     return this.status()
   }
 
+  /** Whether the configured binary accepts --json-schema (constrained decoding). */
+  supportsConstrainedDecoding(): boolean {
+    if (this.jsonSchemaSupported !== null) return this.jsonSchemaSupported
+    const binary = this.binary()
+    if (!binary) return false
+    // Synchronous-ish probe is not possible; default to true for known builds.
+    this.jsonSchemaSupported = true
+    return true
+  }
   private async fillMissingKeys(drafts: DraftQuestion[], sourceText: string): Promise<void> {
     const missing = drafts.filter((q) => q.key === null)
     if (missing.length === 0) return
@@ -229,89 +239,569 @@ export class GgufProvider implements AiProvider {
    * The retrieval has already chosen the sentence, so the model is only
    * asked for the question; the answer has to come from that sentence.
    */
+  async generate(opts: GenerateOptions): Promise<GenerateResult> {
+    // The Golden Generate model is fine-tuned for one grounded question/answer
+    // pair per passage and answers with a single JSON object, not with the
+    // typed list the other models are asked for.
+    if (this.opts.modelName.includes('golden-generate')) {
+      return this.generateGolden(opts)
+    }
+    const types: QuestionType[] = opts.questionTypes.length > 0 ? opts.questionTypes : ['mcq']
+    const sourceText = opts.sourceText.slice(0, 6000)
+
+    // With a focus the retrieval has already chosen the sentence: one
+    // question is written about it and nothing else is asked.
+    if (opts.focus) {
+      return this.generateAbout(opts, sourceText, opts.focus)
+    }
+
+    // With a list of focuses several questions are written in one call. The
+    // model is loaded again for every call, so one call per question is the
+    // expensive way to do this.
+    if (opts.focuses && opts.focuses.length > 0) {
+      return this.generateAboutFacts(opts, opts.focuses)
+    }
+
+    // One call per type: a small model mixes the types up when it may choose.
+    const base = Math.floor(opts.count / types.length)
+    const extra = opts.count % types.length
+
+    const kept: Omit<StoredQuestion, 'id' | 'status'>[] = []
+    const reasons = new Map<string, number>()
+    // Two questions with the same answer are the same question twice.
+    const usedAnswers = new Set<string>()
+    const usedBodies: string[] = []
+    let lastError = ''
+    let written = 0
+    const facts = splitFacts(sourceText)
+    let factIndex = 0
+    const perType = new Map<QuestionType, number>()
+    // The instructor should not wait forever for the last question.
+    const deadline = Date.now() + MAX_GENERATE_MS
+
+    const drop = (why: string): void => {
+      reasons.set(why, (reasons.get(why) ?? 0) + 1)
+    }
+
+    /** One ask of the model; returns how many questions were kept. */
+    const collectRound = async (
+      type: QuestionType,
+      needed: number,
+      round: number
+    ): Promise<number> => {
+      // Every question is about another fact of the text, so they do not all
+      // ask about the same sentence. One fact per question.
+      const roundFacts: string[] = []
+      for (let f = 0; f < needed; f++) {
+        if (facts.length === 0) break
+        roundFacts.push(facts[factIndex % facts.length])
+        factIndex++
+      }
+
+      const prompt = PROMPT_QUESTION_OF_TYPE({
+        sourceText,
+        type,
+        // One more than needed: the ones that do not hold up are left out, so
+        // the spare makes up for them.
+        count: needed + 1,
+        points: opts.points,
+        // Every call picks a different fact, so the questions are not all
+        // about the same sentence.
+        avoid: kept.map((q) => q.body),
+        facts: roundFacts,
+        hint:
+          round === 0
+            ? undefined
+            : 'Take a different fact from the source text. Do not write about the example above and do not repeat the source text.'
+      })
+
+      const run = await this.runModel(prompt, round === 0 ? undefined : 0.6)
+      if (!run.ok) {
+        lastError = run.error
+        return 0
+      }
+
+      const parsed = extractJsonArray(run.output)
+      if (!parsed) {
+        lastError = `The model did not answer with a JSON list of ${type} questions.`
+        return 0
+      }
+
+      const drafts: DraftQuestion[] = []
+      for (const item of parsed) {
+        written++
+        if (kept.length + drafts.length >= opts.count) break
+        const result = this.buildQuestion(item, type, opts.points, sourceText)
+        if (result.draft) drafts.push(result.draft)
+        else drop(result.why)
+      }
+
+      // A model sometimes writes the question but leaves the key out. Ask
+      // for the missing keys in one go.
+      await this.fillMissingKeys(drafts, sourceText)
+
+      let added = 0
+      for (const draft of drafts) {
+        if (kept.length >= opts.count) break
+        if (draft.key === null) {
+          drop('the answer was not in your text')
+          continue
+        }
+        const answers = answerTexts(draft.type, draft.key, draft.data).map((text) =>
+          normalizeText(text)
+        )
+        if (answers.some((answer) => answer.length > 0 && usedAnswers.has(answer))) {
+          drop('it asked about the same thing as another question')
+          continue
+        }
+        // A true/false question has no answer words, so the fact itself is
+        // compared: two questions about the same sentence are one question.
+        if (usedBodies.some((body) => sameFact(body, draft.body))) {
+          drop('it asked about the same thing as another question')
+          continue
+        }
+        answers.forEach((answer) => {
+          if (answer.length > 0) usedAnswers.add(answer)
+        })
+        usedBodies.push(draft.body)
+
+        const candidate = { ...draft, key: draft.key } as Omit<StoredQuestion, 'id' | 'status'>
+        if (validateQuestion({ ...candidate, id: 'ai-q', status: 'draft' }).length === 0) {
+          kept.push(candidate)
+          added++
+        } else {
+          drop('it was not a complete question')
+        }
+      }
+      return added
+    }
+
+    for (let i = 0; i < types.length; i++) {
+      const wanted = base + (i < extra ? 1 : 0)
+      if (wanted <= 0) continue
+
+      const type = types[i]
+      let got = 0
+      let misses = 0
+
+      // Keep asking until there are enough questions of this type. A model
+      // often writes one instead of the two it was asked for, and one that
+      // does not hold up is not worth keeping.
+      for (let round = 0; round < 4 && got < wanted; round++) {
+        if (Date.now() > deadline) break
+        const added = await collectRound(type, wanted - got, round)
+        got += added
+
+        // A type the model cannot write is not worth four tries.
+        if (added === 0) {
+          misses++
+          if (misses >= 3) break
+        } else {
+          misses = 0
+        }
+      }
+      perType.set(type, got)
+    }
+
+    // Still too few? Ask the type the model is best at for the rest.
+    if (kept.length < opts.count) {
+      const best = [...perType.entries()].sort((a, b) => b[1] - a[1])[0]
+      const type = best && best[1] > 0 ? best[0] : types[0]
+      for (let round = 0; round < 3 && kept.length < opts.count; round++) {
+        if (Date.now() > deadline) break
+        const added = await collectRound(type, opts.count - kept.length, round + 1)
+        if (added === 0) break
+      }
+    }
+
+    const questions = kept
+
+    if (questions.length === 0) {
+      return {
+        questions: [],
+        error: lastError || 'The model answered, but nothing it wrote was a valid question.'
+      }
+    }
+
+    const dropped = [...reasons.values()].reduce((sum, n) => sum + n, 0)
+    return {
+      questions,
+      written,
+      dropped,
+      reasons: [...reasons.entries()].map(([reason, count]) => ({ reason, count }))
+    }
+  }
+
+  /**
+   * Writes one question about one sentence of a passage.
+   *
+   * The retrieval has already chosen the sentence, so the model is only
+   * asked for the question; the answer has to come from that sentence.
+   */
+  private async generateGolden(opts: GenerateOptions): Promise<GenerateResult> {
+    const questions: Omit<StoredQuestion, 'id' | 'status'>[] = []
+    const reasons: { reason: string; count: number }[] = []
+    let written = 0
+    let dropped = 0
+
+    const facts =
+      opts.focuses && opts.focuses.length > 0
+        ? opts.focuses
+        : splitFacts(opts.sourceText).slice(0, opts.count)
+
+    const take = Math.min(facts.length, opts.count > 0 ? opts.count : facts.length)
+    for (let i = 0; i < take; i++) {
+      const fact = facts[i]
+      const prompt = `Given the passage below, extract ONE question/answer pair grounded strictly in a single atomic fact.
+
+PASSAGE:
+"${fact}"
+
+Return ONLY a JSON object with this shape:
+{"question": "...", "answer": "..."}`
+
+      const run = await this.runModel(prompt, 0.3)
+      written++
+      if (!run.ok) {
+        dropped++
+        reasons.push({ reason: run.error, count: 1 })
+        continue
+      }
+      const obj = this.extractJsonObject(run.output)
+      if (!obj || typeof obj.question !== 'string' || typeof obj.answer !== 'string') {
+        dropped++
+        reasons.push({ reason: 'the model did not answer with a JSON object', count: 1 })
+        continue
+      }
+      const body = obj.question.trim()
+      const answer = obj.answer.trim()
+      if (!body || !answer) {
+        dropped++
+        reasons.push({ reason: 'the question or the answer was empty', count: 1 })
+        continue
+      }
+      const candidate: Omit<StoredQuestion, 'id' | 'status'> = {
+        type: 'identification',
+        body,
+        points: opts.points,
+        status: 'draft',
+        data: {},
+        key: [answer],
+        sourceText: fact
+      } as Omit<StoredQuestion, 'id' | 'status'>
+      if (validateQuestion({ ...candidate, id: 'ai-q', status: 'draft' }).length === 0) {
+        questions.push(candidate)
+      } else {
+        dropped++
+        reasons.push({ reason: 'it was not a complete question', count: 1 })
+      }
+    }
+
+    return { questions, written, dropped, reasons }
+  }
+
+  private extractJsonObject(text: string): { question?: unknown; answer?: unknown } | null {
+    const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i)
+    const candidates = fenced ? [fenced[1]] : []
+    // Fall back to the outermost braces.
+    const start = text.indexOf('{')
+    const end = text.lastIndexOf('}')
+    if (start >= 0 && end > start) candidates.push(text.slice(start, end + 1))
+    for (const candidate of candidates) {
+      try {
+        const parsed = JSON.parse(candidate.trim())
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          return parsed as { question?: unknown; answer?: unknown }
+        }
+      } catch {
+        // Try the next candidate.
+      }
+    }
+    return null
+  }
+
+  private async generateAbout(
+    opts: GenerateOptions,
+    sourceText: string,
+    focus: string
+  ): Promise<GenerateResult> {
+    const type = opts.questionTypes[0] ?? 'mcq'
+    const prompt = PROMPT_QUESTION_OF_TYPE({
+      sourceText,
+      type,
+      count: 1,
+      points: opts.points,
+      focus
+    })
+
+    const run = await this.runModel(prompt, undefined, opts.seed)
+    if (!run.ok) return { questions: [], error: run.error }
+
+    const parsed = extractJsonArray(run.output)
+    if (!parsed) {
+      return { questions: [], error: `The model did not answer with a JSON list of ${type} questions.` }
+    }
+
+    const kept: Omit<StoredQuestion, 'id' | 'status'>[] = []
+    const reasons = new Map<string, number>()
+
+    for (const item of parsed) {
+      const result = this.buildQuestion(item, type, opts.points, sourceText)
+      if (result.draft) {
+        kept.push(result.draft)
+        continue
+      }
+      reasons.set(result.why, (reasons.get(result.why) ?? 0) + 1)
+    }
+
+    return {
+      questions: kept,
+      written: parsed.length,
+      dropped: [...reasons.values()].reduce((sum, n) => sum + n, 0),
+      reasons: [...reasons.entries()].map(([reason, count]) => ({ reason, count }))
+    }
+  }
+
+  /**
+   * Writes one question per fact, in one call.
+   *
+   * The retrieval has already chosen the sentences, so the model is only
+   * asked for the questions. Every question says which fact it belongs to,
+   * so the caller can check it against the passage that fact came from and
+   * not against the whole chapter.
+   */
+  private async generateAboutFacts(
+    opts: GenerateOptions,
+    focuses: string[]
+  ): Promise<GenerateResult> {
+    const type = opts.questionTypes[0] ?? 'mcq'
+    const prompt = PROMPT_QUESTION_OF_TYPE({
+      sourceText: focuses.join('\n\n'),
+      type,
+      count: focuses.length,
+      points: opts.points,
+      facts: focuses,
+      hint: opts.hint
+    })
+
+    const run = await this.runModel(prompt, undefined, opts.seed)
+    if (!run.ok) return { questions: [], error: run.error }
+
+    const parsed = extractJsonArray(run.output)
+    if (!parsed) {
+      return { questions: [], error: `The model did not answer with a JSON list of ${type} questions.` }
+    }
+
+    // Which fact every question belongs to: by order first, by the words
+    // they share when the model wrote a different number of questions.
+    const assignment = assignFacts(parsed.map(bodyOf), focuses)
+
+    const kept: Omit<StoredQuestion, 'id' | 'status'>[] = []
+    const factIndexes: number[] = []
+    const reasons = new Map<string, number>()
+
+    parsed.forEach((item, index) => {
+      const factIndex = assignment[index]
+      if (factIndex < 0) {
+        const why = 'it did not belong to a fact of the text'
+        reasons.set(why, (reasons.get(why) ?? 0) + 1)
+        return
+      }
+      // The question is not grounded here: the caller checks it against the
+      // passage the fact came from, which knows more than the sentence.
+      const result = this.buildQuestion(item, type, opts.points, focuses[factIndex], false)
+      if (result.draft) {
+        kept.push(result.draft)
+        factIndexes.push(factIndex)
+        return
+      }
+      reasons.set(result.why, (reasons.get(result.why) ?? 0) + 1)
+    })
+
+    return {
+      questions: kept,
+      factIndexes,
+      written: parsed.length,
+      dropped: [...reasons.values()].reduce((sum, n) => sum + n, 0),
+      reasons: [...reasons.entries()].map(([reason, count]) => ({ reason, count }))
+    }
+  }
+
   async autoKey(opts: AutoKeyOptions): Promise<AutoKeyResult> {
-    const sourceText = opts.sourceText?.slice(0, 6000)
+    const sourceText = opts.sourceText?.slice(0, 6000) ?? ''
     const questions = opts.questions.map((q) => ({ ...q }))
     const reasons: string[] = []
     const deadline = Date.now() + 120_000
+    const CONFIDENT_RUNS = 2
 
-    const applyKey = (question: StoredQuestion, raw: unknown): void => {
-      const value = this.readKeyOf(raw)
-      const key = this.buildKey(question.type, value, question.data, question.body)
-      if (key === null) {
-        reasons.push(`${question.type} question: the model answered ${JSON.stringify(value)}`)
-        return
-      }
-      const merged: StoredQuestion = { ...question, key }
-      const problems = validateQuestion(merged)
-      if (problems.length === 0) {
-        const index = questions.findIndex((q) => q.id === question.id)
-        if (index >= 0) questions[index] = merged
-      } else {
-        reasons.push(`${question.type} question: ${problems.join(', ')}`)
-      }
+    const retrieve = (query: string, text: string, n = 3): string[] => {
+      const sentences = text
+        .split(/(?<=[.!?])\s+|\r?\n/)
+        .map((s) => s.trim())
+        .filter((s) => s.length > 20)
+      const qWords = new Set(query.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 3))
+      const scored = sentences.map((s) => {
+        const words = s.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 3)
+        let score = 0
+        for (const w of words) if (qWords.has(w)) score++
+        return { s, score }
+      })
+      return scored
+        .sort((a, b) => b.score - a.score)
+        .slice(0, n)
+        .map((x) => x.s)
     }
 
-    const parseOutput = (output: string): unknown[] | null => {
-      let parsed = extractJsonArray(output)
-      if (!parsed) {
-        try {
-          const single = JSON.parse(output.trim())
-          if (single && typeof single === 'object' && !Array.isArray(single)) parsed = [single]
-        } catch {
-          parsed = null
+    const shuffle = <T,>(arr: T[]): T[] => {
+      const out = [...arr]
+      for (let i = out.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1))
+        ;[out[i], out[j]] = [out[j], out[i]]
+      }
+      return out
+    }
+
+    for (const question of questions) {
+      if (Date.now() > deadline) break
+      // Document-provided key: skip the model.
+      if (question.key !== null && question.key !== undefined) {
+        const merged = { ...question, keySource: 'document' as const }
+        const idx = questions.findIndex((q) => q.id === question.id)
+        if (idx >= 0) questions[idx] = merged
+        continue
+      }
+      // Essay/problem-solving: do not auto-key.
+      if (question.type === 'problem') {
+        const idx = questions.findIndex((q) => q.id === question.id)
+        if (idx >= 0) questions[idx] = { ...question, keySource: 'none' as const }
+        continue
+      }
+
+      // Identification/fill-in/enumeration: leave blank unless material provided.
+      if (['identification', 'fillin', 'enumeration'].includes(question.type)) {
+        if (!sourceText) {
+          const idx = questions.findIndex((q) => q.id === question.id)
+          if (idx >= 0) questions[idx] = { ...question, keySource: 'none' as const }
+          reasons.push(`${question.type} question: needs instructor (no source material)`)
+          continue
         }
+        // Try to extract from source; otherwise leave blank.
+        try {
+          const prompt = `From the text below, give the answer to this question in one short phrase. If not found, reply NONE.\nQuestion: ${question.body}\nText:\n${sourceText.slice(0, 2000)}\nAnswer:`
+          const run = await this.complete(prompt, 0)
+          if (run.ok) {
+            const ans = run.output.trim()
+            if (ans && ans.toUpperCase() !== 'NONE') {
+              const key = this.buildKey(question.type, ans, question.data, question.body)
+              if (key !== null) {
+                const idx = questions.findIndex((q) => q.id === question.id)
+                if (idx >= 0) questions[idx] = { ...question, key, keySource: 'model-unsure' as const }
+                continue
+              }
+            }
+          }
+        } catch {
+          // ignore
+        }
+        const idx = questions.findIndex((q) => q.id === question.id)
+        if (idx >= 0) questions[idx] = { ...question, keySource: 'none' as const }
+        reasons.push(`${question.type} question: needs instructor`)
+        continue
       }
-      return parsed
+
+      // Matching/connect: one left item at a time.
+      if (question.type === 'matching' || question.type === 'connect') {
+        const left = question.type === 'matching' ? question.data.left ?? [] : question.data.prompts ?? []
+        const right = question.type === 'matching' ? question.data.right ?? [] : question.data.answers ?? []
+        const map: Record<string, string> = {}
+        const used = new Set<string>()
+        for (const item of left) {
+          if (Date.now() > deadline) break
+          const ids = right.map((r) => r.id).join(', ')
+          const prompt = `Pick the correct match for "${item.text}" from these ids: ${ids}. Reply with only the id.`
+          const run = await this.complete(prompt, 0)
+          if (!run.ok) continue
+          const pick = run.output.trim().split(/\s+/)[0]
+          if (right.some((r) => r.id === pick) && !used.has(pick)) {
+            map[item.id] = pick
+            used.add(pick)
+          }
+        }
+        if (Object.keys(map).length === left.length && left.length >= 2) {
+          const key = alignPairMap(map, left, right)
+          if (key) {
+            const idx = questions.findIndex((q) => q.id === question.id)
+            if (idx >= 0) questions[idx] = { ...question, key, keySource: 'model-unsure' as const }
+            continue
+          }
+        }
+        const idx = questions.findIndex((q) => q.id === question.id)
+        if (idx >= 0) questions[idx] = { ...question, keySource: 'none' as const }
+        reasons.push(`${question.type} question: could not resolve pairs`)
+        continue
+      }
+
+      // Multiple choice / true-false
+      if (question.type === 'mcq' || question.type === 'tf') {
+        const isTf = question.type === 'tf'
+        const options = isTf
+          ? [{ id: 'true', text: 'True' }, { id: 'false', text: 'False' }]
+          : (question.data.options ?? [])
+        if (!isTf && options.length < 2) {
+          const idx = questions.findIndex((q) => q.id === question.id)
+          if (idx >= 0) questions[idx] = { ...question, keySource: 'none' as const }
+          continue
+        }
+        const passages = sourceText ? retrieve(question.body, sourceText, 3) : []
+        const context = passages.length > 0 ? `\nContext:\n${passages.join('\n')}` : ''
+        const picks: string[] = []
+        const grammar = isTf ? 'root ::= "true" | "false"' : `root ::= "${options.map((o) => o.id.toLowerCase()).join('" | "')}"`
+        const labels = ['A', 'B', 'C', 'D', 'E', 'F']
+          for (let r = 0; r < CONFIDENT_RUNS; r++) {
+            if (Date.now() > deadline) break
+            const order = isTf ? options : shuffle(options)
+            const lines = order.map((o) => `${o.id}. ${o.text}`).join('\n')
+            const prompt = `Question: ${question.body}${context}\n${lines}\nAnswer:`
+            const run = await this.complete(prompt, 0, grammar, 2)
+            if (!run.ok) continue
+            let raw = run.output.trim().toLowerCase()
+            raw = raw.replace(/[^a-z0-9]/g, '')
+            picks.push(raw)
+          }
+        const agreed = picks.length > 0 && picks.every((p) => p === picks[0])
+        const pick = picks.length > 0 ? picks[0] : ''
+        let key: StoredKey | null = null
+        if (pick) {
+          key = isTf ? (pick === 'true' ? true : pick === 'false' ? false : null) : this.resolveOptionId(pick, question.data.options ?? [])
+        }
+        if (key === null && pick && !isTf) {
+          const opts = question.data.options ?? []
+          const match = opts.find((o) => pick.toLowerCase() === o.id.toLowerCase() || pick.toLowerCase().includes(o.text.toLowerCase()) || o.text.toLowerCase().includes(pick.toLowerCase()))
+          if (match) key = match.id
+        }
+        if (key !== null) {
+          const merged: StoredQuestion = { ...question, key, keySource: (agreed ? 'model-confident' : 'model-unsure') as 'model-confident' | 'model-unsure' }
+          const idx = questions.findIndex((q) => q.id === question.id)
+          if (idx >= 0) questions[idx] = merged
+          continue
+        }
+        const idx = questions.findIndex((q) => q.id === question.id)
+        if (idx >= 0) questions[idx] = { ...question, keySource: 'none' as const }
+        reasons.push(`${question.type} question: could not determine key (picks=${JSON.stringify(picks)}, options=${(question.data.options ?? []).map((o:any) => o.id).join(",")})`)
+        continue
+      }
+      // Fallback: leave blank.
+      const idx = questions.findIndex((q) => q.id === question.id)
+      if (idx >= 0) questions[idx] = { ...question, keySource: 'none' as const }
     }
 
-    // Smaller batches keep each answer short and the model responsive. A
-    // single call for 50 questions makes a small model ramble for minutes.
-    const batchSize = 8
-    const batches: StoredQuestion[][] = []
-    for (let i = 0; i < opts.questions.length; i += batchSize) {
-      batches.push(opts.questions.slice(i, i + batchSize))
-    }
-
-    for (const batch of batches) {
-      if (Date.now() > deadline) break
-      const prompt = PROMPT_AUTO_KEY({
-        questions: batch.map((q) => ({
-          type: q.type,
-          body: q.body,
-          options: q.data.options
-        })),
-        sourceText
-      })
-      const run = await this.runModel(prompt)
-      if (!run.ok) continue
-      const parsed = parseOutput(run.output)
-      if (!parsed) continue
-      batch.forEach((question, i) => {
-        if (parsed[i] !== undefined) applyKey(question, parsed[i])
-      })
-    }
-
-    // Retry only a handful of the stragglers individually, so a single
-    // unresolvable question cannot keep the model busy for minutes.
-    const missing = opts.questions.filter((q) => questions.find((x) => x.id === q.id)?.key === null)
-    for (const question of missing.slice(0, 3)) {
-      if (Date.now() > deadline) break
-      const current = questions.find((q) => q.id === question.id)
-      if (current && current.key !== null) continue
-      const singlePrompt = PROMPT_AUTO_KEY({
-        questions: [{ type: question.type, body: question.body, options: question.data.options }],
-        sourceText
-      })
-      const singleRun = await this.runModel(singlePrompt, 0.4)
-      if (!singleRun.ok) continue
-      const parsed = parseOutput(singleRun.output)
-      if (parsed && parsed.length > 0) applyKey(question, parsed[0])
-    }
-
-    const stillMissing = questions.filter((q) => q.key === null).length
+    const stillMissing = questions.filter((q) => q.key === null || q.key === undefined).length
     const detail = reasons.length > 0 ? ` (${reasons.slice(0, 3).join('; ')})` : ''
-    return { questions, error: stillMissing > 0 ? `${stillMissing} answer key${stillMissing === 1 ? '' : 's'} could not be found.${detail}` : undefined }
+    return {
+      questions,
+      error: stillMissing > 0 ? `${stillMissing} answer key${stillMissing === 1 ? '' : 's'} could not be found.${detail}` : undefined,
+      sources: questions.map((q) => q.keySource ?? 'none')
+    }
   }
 
   /**
@@ -731,6 +1221,23 @@ export class GgufProvider implements AiProvider {
   }
 
   /** The llama.cpp binary to run, or null when the configured one is missing. */
+  private server: import('./llamaServer').LlamaServer | null = null
+
+  private async ensureServer(): Promise<boolean> {
+    if (this.server) return true
+    const { LlamaServer } = await import('./llamaServer')
+    const s = new LlamaServer(this.opts.modelPath, this.opts.enginePath ?? null)
+    const ok = await s.start()
+    if (ok) this.server = s
+    return ok
+  }
+  private async complete(prompt: string, temperature = 0, grammar?: string, nPredict = 2): Promise<{ ok: true; output: string; probs?: any } | { ok: false; error: string }> {
+    if (await this.ensureServer()) {
+      return this.server!.complete(prompt, temperature, grammar, nPredict)
+    }
+    return this.runModel(prompt, temperature)
+  }
+
   private binary(): string | null {
     const configured = this.opts.enginePath?.trim()
     if (configured) return existsSync(configured) ? configured : null
@@ -741,7 +1248,8 @@ export class GgufProvider implements AiProvider {
   private async runModel(
     prompt: string,
     temperature?: number,
-    seed?: number
+    seed?: number,
+    schemaFile?: string
   ): Promise<{ ok: true; output: string } | { ok: false; error: string }> {
     const binary = this.binary()
     if (!binary) {
@@ -768,6 +1276,7 @@ export class GgufProvider implements AiProvider {
           // different temperature, so it comes out differently.
           '--seed',
           String(seed ?? this.opts.seed ?? DEFAULT_SEED),
+          ...(schemaFile ? ['--json-schema', schemaFile] : []),
           '-st',
           '--no-display-prompt'
         ],
@@ -1368,3 +1877,16 @@ function topLevelLists(text: string): string[] {
   }
   return out
 }
+
+
+
+
+
+
+
+
+
+
+
+
+

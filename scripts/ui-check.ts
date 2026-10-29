@@ -598,7 +598,7 @@ async function main(): Promise<void> {
     // --- the settings screen and the model registry ---
     log(await clickByTestId(cdp, 'nav-settings'), 'the settings screen is reachable from the sidebar')
     // The model list comes over IPC, so the cards are not on screen instantly.
-    await waitFor(async () => ((await hasTestId(cdp, 'settings-model-qwen2.5-0.5b-instruct-q4')) ? true : null))
+    await waitFor(async () => ((await hasTestId(cdp, 'settings-model-qwen2.5-1.5b-instruct-q4')) ? true : null))
     const modelCards = await cdp.eval<number>(
       `document.querySelectorAll('[data-testid^="settings-model-"]').length`
     )
@@ -609,7 +609,7 @@ async function main(): Promise<void> {
     )
     log(await hasTestId(cdp, 'settings-builtin'), 'the built-in generator is offered')
     log(
-      await hasTestId(cdp, 'settings-download-qwen2.5-0.5b-instruct-q4'),
+      await hasTestId(cdp, 'settings-download-qwen2.5-1.5b-instruct-q4'),
       'a model that is not downloaded offers a download'
     )
     const engineText = await textByTestId(cdp, 'settings-status')
