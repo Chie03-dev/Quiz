@@ -65,7 +65,7 @@ export async function importQuizFile(filePath: string, markStyle: AnswerMarking 
         const { quiz, warnings } = parseBlocks(blocks, { markStyle })
         return { ok: true, quiz, warnings }
       }
-      if (ext === '.md' || ext === '.markdown') {
+      if (ext === '.md' || ext === '.markdown' || ext === '.txt' || ext === '.text') {
         const text = await readTextBounded(filePath)
         const blocks = extractMarkdown(text)
         const { quiz, warnings } = parseBlocks(blocks, { markStyle })

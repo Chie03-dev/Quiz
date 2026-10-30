@@ -126,8 +126,16 @@ interface SectionHit {
 /** Recognises a section header ("I. Multiple Choice (2 points each)"). */
 function matchSection(raw: string, isHeading = false): SectionHit | null {
   if (/^multiple[-\s]*choice/i.test(raw.trim())) return { type: 'mcq', points: null }
-  if (/^column\s+[ab]$/i.test(raw.trim())) return null
+  if (/^column\s+[ab]\b/i.test(raw.trim())) return null
   if (PLAIN_STEM.test(raw)) return null // a question is not a header either
+  // A section header may be numbered ("1. Multiple Choice") or lettered in some
+  // papers; strip a leading question-style number only when the rest is itself
+  // a recognised header, so ordinary questions are never promoted.
+  const leading = raw.trim().match(/^(?:(?:q(?:uestion)?|item|no\.?)\s*)?(\d+)\s*[.)]\s+(.+)$/i)
+  if (leading) {
+    const inner = matchSection(leading[2]!, isHeading)
+    if (inner) return inner
+  }
   let t = raw.trim()
   let hadPrefix = false
   // Roman numeral prefix: I., II., V., X.
@@ -715,6 +723,27 @@ function finalize(b: Builder, mark: ResolvedMark): DraftItem {
   const stemText = runsText(stemRuns).trim()
   const others = b.lines.slice(1)
 
+  // Wrapped stem lines: a stem may span several lines before the first choice or
+  // answer line. Collect them so the body keeps the full question text.
+  const stemLines: Line[] = [b.lines[0] ?? { runs: [], text: '' }]
+  for (let i = 1; i < b.lines.length; i++) {
+    const l = b.lines[i]
+    const t = l.text.trim()
+    if (!t) continue
+    if (ANSWER_LINE.test(l.text) || ENUM_ANSWERS.test(l.text) || TF_INLINE.test(l.text)) break
+    if (b.section === 'mcq' && CHOICE_START.test(l.text)) break
+    if (b.section === 'matching' || b.section === 'connect') {
+      if (/^column\s+[ab]\b/i.test(t)) break
+      if (b.section === 'matching' && (MATCHING_ROW.test(t) || RIGHT_LABEL_LINE.test(t))) break
+    }
+    stemLines.push(l)
+  }
+  const stemTextAll = [stemText, ...stemLines.slice(1).map((l) => l.text.trim())]
+    .filter((t) => t.length > 0)
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+
   const sourceParts = b.lines.map((l) => l.text.trim()).filter((t) => t.length > 0)
   for (const t of b.tables) sourceParts.push(tableSourceText(t))
   const sourceText = sourceParts.join('\n')
@@ -733,24 +762,50 @@ function finalize(b: Builder, mark: ResolvedMark): DraftItem {
 
   switch (b.section) {
     case 'mcq': {
-      body = stemText
       const options: Choice[] = []
       const marked: number[] = []
+      const stemParts: string[] = [stemText]
+      let currentChoice: Choice | null = null
       for (const line of others) {
         // "Answer: B" is the key, never a choice.
         if (ANSWER_LINE.test(line.text)) continue
         const cm = line.text.match(CHOICE_START)
-        if (!cm && !b.plain) continue
-        const runs = cm ? stripPrefixRuns(line.runs, CHOICE_START) : line.runs
-        const text = runsText(runs).trim()
+        if (cm) {
+          const runs = stripPrefixRuns(line.runs, CHOICE_START)
+          const text = runsText(runs).trim()
+          if (!text) continue
+          // A printed exam leaves the letters out; the ones that are printed
+          // still win, so a paper that mixes both reads right.
+          let id = (cm[1] ?? '').toLowerCase()
+          if (!id || options.some((o) => o.id === id)) id = nextChoiceId(options)
+          const choice = { id, text }
+          options.push(choice)
+          currentChoice = choice
+          if (markedRange(charsOf(runs, mark))) marked.push(options.length - 1)
+          continue
+        }
+        if (b.plain) {
+          const text = runsText(line.runs).trim()
+          if (!text) continue
+          const id = nextChoiceId(options)
+          const choice = { id, text }
+          options.push(choice)
+          currentChoice = choice
+          if (markedRange(charsOf(line.runs, mark))) marked.push(options.length - 1)
+          continue
+        }
+        const text = line.text.trim()
         if (!text) continue
-        // A printed exam leaves the letters out; the ones that are printed
-        // still win, so a paper that mixes both reads right.
-        let id = cm ? (cm[1] ?? '').toLowerCase() : ''
-        if (!id || options.some((o) => o.id === id)) id = nextChoiceId(options)
-        options.push({ id, text })
-        if (markedRange(charsOf(runs, mark))) marked.push(options.length - 1)
+        if (currentChoice) {
+          currentChoice.text = `${currentChoice.text} ${text}`.trim()
+        } else if (options.length === 0) {
+          stemParts.push(text)
+        } else {
+          const last = options[options.length - 1]
+          last.text = `${last.text} ${text}`.trim()
+        }
       }
+      body = stemParts.join(' ').replace(/\s+/g, ' ').trim()
       data = { options }
       hasMarks = marked.length > 0
       if (marked.length === 1) markKey = options[marked[0]].id
@@ -768,7 +823,7 @@ function finalize(b: Builder, mark: ResolvedMark): DraftItem {
       break
     }
     case 'tf': {
-      body = stemText
+      body = stemTextAll
       data = {}
       let bothMarked = false
       for (const line of b.lines) {
@@ -801,14 +856,14 @@ function finalize(b: Builder, mark: ResolvedMark): DraftItem {
       if (markKey === null) {
         if (bothMarked) {
           deferred.push('both True and False are marked, so the answer was left blank')
-        } else {
+        } else if (explicitKey === null) {
           missingKey.push('the correct answer (True or False) was not determined')
         }
       }
       break
     }
     case 'identification': {
-      body = stemText
+      body = stemTextAll
       data = {}
       for (const line of b.lines) {
         const fa = findAnswer(line.text)
@@ -827,11 +882,16 @@ function finalize(b: Builder, mark: ResolvedMark): DraftItem {
         }
         break
       }
-      if (markKey === null) missingKey.push('the accepted answer for this item was not determined')
+      if (markKey === null && explicitKey === null) missingKey.push('the accepted answer for this item was not determined')
       break
     }
     case 'fillin': {
-      const stemChars = charsOf(stemRuns, mark)
+      const allRuns: Run[] = [...stemRuns]
+      for (let i = 1; i < stemLines.length; i++) {
+        allRuns.push({ text: ' ', bold: false, underline: false, highlight: false })
+        allRuns.push(...stemLines[i].runs)
+      }
+      const stemChars = charsOf(allRuns, mark)
       const segs = markedSegments(stemChars).filter(
         (s) => stemChars.slice(s.start, s.end).map((c) => c.ch).join('').trim().length > 0
       )
@@ -856,7 +916,7 @@ function finalize(b: Builder, mark: ResolvedMark): DraftItem {
         body = out.trim()
         markKey = answers
       } else {
-        body = stemText
+        body = stemTextAll
         for (const line of others) {
           const fa = findAnswer(line.text)
           if (!fa) continue
@@ -874,14 +934,14 @@ function finalize(b: Builder, mark: ResolvedMark): DraftItem {
           }
           break
         }
-        if (markKey === null) missingKey.push('the answers for the blanks were not determined')
+        if (markKey === null && explicitKey === null) missingKey.push('the answers for the blanks were not determined')
       }
       data = { blanks: countBlanks(body) }
       break
     }
     case 'enumeration': {
-      body = stemText
-      const countMatch = stemText.match(COUNT_RE)
+      body = stemTextAll
+      const countMatch = body.match(COUNT_RE)
       const count = countMatch ? Number(countMatch[1]) : 0
       // A missing count is not fatal here: a printed exam may say "List four"
       // in words, and the answer key below can still supply the item count.
@@ -911,11 +971,11 @@ function finalize(b: Builder, mark: ResolvedMark): DraftItem {
         }
         break
       }
-      if (markKey === null) missingKey.push('the accepted items for this enumeration were not determined')
+      if (markKey === null && explicitKey === null) missingKey.push('the accepted items for this enumeration were not determined')
       break
     }
     case 'problem': {
-      body = stemText
+      body = stemTextAll
       data = {}
       for (const line of b.lines) {
         const fa = findAnswer(line.text)
@@ -935,12 +995,12 @@ function finalize(b: Builder, mark: ResolvedMark): DraftItem {
         }
         break
       }
-      if (markKey === null) missingKey.push('the final answer for this problem was not determined')
+      if (markKey === null && explicitKey === null) missingKey.push('the final answer for this problem was not determined')
       break
     }
     case 'matching':
     case 'connect': {
-      body = stemText
+      body = stemTextAll
       const perPair = Math.max(1, b.sectionPoints ?? 1)
       const table = b.tables[0]
       if (table) {
@@ -997,6 +1057,7 @@ function finalize(b: Builder, mark: ResolvedMark): DraftItem {
         data = { prompts, answers }
         tableKey = {}
         points = perPair
+        if (prompts.length === 0) immediate.push('no table was found for this item')
       }
       break
     }
@@ -1122,6 +1183,7 @@ export function parseBlocks(blocks: Block[], options: ParseOptions = {}): ParseR
   let keyType: QuestionType | null = null
   const keyEntries: KeyEntry[] = []
   let previousWasMeta = false
+  let pendingStemLine: Line | null = null
 
   const finalizeCurrent = (): void => {
     if (!current) return
@@ -1139,7 +1201,8 @@ export function parseBlocks(blocks: Block[], options: ParseOptions = {}): ParseR
       if (mode === 'body' && (sectionType === 'matching' || sectionType === 'connect')) {
         if (!current) {
           lastNumberInSection += 1
-          current = { section: sectionType, sectionPoints, number: lastNumberInSection, lines: [], tables: [], plain: false }
+          current = { section: sectionType, sectionPoints, number: lastNumberInSection, lines: pendingStemLine ? [pendingStemLine] : [], tables: [], plain: false }
+          pendingStemLine = null
         }
         current.tables.push(block)
       }
@@ -1217,6 +1280,7 @@ export function parseBlocks(blocks: Block[], options: ParseOptions = {}): ParseR
       sectionType = sec.type
       sectionPoints = sec.points
       lastNumberInSection = 0
+      pendingStemLine = null
       // A matching section is a single question (with several pairs) even when
       // it is printed as lines without table blocks, so open it here and let the
       // rows attach to it. docx tables still append to this same question below.
@@ -1248,6 +1312,7 @@ export function parseBlocks(blocks: Block[], options: ParseOptions = {}): ParseR
     }
     if (num !== null) {
       finalizeCurrent()
+      pendingStemLine = null
       if (sectionType === null) {
         warnings.push({ questionIndex: null, message: `a question appeared before any section header: "${trimmed}"` })
         continue
@@ -1270,6 +1335,7 @@ export function parseBlocks(blocks: Block[], options: ParseOptions = {}): ParseR
     // so a choice is never mistaken for the next question.
     if (isPlainStem(trimmed) && (current === null || current.plain)) {
       finalizeCurrent()
+      pendingStemLine = null
       // Without a section header a stem with choices under it is a multiple
       // choice question, which is what a printed exam is.
       const section = sectionType ?? 'mcq'
@@ -1290,6 +1356,17 @@ export function parseBlocks(blocks: Block[], options: ParseOptions = {}): ParseR
       continue
     }
 
+    if ((sectionType === 'connect' || sectionType === 'matching') && current === null &&
+        !QUESTION_START.test(trimmed) && matchSection(trimmed, isHeading) === null &&
+        !isMeta(trimmed) && !/^column\s+[ab]\b/i.test(trimmed)) {
+      if (pendingStemLine) {
+        pendingStemLine.text = `${pendingStemLine.text} ${trimmed}`.trim()
+      } else {
+        pendingStemLine = { runs: block.runs, text }
+      }
+      continue
+    }
+
     // A direction line right under a section header ("(2 points each)") sets
     // the per-question default for the section and is otherwise skipped.
     if (sectionType !== null) {
@@ -1303,6 +1380,11 @@ export function parseBlocks(blocks: Block[], options: ParseOptions = {}): ParseR
     if (sectionType) {
       warnings.push({ questionIndex: null, message: `${SECTION_LABELS[sectionType]}: unrecognized line "${trimmed}"` })
     }
+  }
+  if (pendingStemLine && !current && (sectionType === 'connect' || sectionType === 'matching')) {
+    lastNumberInSection += 1
+    current = { section: sectionType, sectionPoints, number: lastNumberInSection, lines: [pendingStemLine], tables: [], plain: false }
+    pendingStemLine = null
   }
   finalizeCurrent()
 
@@ -1349,7 +1431,7 @@ export function parseBlocks(blocks: Block[], options: ParseOptions = {}): ParseR
             return
           }
         }
-        item.immediate.push('no table was found for this item')
+        if ((q.data.prompts ?? []).length === 0) item.immediate.push('no table was found for this item')
         q.key = {}
         return
       }
@@ -1405,6 +1487,7 @@ export function parseBlocks(blocks: Block[], options: ParseOptions = {}): ParseR
     })
   } else {
     items.forEach((item, index) => {
+      if (keyed[index]) return
       for (const msg of item.missingKey) {
         warnings.push({ questionIndex: index, message: `${SECTION_LABELS[item.section]} ${item.number}: ${msg}` })
       }

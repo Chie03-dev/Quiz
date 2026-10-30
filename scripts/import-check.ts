@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, mkdtempSync, rmSync } from 'node:fs'
+import { readFileSync, writeFileSync, mkdtempSync, rmSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -177,6 +177,9 @@ async function main(): Promise<void> {
   // mis-typed questions; it must come back as 45 questions (a matching section is
   // one set with 6 pairs) with every key resolved. ---
   const geoPath = join(here, '..', 'docs', 'geography_college_exam.pdf')
+  if (!existsSync(geoPath)) {
+    console.log('SKIP geography college exam (fixture PDF not present)')
+  } else {
   const geoResult = await importQuizFile(geoPath, 'auto')
   ok(geoResult.ok, 'geography college exam imports')
   if (geoResult.ok) {
@@ -198,6 +201,7 @@ async function main(): Promise<void> {
       connectQs.length === 7 && connectQs.every((q) => Object.keys(q.key as Record<string, string>).length === 1),
       'each geography connect question resolved its pair'
     )
+  }
   }
 
   const zeroMarks = `Multiple Choice
