@@ -731,6 +731,9 @@ function finalize(b: Builder, mark: ResolvedMark): DraftItem {
     const t = l.text.trim()
     if (!t) continue
     if (ANSWER_LINE.test(l.text) || ENUM_ANSWERS.test(l.text) || TF_INLINE.test(l.text)) break
+    if (CHOICE_START.test(l.text)) break
+    if (/^column\s+[ab]\b/i.test(t)) break
+    if (MATCHING_ROW.test(t) || RIGHT_LABEL_LINE.test(t)) break
     if (b.section === 'mcq' && CHOICE_START.test(l.text)) break
     if (b.section === 'matching' || b.section === 'connect') {
       if (/^column\s+[ab]\b/i.test(t)) break
@@ -1199,7 +1202,8 @@ export function parseBlocks(blocks: Block[], options: ParseOptions = {}): ParseR
   for (const block of blocks) {
     if (block.kind === 'table') {
       if (mode === 'body' && (sectionType === 'matching' || sectionType === 'connect')) {
-        if (!current) {
+        if (!current || current.tables.length > 0) {
+          finalizeCurrent()
           lastNumberInSection += 1
           current = { section: sectionType, sectionPoints, number: lastNumberInSection, lines: pendingStemLine ? [pendingStemLine] : [], tables: [], plain: false }
           pendingStemLine = null

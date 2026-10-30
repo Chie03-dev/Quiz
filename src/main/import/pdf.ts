@@ -58,11 +58,16 @@ export async function extractPdf(filePath: string): Promise<Block[]> {
     )
   }
 
-  let pages: { num: number; text: string }[]
+   let pages: { num: number; text: string }[]
   try {
-    const result = await parser.getText()
-    pages = result.pages
-  } catch (err) {
+    const result = await parser.getText({
+      lineEnforce: true,
+      lineThreshold: 4.6,
+      cellSeparator: '\t',
+      cellThreshold: 7
+    })
+     pages = result.pages
+   } catch (err) {
     throw new ImportError(
       `this PDF could not be read (${err instanceof Error ? err.message : String(err)})`
     )
@@ -77,7 +82,7 @@ export async function extractPdf(filePath: string): Promise<Block[]> {
   const blocks: Block[] = []
   for (const page of pages) {
     for (const line of page.text.split(/\r\n|\r|\n/u)) {
-      const text = line.trim()
+      const text = line.replace(/\t+/g, ' ').trim()
       if (!text) continue
       if (PAGE_MARKER.test(text)) continue
       blocks.push(lineBlock(text))
