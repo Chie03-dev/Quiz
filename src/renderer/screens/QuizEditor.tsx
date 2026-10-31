@@ -97,6 +97,7 @@ export function QuizEditor({
   const [missing, setMissing] = useState(false)
   const [dirty, setDirty] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [autoKeying, setAutoKeying] = useState(false)
   const [autoKeyError, setAutoKeyError] = useState('')
@@ -190,18 +191,20 @@ export function QuizEditor({
     patch((q) => ({ ...q, questions: [...q.questions, newQuestion(type)] }))
   }
 
-   const save = (): void => {
-     void window.quiz.saveQuiz(quiz).then((result) => {
-       if (result.ok) {
-         setQuiz(result.quiz)
-         setDirty(false)
-         setSaved(true)
-         setError('')
-       } else {
-         setError(result.error)
-       }
-     })
-   }
+    const save = (): void => {
+      if (saving) return
+      setSaving(true)
+      void window.quiz.saveQuiz(quiz).then((result) => {
+        if (result.ok) {
+          setQuiz(result.quiz)
+          setDirty(false)
+          setSaved(true)
+          setError('')
+        } else {
+          setError(result.error)
+        }
+      }).finally(() => setSaving(false))
+    }
 
   const autoKey = async (): Promise<void> => {
     // Refresh the model state in case the instructor just downloaded one in
@@ -379,8 +382,8 @@ export function QuizEditor({
         ) : (
           <Badge tone="warn" testId="ai-model-badge" onClick={onOpenSettings}>No AI model</Badge>
         )}
-        <Button variant="primary" testId="save-quiz" onClick={save}>
-          Save
+        <Button variant="primary" testId="save-quiz" onClick={save} disabled={saving}>
+          {saving ? 'Saving…' : 'Save'}
         </Button>
       </div>
 

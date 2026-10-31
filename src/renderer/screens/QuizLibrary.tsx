@@ -99,6 +99,7 @@ export function QuizLibrary({
   const [quizzes, setQuizzes] = useState<QuizMeta[] | null>(null)
   const [error, setError] = useState('')
   const [showAiDialog, setShowAiDialog] = useState(false)
+  const [importing, setImporting] = useState(false)
   const [search, setSearch] = useState('')
 
   const refresh = useCallback(() => {
@@ -115,6 +116,8 @@ export function QuizLibrary({
   const [importReport, setImportReport] = useState<ImportQuizReport | null>(null)
 
   const importQuiz = (): void => {
+    if (importing) return
+    setImporting(true)
     void window.quiz.importQuiz().then((result) => {
       if (result.ok) {
         setError('')
@@ -129,7 +132,7 @@ export function QuizLibrary({
       } else if (!result.cancelled) {
         setError(result.error)
       }
-    })
+    }).finally(() => setImporting(false))
   }
 
   const filteredQuizzes = quizzes === null
@@ -202,8 +205,8 @@ export function QuizLibrary({
               onChange={(e) => setSearch(e.target.value)}
               style={{ minWidth: 180 }}
             />
-            <Button variant="secondary" icon={<Icon name="upload" />} onClick={importQuiz}>
-              Import…
+            <Button variant="secondary" icon={<Icon name="upload" />} onClick={importQuiz} disabled={importing}>
+              {importing ? 'Importing…' : 'Import…'}
             </Button>
             <Button variant="primary" icon={<Icon name="plus" />} onClick={create}>
               New quiz
