@@ -223,6 +223,9 @@ async function createWindow(): Promise<void> {
     shell.openExternal(url)
     return { action: 'deny' }
   })
+  win.webContents.on('will-navigate', (event) => {
+    event.preventDefault()
+  })
 
   const devUrl = process.env['ELECTRON_RENDERER_URL']
   if (devUrl) await win.loadURL(devUrl)

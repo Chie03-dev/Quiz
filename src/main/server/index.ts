@@ -99,32 +99,37 @@ export async function startServer(opts: QuizServerOptions): Promise<QuizServer> 
     let joined = false
 
     sock.on('message', (raw: unknown) => {
-      const data = Buffer.isBuffer(raw) ? raw.toString() : String(raw)
-      let msg: PhoneMessage
+      const buf = Buffer.isBuffer(raw) ? raw : Buffer.from(String(raw))
+      if (buf.byteLength > 64 * 1024) return
+      let parsed: unknown
       try {
-        msg = JSON.parse(data)
+        parsed = JSON.parse(buf.toString())
       } catch {
         return // ignore garbage
       }
-      if (!msg || typeof msg.t !== 'string') return
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return
+      const obj = parsed as { t?: unknown; d?: unknown }
+      if (typeof obj.t !== 'string') return
+      const allowed = new Set(['join', 'hb', 'answer', 'focus_lost', 'focus_gained', 'resume_request', 'finish'])
+      if (!allowed.has(obj.t)) return
 
-      if (msg.t === 'join') {
+      if (obj.t === 'join') {
         joined = true
-        session.handleJoin(sock, ip, msg.d ?? {})
-      } else if (msg.t === 'hb') {
+        session.handleJoin(sock, ip, (obj.d ?? {}) as any)
+      } else if (obj.t === 'hb') {
         if (joined) session.handleHeartbeat(sock)
-      } else if (msg.t === 'answer') {
-        if (joined) session.handleAnswer(sock, msg.d ?? {})
-      } else if (msg.t === 'focus_lost') {
+      } else if (obj.t === 'answer') {
+        if (joined) session.handleAnswer(sock, (obj.d ?? {}) as any)
+      } else if (obj.t === 'focus_lost') {
         if (joined) session.handleFocusLost(sock)
-      } else if (msg.t === 'focus_gained') {
+      } else if (obj.t === 'focus_gained') {
         if (joined) session.handleFocusGained(sock)
-      } else if (msg.t === 'resume_request') {
+      } else if (obj.t === 'resume_request') {
         if (joined) session.handleResumeRequest(sock)
-      } else if (msg.t === 'finish') {
+      } else if (obj.t === 'finish') {
         if (joined) session.handleFinish(sock)
       }
-      // No other message types are accepted from phones; instructor commands come via IPC only.
+
     })
 
     sock.on('close', () => session.handleClose(sock))
@@ -136,6 +141,9 @@ export async function startServer(opts: QuizServerOptions): Promise<QuizServer> 
   // walked out of the meme folder.
   app.get('/memes/:file', async (req, reply) => {
     const file = String((req.params as { file?: string }).file ?? '')
+    if (!file || file.includes('/') || file.includes('\\\\') || file.includes('\\u0000')) {
+      return reply.code(404).send('Not found')
+    }
     const asset = opts.memes?.byFileName(file)
     if (!asset) return reply.code(404).send('Not found')
     let bytes: Buffer

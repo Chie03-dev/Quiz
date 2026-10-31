@@ -169,8 +169,7 @@ export class QuizSession {
       return
     }
 
-    const name = (d.name ?? '').trim()
-    if (typeof d.pin !== 'string' || d.pin.trim() !== this.pin) {
+    if (typeof d?.pin !== 'string' || d.pin.trim() !== this.pin) {
       // The attempt that trips the limit is rejected with RATE_LIMITED itself.
       if (this.limiter.recordFailure(ip)) this.error(socket, 'RATE_LIMITED')
       else this.error(socket, 'BAD_PIN')
@@ -178,13 +177,20 @@ export class QuizSession {
     }
     this.limiter.recordSuccess(ip)
 
+    const name = String(d.name ?? '').trim().slice(0, 40)
+    if (!name) {
+      this.error(socket, 'BAD_PIN')
+      return
+    }
     // Drop a malformed photo rather than rejecting the whole join.
     const photo = isValidProfilePhoto(d.photo) ? d.photo : undefined
+
+    const deviceToken = typeof d.deviceToken === 'string' && d.deviceToken.length <= 128 ? d.deviceToken : undefined
 
     // Identity restore: same deviceToken => same studentId. Only the photo is
     // updated here — the stored name is kept so a reconnect can't hijack a
     // name the server already assigned (name changes happen on a fresh join).
-    const existing = d.deviceToken ? this.byDeviceToken.get(d.deviceToken) : undefined
+    const existing = deviceToken ? this.byDeviceToken.get(deviceToken) : undefined
 
     // Outside the lobby only a known device may (re)join; anyone else is too late.
     if (this.run.currentStatus !== 'lobby' && !existing) {
@@ -210,7 +216,7 @@ export class QuizSession {
     const student: Student = {
       id: randomUUID(),
       name,
-      deviceToken: d.deviceToken ?? randomUUID(),
+      deviceToken: deviceToken ?? randomUUID(),
       status: 'connected',
       lastSeen: Date.now(),
       socket,

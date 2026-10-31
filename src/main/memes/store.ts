@@ -65,6 +65,7 @@ export class MemeAssets {
 
   /** The meme behind a file name, or null when there is none. */
   byFileName(fileName: string): MemeAsset | null {
+    if (typeof fileName !== 'string' || fileName.includes('\\') || fileName.includes('/') || fileName.includes('\\u0000')) return null
     if (!MEME_FILE_PATTERN.test(fileName)) return null
     const row = this.store.getByFileName(fileName)
     return row ? this.toAsset(row) : null

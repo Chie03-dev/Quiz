@@ -141,6 +141,8 @@ export function Settings(): React.JSX.Element {
     try {
       const result = await window.quiz.aiDownloadEngine()
       if (!result.ok) setError(result.error ?? 'The engine could not be downloaded.')
+      const info = await window.quiz.aiInfo()
+      setEnginePath(info.enginePath ?? '')
       await loadStatus()
     } catch (err) {
       setError(String(err))
@@ -173,8 +175,8 @@ export function Settings(): React.JSX.Element {
           The app downloads the model, but it does not bundle llama.cpp. Follow these steps once.
         </p>
         <ol className="settings-steps" style={{ margin: 0, paddingLeft: 20, lineHeight: 1.7 }}>
-          <li>Download a Windows build of llama.cpp and keep <code>llama-cli.exe</code>.</li>
-          <li>In <strong>Inference engine</strong>, click <strong>Browse…</strong>, select <code>llama-cli.exe</code>, then click <strong>Save</strong>.</li>
+          <li>Click <strong>Download engine automatically</strong> below, or download a Windows build of llama.cpp and keep <code>llama-cli.exe</code>.</li>
+          <li>If you downloaded it yourself, in <strong>Inference engine</strong>, click <strong>Browse…</strong>, select <code>llama-cli.exe</code>, then click <strong>Save</strong>.</li>
           <li>Download a model below. <strong>Qwen2.5 0.5B</strong> is the smallest and fastest to try.</li>
           <li>Click <strong>Use this model</strong> on the downloaded model.</li>
           <li>Generate questions. If you see <code>spawn llama-cli ENOENT</code>, the binary path is missing or wrong.</li>
