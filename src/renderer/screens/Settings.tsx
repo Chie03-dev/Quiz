@@ -177,7 +177,7 @@ export function Settings(): React.JSX.Element {
         <ol className="settings-steps" style={{ margin: 0, paddingLeft: 20, lineHeight: 1.7 }}>
           <li>Click <strong>Download engine automatically</strong> below, or download a Windows build of llama.cpp and keep <code>llama-cli.exe</code>.</li>
           <li>If you downloaded it yourself, in <strong>Inference engine</strong>, click <strong>Browse…</strong>, select <code>llama-cli.exe</code>, then click <strong>Save</strong>.</li>
-          <li>Download a model below. <strong>Qwen2.5 0.5B</strong> is the smallest and fastest to try.</li>
+          <li>Download a model below. <strong>Qwen2.5 1.5B</strong> is the smallest and fastest to try.</li>
           <li>Click <strong>Use this model</strong> on the downloaded model.</li>
           <li>Generate questions. If you see <code>spawn llama-cli ENOENT</code>, the binary path is missing or wrong.</li>
         </ol>
