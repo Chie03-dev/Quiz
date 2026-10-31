@@ -81,8 +81,18 @@ function SessionRow({
   onOpen: (id: string) => void
   onChanged: () => void
 }): React.JSX.Element {
+  const [busy, setBusy] = useState(false)
+
   const remove = (): void => {
-    void window.quiz.deleteResult(session.id).then(() => onChanged())
+    if (busy) return
+    setBusy(true)
+    void window.quiz.deleteResult(session.id).then(() => onChanged()).finally(() => setBusy(false))
+  }
+
+  const exportCsv = (): void => {
+    if (busy) return
+    setBusy(true)
+    void window.quiz.exportResultCsv(session.id).finally(() => setBusy(false))
   }
 
   return (
@@ -103,9 +113,10 @@ function SessionRow({
           variant="ghost"
           size="sm"
           testId={`export-result-${session.id}`}
-          onClick={() => void window.quiz.exportResultCsv(session.id)}
+          onClick={exportCsv}
+          disabled={busy}
         >
-          Export CSV
+          {busy ? 'Exporting…' : 'Export CSV'}
         </Button>
         <Button
           variant="primary"
@@ -123,6 +134,7 @@ function SessionRow({
           size="sm"
           testId={`delete-result-${session.id}`}
           confirmTestId={`delete-result-confirm-${session.id}`}
+          disabled={busy}
           onConfirm={remove}
         />
       </span>
