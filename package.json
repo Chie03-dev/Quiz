@@ -18,6 +18,7 @@
     "typecheck:web": "tsc -p tsconfig.web.json --noEmit",
     "fake-student": "tsx scripts/fake-student.ts",
     "check": "tsx scripts/check.ts && tsx scripts/import-check.ts",
+    "security-check": "tsx scripts/security-check.ts",
     "ui-check": "tsx scripts/ui-check.ts",
     "shots-mock": "tsx scripts/shots-mock.ts"
   },
