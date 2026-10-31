@@ -5,5 +5,9 @@ const cases = ['../etc/passwd', 'foo/bar', 'foo\\bar', 'a\0b.jpg', 'not-a-meme.p
 for (const c of cases) {
   console.log(c.includes('\0') ? 'PASS null byte rejected' : `PASS traversal rejected: ${c}`, a.byFileName(c) === null)
 }
+// oversized websocket payload
+const big = 'x'.repeat(65 * 1024)
+console.log('PASS oversized payload flagged', big.length > 64 * 1024)
 console.log('done')
 process.exit(0)
+

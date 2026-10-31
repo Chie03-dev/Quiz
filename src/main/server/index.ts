@@ -1,6 +1,7 @@
 import Fastify from 'fastify'
 import websocket from '@fastify/websocket'
 import { readFile } from 'node:fs/promises'
+import { z } from 'zod'
 import type {
   MemePopPayload,
   PhoneMessage,
@@ -64,10 +65,16 @@ export interface QuizServer {
 }
 
 export async function startServer(opts: QuizServerOptions): Promise<QuizServer> {
-  const app = Fastify({ logger: false })
+  const app = Fastify({ logger: false, bodyLimit: 1 * 1024 * 1024 })
+  app.setErrorHandler((err, _req, reply) => {
+    const code = (err as { statusCode?: number }).statusCode ?? 500
+    reply.code(code).send({ error: 'request_failed', code })
+  })
 
   let selectedIp = listLanAddresses()[0]?.ip ?? '127.0.0.1'
   let port = FIRST_PORT
+  const connectionsByIp = new Map<string, number>()
+  const MAX_CONNECTIONS_PER_IP = 50
   let advertiser: BonjourAdvertiser | null = null
 
   const session = new QuizSession(
@@ -96,6 +103,9 @@ export async function startServer(opts: QuizServerOptions): Promise<QuizServer> 
       on(event: 'message', l: (raw: unknown) => void): void
     }
     const ip = req.socket.remoteAddress ?? 'unknown'
+    const count = connectionsByIp.get(ip) ?? 0
+    if (count >= MAX_CONNECTIONS_PER_IP) { socket.close(1008, 'too many connections'); return }
+    connectionsByIp.set(ip, count + 1)
     let joined = false
 
     sock.on('message', (raw: unknown) => {
@@ -114,8 +124,11 @@ export async function startServer(opts: QuizServerOptions): Promise<QuizServer> 
       if (!allowed.has(obj.t)) return
 
       if (obj.t === 'join') {
+        const joinSchema = z.object({ pin: z.string().optional(), name: z.string().optional(), deviceToken: z.string().optional(), photo: z.unknown().optional() })
+        const parsedJoin = joinSchema.safeParse(obj.d ?? {})
+        if (!parsedJoin.success) return
         joined = true
-        session.handleJoin(sock, ip, (obj.d ?? {}) as any)
+        session.handleJoin(sock, ip, parsedJoin.data as any)
       } else if (obj.t === 'hb') {
         if (joined) session.handleHeartbeat(sock)
       } else if (obj.t === 'answer') {
@@ -132,7 +145,12 @@ export async function startServer(opts: QuizServerOptions): Promise<QuizServer> 
 
     })
 
-    sock.on('close', () => session.handleClose(sock))
+    sock.on('close', () => {
+      const c = connectionsByIp.get(ip) ?? 1
+      if (c <= 1) connectionsByIp.delete(ip)
+      else connectionsByIp.set(ip, c - 1)
+      session.handleClose(sock)
+    })
     sock.on('error', () => session.handleClose(sock))
   })
 

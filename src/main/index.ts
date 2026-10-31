@@ -1,4 +1,5 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
+import { z } from 'zod'
 import { existsSync, promises as fs } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { extname, dirname, join } from 'node:path'
@@ -47,6 +48,7 @@ import type {
 let win: BrowserWindow | null = null
 let server: QuizServer | null = null
 let library: QuizLibrary | null = null
+let dbPath = ''
 let memeStore: MemeStore | null = null
 let resultsStore: ResultsStore | null = null
 let aiManager: AiManager | null = null
@@ -393,16 +395,11 @@ function registerIpc(): void {
 
   ipcMain.handle('lib:save', (_event, quiz: unknown): SaveQuizResult => {
     if (!library) return { ok: false, error: 'The quiz library is not open.' }
+    const schema = z.object({ id: z.string(), title: z.string(), timeLimitSec: z.number(), questions: z.array(z.any()) })
+    const parsed = schema.safeParse(quiz)
+    if (!parsed.success) return { ok: false, error: 'Received an invalid quiz object.' }
     try {
-      const q = quiz as StoredQuiz
-      if (
-        !q || typeof q.id !== 'string' || typeof q.title !== 'string' ||
-        typeof q.timeLimitSec !== 'number' || !Array.isArray(q.questions)
-      ) {
-        return { ok: false, error: 'Received an invalid quiz object.' }
-      }
-      // save() recomputes the draft/ready status from validation.
-      return { ok: true, quiz: library.save(q) }
+      return { ok: true, quiz: library.save(parsed.data as StoredQuiz) }
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) }
     }
@@ -479,8 +476,18 @@ function registerIpc(): void {
     }
   })
 
-  // Reading the firewall needs no admin; installing always comes from a click.
-  ipcMain.handle('firewall:status', () => checkFirewallRules())
+  // --- data backup/restore ---
+  ipcMain.handle('data:backup', async () => {
+    if (!win || !dbPath) return { ok: false, error: 'No database.' }
+    try {
+      const save = await dialog.showSaveDialog(win, { title: 'Backup data', defaultPath: 'quiz-instructor-backup.db', filters: [{ name: 'Database', extensions: ['db'] }] })
+      if (save.canceled || !save.filePath) return { ok: false, error: 'cancelled', cancelled: true }
+      await fs.copyFile(dbPath, save.filePath)
+      return { ok: true, path: save.filePath }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
   ipcMain.handle('firewall:install', () => installFirewallRules())
   // The same commands, one per line, so the instructor can run them by hand
   // when the app could not raise its own prompt.
@@ -954,7 +961,18 @@ function scheduleMemeExpiry(): void {
 
 app.whenReady().then(async () => {
   const userData = app.getPath('userData')
-  const data = openAppData(join(userData, 'quiz-library.db'))
+  dbPath = join(userData, 'quiz-library.db')
+  // Local crash logging (no telemetry): record uncaught errors for diagnostics.
+  const crashLog = join(userData, 'crash.log')
+  const logCrash = (label: string, err: unknown) => {
+    try {
+      const line = `[${new Date().toISOString()}] ${label}: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}\n`
+      require('node:fs').appendFileSync(crashLog, line)
+    } catch { /* never throw from crash handler */ }
+  }
+  process.on('uncaughtException', (err) => logCrash('uncaughtException', err))
+  process.on('unhandledRejection', (err) => logCrash('unhandledRejection', err))
+  const data = openAppData(dbPath)
   library = data.quizzes
   memeStore = data.memes
   resultsStore = data.results
@@ -1011,4 +1029,5 @@ app.on('before-quit', () => {
   embedder?.stop()
   embedder = null
 })
+
 
