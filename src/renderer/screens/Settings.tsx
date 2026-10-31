@@ -354,10 +354,14 @@ export function Settings(): React.JSX.Element {
               variant="secondary"
               icon={<Icon name="download" />}
               testId="settings-engine-download"
-              disabled={engineDownloading}
+              disabled={engineDownloading || (enginePath.includes('llama-cpp') && enginePath.endsWith('llama-cli.exe'))}
               onClick={() => void downloadEngine()}
             >
-              {engineDownloading ? `Downloading… ${engineProgress ?? 0}%` : 'Download engine automatically'}
+              {engineDownloading
+                ? `Downloading… ${engineProgress ?? 0}%`
+                : enginePath.includes('llama-cpp') && enginePath.endsWith('llama-cli.exe')
+                  ? 'Already downloaded'
+                  : 'Download engine automatically'}
             </Button>
           </div>
         </div>
