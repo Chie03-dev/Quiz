@@ -31,21 +31,28 @@ function QuizRow({
   onChanged: () => void
 }): React.JSX.Element {
   const [notice, setNotice] = useState('')
+  const [busy, setBusy] = useState<string | null>(null)
 
   const duplicate = (): void => {
+    if (busy) return
+    setBusy('duplicate')
     void window.quiz.duplicateQuiz(quiz.id).then((copy) => {
       if (copy) onChanged()
-    })
+    }).finally(() => setBusy(null))
   }
 
   const remove = (): void => {
-    void window.quiz.deleteQuiz(quiz.id).then(() => onChanged())
+    if (busy) return
+    setBusy('delete')
+    void window.quiz.deleteQuiz(quiz.id).then(() => onChanged()).finally(() => setBusy(null))
   }
 
   const exportQuiz = (): void => {
+    if (busy) return
+    setBusy('export')
     void window.quiz.exportQuiz(quiz.id).then((result) => {
       setNotice(result.ok ? `Exported to ${result.path}` : result.error)
-    })
+    }).finally(() => setBusy(null))
   }
 
   return (
@@ -67,11 +74,11 @@ function QuizRow({
         >
           Open
         </Button>
-        <Button variant="secondary" size="sm" onClick={duplicate}>
-          Duplicate
+        <Button variant="secondary" size="sm" onClick={duplicate} disabled={busy !== null}>
+          {busy === 'duplicate' ? 'Duplicating…' : 'Duplicate'}
         </Button>
-        <Button variant="secondary" size="sm" onClick={exportQuiz}>
-          Export
+        <Button variant="secondary" size="sm" onClick={exportQuiz} disabled={busy !== null}>
+          {busy === 'export' ? 'Exporting…' : 'Export'}
         </Button>
         <ConfirmButton
           label="Delete"
@@ -81,6 +88,7 @@ function QuizRow({
           size="sm"
           testId={`delete-${quiz.id}`}
           confirmTestId={`delete-confirm-${quiz.id}`}
+          disabled={busy !== null}
           onConfirm={remove}
         />
       </span>
@@ -101,6 +109,7 @@ export function QuizLibrary({
   const [showAiDialog, setShowAiDialog] = useState(false)
   const [importing, setImporting] = useState(false)
   const [search, setSearch] = useState('')
+  const [creating, setCreating] = useState(false)
 
   const refresh = useCallback(() => {
     void window.quiz.listQuizzes().then(setQuizzes)
@@ -108,9 +117,11 @@ export function QuizLibrary({
   useEffect(refresh, [refresh])
 
   const create = (): void => {
+    if (creating) return
+    setCreating(true)
     void window.quiz.createQuiz().then((quiz) => {
       if (quiz) onOpen(quiz.id)
-    })
+    }).finally(() => setCreating(false))
   }
 
   const [importReport, setImportReport] = useState<ImportQuizReport | null>(null)
@@ -208,8 +219,8 @@ export function QuizLibrary({
             <Button variant="secondary" icon={<Icon name="upload" />} onClick={importQuiz} disabled={importing}>
               {importing ? 'Importing…' : 'Import…'}
             </Button>
-            <Button variant="primary" icon={<Icon name="plus" />} onClick={create}>
-              New quiz
+            <Button variant="primary" icon={<Icon name="plus" />} onClick={create} disabled={creating}>
+              {creating ? 'Creating…' : 'New quiz'}
             </Button>
           </>
         }
@@ -224,8 +235,8 @@ export function QuizLibrary({
             action={
               search.trim() ? undefined : (
                 <div className="live__controls">
-                  <Button variant="primary" icon={<Icon name="plus" />} onClick={create}>
-                    New quiz
+                  <Button variant="primary" icon={<Icon name="plus" />} onClick={create} disabled={creating}>
+                    {creating ? 'Creating…' : 'New quiz'}
                   </Button>
                   <Button variant="secondary" icon={<Icon name="upload" />} onClick={importQuiz}>
                     Import…
