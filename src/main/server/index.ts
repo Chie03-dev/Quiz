@@ -2,6 +2,16 @@ import Fastify from 'fastify'
 import websocket from '@fastify/websocket'
 import { readFile } from 'node:fs/promises'
 import { z } from 'zod'
+import {
+  answerPayloadSchema,
+  finishPayloadSchema,
+  focusGainedPayloadSchema,
+  focusLostPayloadSchema,
+  heartbeatPayloadSchema,
+  joinPayloadSchema,
+  resumeRequestPayloadSchema,
+  safeParse
+} from '../../shared/schemas'
 import type {
   MemePopPayload,
   PhoneMessage,
@@ -124,23 +134,36 @@ export async function startServer(opts: QuizServerOptions): Promise<QuizServer> 
       if (!allowed.has(obj.t)) return
 
       if (obj.t === 'join') {
-        const joinSchema = z.object({ pin: z.string().optional(), name: z.string().optional(), deviceToken: z.string().optional(), photo: z.unknown().optional() })
-        const parsedJoin = joinSchema.safeParse(obj.d ?? {})
-        if (!parsedJoin.success) return
+        const parsedJoin = safeParse(joinPayloadSchema, obj.d ?? {})
+        if (!parsedJoin) return
         joined = true
-        session.handleJoin(sock, ip, parsedJoin.data as any)
+        session.handleJoin(sock, ip, parsedJoin as any)
       } else if (obj.t === 'hb') {
-        if (joined) session.handleHeartbeat(sock)
+        if (!joined) return
+        if (!safeParse(heartbeatPayloadSchema, obj.d ?? {})) return
+        session.handleHeartbeat(sock)
       } else if (obj.t === 'answer') {
-        if (joined) session.handleAnswer(sock, (obj.d ?? {}) as any)
+        if (!joined) return
+        const parsedAnswer = safeParse(answerPayloadSchema, obj.d ?? {})
+        if (!parsedAnswer) return
+        session.handleAnswer(sock, parsedAnswer as any)
       } else if (obj.t === 'focus_lost') {
-        if (joined) session.handleFocusLost(sock)
+        if (!joined) return
+        const parsedFocusLost = safeParse(focusLostPayloadSchema, obj.d ?? {})
+        if (!parsedFocusLost) return
+        session.handleFocusLost(sock)
       } else if (obj.t === 'focus_gained') {
-        if (joined) session.handleFocusGained(sock)
+        if (!joined) return
+        if (!safeParse(focusGainedPayloadSchema, obj.d ?? {})) return
+        session.handleFocusGained(sock)
       } else if (obj.t === 'resume_request') {
-        if (joined) session.handleResumeRequest(sock)
+        if (!joined) return
+        if (!safeParse(resumeRequestPayloadSchema, obj.d ?? {})) return
+        session.handleResumeRequest(sock)
       } else if (obj.t === 'finish') {
-        if (joined) session.handleFinish(sock)
+        if (!joined) return
+        if (!safeParse(finishPayloadSchema, obj.d ?? {})) return
+        session.handleFinish(sock)
       }
 
     })

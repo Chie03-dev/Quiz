@@ -102,8 +102,7 @@
           ]
         }
       ],
-      "icon": "build/icon.ico",
-      "signExecutable": false
+      "icon": "build/icon.ico"
     },
     "portable": {
       "artifactName": "QuizInstructor-${version}-portable.${ext}"

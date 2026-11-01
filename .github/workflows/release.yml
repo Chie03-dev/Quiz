@@ -29,16 +29,30 @@ jobs:
       - name: Typecheck, build and package
         run: npm run dist
         env:
+          # Signing happens only when a certificate is configured; without one
+          # the build is produced unsigned, exactly as before.
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
           CSC_IDENTITY_AUTO_DISCOVERY: ${{ secrets.CSC_LINK != '' && 'true' || 'false' }}
 
-      - name: SmartScreen reputation check
+      - name: Verify code signature
+        # Meaningful only for a signed build; unsigned builds skip this step.
+        if: secrets.CSC_LINK != ''
         shell: pwsh
         run: |
+          $failed = 0
           Get-ChildItem release/*.exe | ForEach-Object {
-            Write-Host "Built: $($_.Name) ($($_.Length) bytes)"
+            $out = & signtool verify /pa $_.FullName 2>&1
+            if ($LASTEXITCODE -ne 0) {
+              $failed = 1
+              Write-Error "Signature verification failed for $($_.Name): $out"
+            } else {
+              Write-Host "Signature OK: $($_.Name)"
+            }
           }
+          if ($failed -ne 0) { exit 1 }
+
+      - name: Generate checksums
         shell: pwsh
         run: |
           Get-ChildItem release/*.exe | ForEach-Object {
@@ -47,7 +61,7 @@ jobs:
           }
 
       - name: Generate SBOM
-        run: npx --yes @cyclonedx/cyclonedx-npm --output-file release/sbom.json
+        run: npx --yes @cyclonedx/cdxgen -o release/sbom.json --no-install-deps
 
       - name: Upload the exes to the workflow run
         uses: actions/upload-artifact@v4
@@ -63,7 +77,10 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: release/*.exe
+          files: |
+            release/*.exe
+            release/SHA256SUMS.txt
+            release/sbom.json
           draft: true
           generate_release_notes: true
           body: |
@@ -77,9 +94,39 @@ jobs:
               installed, but Windows treats it as a new program each time and
               may ask about the firewall again.
 
-            **Windows may warn you about an unknown publisher.** The build is
-            not code-signed, so SmartScreen shows "Windows protected your PC".
-            Click **More info** -> **Run anyway**.
+            ## Verifying the download
+
+            `SHA256SUMS.txt` next to the installers lists the SHA-256 of each
+            build. Check it before running anything:
+
+            ```powershell
+            Get-FileHash .\QuizInstructor-<version>-setup.exe -Algorithm SHA256
+            ```
+
+            The hash must match the line for that file in `SHA256SUMS.txt`.
+            `sbom.json` is a CycloneDX software bill of materials for the same
+            build.
+
+            ## Code signing and SmartScreen
+
+            This build is signed when a certificate is configured. A signed
+            build still needs a few installs before Microsoft SmartScreen stops
+            warning about the publisher - that reputation is earned over time,
+            so an early signed release can still show a warning. An unsigned
+            build always shows **Windows protected your PC**; click
+            **More info** -> **Run anyway**.
+
+            ## Updating and rolling back
+
+            - **Updating:** run the new installer (or replace the portable exe).
+              The app migrates its database on startup; your quiz library, meme
+              tray and saved results are kept.
+            - **Before a major update:** use the app's **Backup data** button
+              (Settings) to copy `quiz-library.db` somewhere safe.
+            - **Rolling back:** install the previous version from the Releases
+              list. The database is forward-compatible only - after rolling
+              back, restore the backup you took before updating, because a
+              newer database may contain tables the older app does not know.
 
             The app runs a quiz server on your LAN (ports 8080-8089) and shows
             a QR code the students scan. When Windows Firewall is blocking that,
