@@ -3,6 +3,22 @@ import { z } from 'zod'
 import { existsSync, promises as fs } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { extname, dirname, join } from 'node:path'
+import {
+  aiAutoKeyInputSchema,
+  aiGenerateOptsSchema,
+  enginePathSchema,
+  ipSchema,
+  lockSchema,
+  memeIdSchema,
+  memePopTargetsSchema,
+  memeSavePayloadSchema,
+  modelIdSchema,
+  quizIdSchema,
+  resultAnswerUpdateSchema,
+  safeParse,
+  studentIdSchema,
+  storedQuizSchema
+} from '../shared/schemas'
 import type {
   ExportQuizResult,
   ImportQuizResult,
@@ -286,16 +302,16 @@ function registerIpc(): void {
 
   ipcMain.handle('server:startQuiz', (_event, quizId: unknown): StartQuizResult => {
     if (!server || !library) return { ok: false, message: 'The server is not ready yet.' }
-    if (typeof quizId !== 'string') return { ok: false, message: 'No quiz is selected.' }
+    if (!quizIdSchema.safeParse(quizId).success) return { ok: false, message: 'No quiz is selected.' }
     // Refuses empty or draft quizzes and says which questions block the start.
-    const attempt = runtimeQuizForStart(library, quizId)
+    const attempt = runtimeQuizForStart(library, quizId as string)
     if (!attempt.ok) return attempt
     if (!server.startQuiz(attempt.quiz)) {
       return { ok: false, message: 'The quiz could not start. Is at least one student in the lobby?' }
     }
     // The library quiz is kept for the results snapshot: it carries the
     // full answer keys, not just the flattened ones the run needs.
-    activeQuiz = library.get(quizId)
+    activeQuiz = library.get(quizId as string)
     activeQuizStartedAt = Date.now()
     savedResultId = null
     latestQuiz = server.session.quizState()
@@ -314,13 +330,13 @@ function registerIpc(): void {
   })
 
   ipcMain.handle('server:kick', (_event, studentId: unknown) => {
-    if (typeof studentId !== 'string' || !server) return false
-    return server.session.kick(studentId)
+    if (!studentIdSchema.safeParse(studentId).success || !server) return false
+    return server.session.kick(studentId as string)
   })
 
   ipcMain.handle('server:selectIp', (_event, ip: unknown) => {
-    if (typeof ip !== 'string' || !server) return false
-    const ok = server.selectIp(ip)
+    if (!ipSchema.safeParse(ip).success || !server) return false
+    const ok = server.selectIp(ip as string)
     if (ok && latestServer) pushState()
     return ok
   })
@@ -328,16 +344,16 @@ function registerIpc(): void {
   // --- step 3: lock and pause. Instructor commands are IPC-only. ---
 
   ipcMain.handle('server:setLock', (_event, on: unknown) => {
-    if (typeof on !== 'boolean' || !server) return false
-    server.setLock(on)
+    if (!lockSchema.safeParse(on).success || !server) return false
+    server.setLock(on as boolean)
     latestLockMode = server.session.lockEnabled()
     pushState()
     return true
   })
 
   ipcMain.handle('server:approveResume', (_event, studentId: unknown) => {
-    if (typeof studentId !== 'string' || !server) return false
-    return server.approveResume(studentId)
+    if (!studentIdSchema.safeParse(studentId).success || !server) return false
+    return server.approveResume(studentId as string)
   })
 
   ipcMain.handle('server:approveAllResume', () => server ? server.approveAllResume() : 0)
@@ -362,8 +378,8 @@ function registerIpc(): void {
   })
 
   ipcMain.handle('server:adjustTimer', (_event, deltaMs: unknown) => {
-    if (!server || typeof deltaMs !== 'number' || !Number.isFinite(deltaMs)) return false
-    const ok = server.adjustTimer(deltaMs)
+    if (!server || !z.number().finite().safeParse(deltaMs).success) return false
+    const ok = server.adjustTimer(deltaMs as number)
     if (ok) latestQuiz = server.session.quizState()
     if (ok) pushState()
     return ok
@@ -374,8 +390,8 @@ function registerIpc(): void {
   ipcMain.handle('lib:list', () => library?.list() ?? [])
 
   ipcMain.handle('lib:get', (_event, id: unknown) => {
-    if (typeof id !== 'string' || !library) return null
-    return library.get(id)
+    if (!quizIdSchema.safeParse(id).success || !library) return null
+    return library.get(id as string)
   })
 
   ipcMain.handle('lib:create', (_event, title: unknown) => {
@@ -384,22 +400,21 @@ function registerIpc(): void {
   })
 
   ipcMain.handle('lib:duplicate', (_event, id: unknown) => {
-    if (typeof id !== 'string' || !library) return null
-    return library.duplicate(id)
+    if (!quizIdSchema.safeParse(id).success || !library) return null
+    return library.duplicate(id as string)
   })
 
   ipcMain.handle('lib:delete', (_event, id: unknown) => {
-    if (typeof id !== 'string' || !library) return false
-    return library.delete(id)
+    if (!quizIdSchema.safeParse(id).success || !library) return false
+    return library.delete(id as string)
   })
 
   ipcMain.handle('lib:save', (_event, quiz: unknown): SaveQuizResult => {
     if (!library) return { ok: false, error: 'The quiz library is not open.' }
-    const schema = z.object({ id: z.string(), title: z.string(), timeLimitSec: z.number(), questions: z.array(z.any()) })
-    const parsed = schema.safeParse(quiz)
-    if (!parsed.success) return { ok: false, error: 'Received an invalid quiz object.' }
+    const parsed = safeParse(storedQuizSchema, quiz)
+    if (!parsed) return { ok: false, error: 'Received an invalid quiz object.' }
     try {
-      return { ok: true, quiz: library.save(parsed.data as StoredQuiz) }
+      return { ok: true, quiz: library.save(parsed as unknown as StoredQuiz) }
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) }
     }
@@ -407,8 +422,8 @@ function registerIpc(): void {
 
   ipcMain.handle('lib:export', async (_event, id: unknown): Promise<ExportQuizResult> => {
     if (!library) return { ok: false, error: 'The quiz library is not open.' }
-    if (typeof id !== 'string') return { ok: false, error: 'Invalid quiz id.' }
-    const quiz = library.get(id)
+    if (!quizIdSchema.safeParse(id).success) return { ok: false, error: 'Invalid quiz id.' }
+    const quiz = library.get(id as string)
     if (!quiz) return { ok: false, error: 'That quiz is no longer in the library.' }
     try {
       const save = await dialog.showSaveDialog({
@@ -488,6 +503,20 @@ function registerIpc(): void {
       return { ok: false, error: err instanceof Error ? err.message : String(err) }
     }
   })
+
+  ipcMain.handle('data:restore', async () => {
+    if (!win || !dbPath) return { ok: false, error: 'No database.' }
+    try {
+      const open = await dialog.showOpenDialog(win, { title: 'Restore data from backup', properties: ['openFile'], filters: [{ name: 'Database', extensions: ['db'] }] })
+      if (open.canceled || !open.filePaths[0]) return { ok: false, error: 'cancelled', cancelled: true }
+      await fs.copyFile(open.filePaths[0], dbPath)
+      return { ok: true, restartRequired: true }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+  // Reading the firewall needs no admin; installing always comes from a click.
+  ipcMain.handle('firewall:status', () => checkFirewallRules())
   ipcMain.handle('firewall:install', () => installFirewallRules())
   // The same commands, one per line, so the instructor can run them by hand
   // when the app could not raise its own prompt.
@@ -501,8 +530,10 @@ function registerIpc(): void {
 
   ipcMain.handle('memes:save', (_event, payload: unknown): MemeSaveResult => {
     if (!memeStore || !memeAssets) return { ok: false, error: 'The meme tray is not open.' }
+    const parsed = safeParse(memeSavePayloadSchema, payload)
+    if (!parsed) return { ok: false, error: 'The image has no name.' }
     try {
-      const p = payload as Partial<MemeSavePayload> | null
+      const p = parsed as Partial<MemeSavePayload> | null
       if (!p || typeof p.name !== 'string' || !p.name.trim()) {
         return { ok: false, error: 'The image has no name.' }
       }
@@ -552,17 +583,17 @@ function registerIpc(): void {
   })
 
   ipcMain.handle('memes:delete', (_event, id: unknown) => {
-    if (typeof id !== 'string' || !memeStore || !memeAssets) return false
-    const row = memeStore.get(id)
+    if (!memeIdSchema.safeParse(id).success || !memeStore || !memeAssets) return false
+    const row = memeStore.get(id as string)
     if (!row) return false
     memeAssets.remove(row.fileName)
-    return memeStore.delete(id)
+    return memeStore.delete(id as string)
   })
 
   // The full image as a data URL, for the instructor's own preview only.
   ipcMain.handle('memes:data', (_event, id: unknown) => {
-    if (typeof id !== 'string' || !memeAssets) return null
-    const asset = memeAssets.byId(id)
+    if (!memeIdSchema.safeParse(id).success || !memeAssets) return null
+    const asset = memeAssets.byId(id as string)
     if (!asset) return null
     const bytes = memeAssets.read(asset.fileName)
     if (!bytes) return null
@@ -573,8 +604,8 @@ function registerIpc(): void {
 
   ipcMain.handle('server:popMeme', (_event, memeId: unknown, studentIds: unknown): MemePopResult => {
     if (!server) return { ok: false, error: 'The server is not ready yet.' }
-    if (typeof memeId !== 'string') return { ok: false, error: 'No meme is selected.' }
-    const payload = memeStore ? buildPopPayload(memeStore, memeId, MEME_DURATION_MS) : null
+    if (!memeIdSchema.safeParse(memeId).success) return { ok: false, error: 'No meme is selected.' }
+    const payload = memeStore ? buildPopPayload(memeStore, memeId as string, MEME_DURATION_MS) : null
     if (!payload) return { ok: false, error: 'That meme is no longer in the tray.' }
     const targets = toIdList(studentIds)
     const sent = server.popMeme(payload, targets)
@@ -600,22 +631,22 @@ function registerIpc(): void {
   ipcMain.handle('results:list', () => resultsStore?.list() ?? [])
 
   ipcMain.handle('results:get', (_event, id: unknown) => {
-    if (typeof id !== 'string' || !resultsStore) return null
-    return resultsStore.get(id)
+    if (!z.string().min(1).safeParse(id).success || !resultsStore) return null
+    return resultsStore.get(id as string)
   })
 
   ipcMain.handle('results:delete', (_event, id: unknown) => {
-    if (typeof id !== 'string' || !resultsStore) return false
-    const deleted = resultsStore.delete(id)
+    if (!z.string().min(1).safeParse(id).success || !resultsStore) return false
+    const deleted = resultsStore.delete(id as string)
     if (deleted && id === savedResultId) savedResultId = null
     return deleted
   })
 
   ipcMain.handle('results:updateAnswer', (_event, input: unknown): ResultOperationResult => {
     if (!resultsStore) return { ok: false, error: 'The results are not open.' }
-    if (!input || typeof input !== 'object') return { ok: false, error: 'Invalid answer update.' }
-    const { answerId, pointsAwarded, correct, notes } = input as Partial<SaveResultAnswerInput>
-    if (typeof answerId !== 'string') return { ok: false, error: 'Invalid answer id.' }
+    const parsed = safeParse(resultAnswerUpdateSchema, input)
+    if (!parsed) return { ok: false, error: 'Invalid answer update.' }
+    const { answerId, pointsAwarded, correct, notes } = parsed
     if (typeof pointsAwarded !== 'number' || !Number.isFinite(pointsAwarded)) {
       return { ok: false, error: 'The points must be a number.' }
     }
@@ -631,8 +662,8 @@ function registerIpc(): void {
   // Exports one saved session as a CSV score sheet.
   ipcMain.handle('results:exportCsv', async (_event, id: unknown): Promise<{ ok: boolean; path?: string; error?: string }> => {
     if (!resultsStore) return { ok: false, error: 'The results are not open.' }
-    if (typeof id !== 'string') return { ok: false, error: 'Invalid session id.' }
-    const detail = resultsStore.get(id)
+    if (!z.string().min(1).safeParse(id).success) return { ok: false, error: 'Invalid session id.' }
+    const detail = resultsStore.get(id as string)
     if (!detail) return { ok: false, error: 'That session is no longer available.' }
     if (!win) return { ok: false, error: 'The window is not available.' }
     try {
@@ -715,9 +746,9 @@ function registerIpc(): void {
   })
 
   ipcMain.handle('ai:readFile', async (_event, filePath: unknown): Promise<string> => {
-    if (typeof filePath !== 'string' || !aiManager) return ''
+    if (!z.string().min(1).safeParse(filePath).success || !aiManager) return ''
     try {
-      return await aiManager.extractText(filePath)
+      return await aiManager.extractText(filePath as string)
     } catch {
       return ''
     }
@@ -726,9 +757,10 @@ function registerIpc(): void {
 
   ipcMain.handle('ai:generate', async (_event, opts: unknown): Promise<ImportQuizResult> => {
     if (!library || !aiManager) return { ok: false, error: 'The AI provider is not available.' }
+    const parsedOpts = safeParse(aiGenerateOptsSchema, opts)
+    if (!parsedOpts) return { ok: false, error: 'Invalid generation options.' }
     try {
-      if (!opts || typeof opts !== 'object') return { ok: false, error: 'Invalid generation options.' }
-      const o = opts as {
+      const o = parsedOpts as {
         sourceText?: string
         filePath?: string
         topic?: string
@@ -802,9 +834,10 @@ function registerIpc(): void {
   })
   ipcMain.handle('ai:autoKey', async (_event, input: unknown): Promise<AutoKeyResult> => {
     if (!aiManager) return { questions: [] }
+    const parsed = safeParse(aiAutoKeyInputSchema, input)
+    if (!parsed) return { questions: [] }
     try {
-      if (!input || typeof input !== 'object') return { questions: [] }
-      const o = input as { questions?: unknown; sourceText?: string }
+      const o = parsed as { questions?: unknown; sourceText?: string }
       if (!Array.isArray(o.questions)) return { questions: [] }
       const questions = o.questions.filter((q): q is StoredQuestion =>
         q && typeof q === 'object' &&
@@ -831,8 +864,8 @@ function registerIpc(): void {
 
   ipcMain.handle('ai:setModel', (_event, modelId: unknown): boolean => {
     if (!modelStore || !aiManager) return false
-    if (modelId !== null && typeof modelId !== 'string') return false
-    const changed = modelStore.setActiveModel(modelId)
+    if (!modelIdSchema.safeParse(modelId).success) return false
+    const changed = modelStore.setActiveModel(modelId as string | null)
     if (!changed) return false
     // The chosen model answers from now on, without a restart.
     aiManager.setProvider(createProviderForStore(modelStore))
@@ -841,8 +874,8 @@ function registerIpc(): void {
 
   ipcMain.handle('ai:deleteModel', (_event, modelId: unknown): boolean => {
     if (!modelStore || !aiManager) return false
-    if (typeof modelId !== 'string') return false
-    const deleted = modelStore.deleteModel(modelId)
+    if (!z.string().min(1).safeParse(modelId).success) return false
+    const deleted = modelStore.deleteModel(modelId as string)
     if (!deleted) return false
     // Deleting the active model falls back to the built-in generator.
     aiManager.setProvider(createProviderForStore(modelStore))
@@ -851,16 +884,16 @@ function registerIpc(): void {
 
   ipcMain.handle('ai:downloadModel', async (_event, modelId: unknown): Promise<DownloadResult> => {
     if (!modelStore) return { ok: false, error: 'The model store is not initialized.' }
-    if (typeof modelId !== 'string') return { ok: false, error: 'Invalid model id.' }
-    return modelStore.downloadModel(modelId, (progress) => {
+    if (!z.string().min(1).safeParse(modelId).success) return { ok: false, error: 'Invalid model id.' }
+    return modelStore.downloadModel(modelId as string, (progress) => {
       win?.webContents.send('ai:modelProgress', { modelId, ...progress })
     })
   })
 
   ipcMain.handle('ai:setEngine', (_event, enginePath: unknown): boolean => {
     if (!modelStore || !aiManager) return false
-    if (enginePath !== null && typeof enginePath !== 'string') return false
-    const saved = modelStore.setEnginePath(enginePath)
+    if (!enginePathSchema.safeParse(enginePath).success) return false
+    const saved = modelStore.setEnginePath(enginePath as string | null)
     if (!saved) return false
     aiManager.setProvider(createProviderForStore(modelStore))
     return true
@@ -877,8 +910,8 @@ function registerIpc(): void {
 
   ipcMain.handle('ai:setEmbeddingModel', (_event, modelId: unknown): boolean => {
     if (!modelStore) return false
-    if (modelId !== null && typeof modelId !== 'string') return false
-    const changed = modelStore.setActiveEmbeddingModel(modelId)
+    if (!modelIdSchema.safeParse(modelId).success) return false
+    const changed = modelStore.setActiveEmbeddingModel(modelId as string | null)
     if (!changed) return false
     // The user swapped the search model: drop the running server so the next
     // search starts the new one.
@@ -932,7 +965,8 @@ function createEmbedder(): LazyEmbedder {  return new LazyEmbedder(() => {
   })
 }
 
-/** The student ids of a targeted pop; undefined means every student. */function toIdList(value: unknown): string[] | undefined {
+/** The student ids of a targeted pop; undefined means every student. */
+function toIdList(value: unknown): string[] | undefined {
   if (!Array.isArray(value)) return undefined
   const ids = value.filter((id): id is string => typeof id === 'string' && id.length > 0)
   return ids.length > 0 ? ids : undefined
@@ -1009,10 +1043,10 @@ app.whenReady().then(async () => {
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) void createWindow()
   })
-})
-
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit()
+  // Renderer crash logging for diagnostics (no telemetry).
+  app.on('window-all-closed', () => {
+    if (process.platform !== 'darwin') app.quit()
+  })
 })
 
 app.on('before-quit', () => {

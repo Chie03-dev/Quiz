@@ -85,6 +85,8 @@ export async function startServer(opts: QuizServerOptions): Promise<QuizServer> 
   let port = FIRST_PORT
   const connectionsByIp = new Map<string, number>()
   const MAX_CONNECTIONS_PER_IP = 50
+  const msgRate = new Map<string, { count: number; windowStart: number }>()
+  const MAX_MSG_PER_SEC = 100
   let advertiser: BonjourAdvertiser | null = null
 
   const session = new QuizSession(
@@ -119,6 +121,13 @@ export async function startServer(opts: QuizServerOptions): Promise<QuizServer> 
     let joined = false
 
     sock.on('message', (raw: unknown) => {
+      const now = Date.now()
+      const r = msgRate.get(ip)
+      if (!r || now - r.windowStart >= 1000) msgRate.set(ip, { count: 1, windowStart: now })
+      else {
+        r.count++
+        if (r.count > MAX_MSG_PER_SEC) return
+      }
       const buf = Buffer.isBuffer(raw) ? raw : Buffer.from(String(raw))
       if (buf.byteLength > 64 * 1024) return
       let parsed: unknown
