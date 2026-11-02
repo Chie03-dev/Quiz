@@ -634,8 +634,6 @@ export interface ModelInfo {
   sizeBytes: number
   /** File name under the models directory once downloaded. */
   fileName: string
-  /** URL the model is downloaded from. */
-  downloadUrl: string
   /** Whether the model is currently downloaded and ready to use. */
   downloaded: boolean
   /** Semver-like identifier, e.g. "1" or "gemma-2b-q4-2024-08". */

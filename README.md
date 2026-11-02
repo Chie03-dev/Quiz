@@ -56,7 +56,7 @@ The rules added are idempotent (no duplicates on repeat) and use `profile=any` s
 
 ## Offline AI
 
-`Settings` manages downloaded GGUF models (Qwen2.5, Phi-3 Mini). They answer offline; nothing is sent over the network. A built-in generator always works as a fallback. Point the app at your `llama-cli` binary in Settings to use a downloaded model. The model files live in `%APPDATA%\quiz-instructor\models`.
+Settings lets you point the app at a GGUF model file and the llama-cli binary you obtained by other means..
 
 **Model safety checks** (so a small model doesn't invent answers):
 - Every answer is looked up in the source text.

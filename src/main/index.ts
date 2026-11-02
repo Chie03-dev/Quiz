@@ -49,7 +49,7 @@ import { buildSessionSnapshot } from './results/session'
 import { MemeAssets, MEME_DIR_NAME, MEME_MAX_BYTES, buildPopPayload, seedSampleMeme } from './memes/store'
 import { parseQuizJson, serializeQuiz } from './quizFormat'
 import { describeError, importQuizFile } from './import'
-import { createAiManagerWithStore, createProviderForStore, ModelStore, type ModelInfo, type DownloadResult } from './ai'
+import { createAiManagerWithStore, createProviderForStore, ModelStore, type ModelInfo } from './ai'
 import { fileBlocks, textBlocks } from './ai/corpus'
 import { LazyEmbedder, LlamaEmbedder } from './ai/rag/embeddings'
 import type { AiManager } from './ai'
@@ -882,14 +882,6 @@ function registerIpc(): void {
     return true
   })
 
-  ipcMain.handle('ai:downloadModel', async (_event, modelId: unknown): Promise<DownloadResult> => {
-    if (!modelStore) return { ok: false, error: 'The model store is not initialized.' }
-    if (!z.string().min(1).safeParse(modelId).success) return { ok: false, error: 'Invalid model id.' }
-    return modelStore.downloadModel(modelId as string, (progress) => {
-      win?.webContents.send('ai:modelProgress', { modelId, ...progress })
-    })
-  })
-
   ipcMain.handle('ai:setEngine', (_event, enginePath: unknown): boolean => {
     if (!modelStore || !aiManager) return false
     if (!enginePathSchema.safeParse(enginePath).success) return false
@@ -897,15 +889,6 @@ function registerIpc(): void {
     if (!saved) return false
     aiManager.setProvider(createProviderForStore(modelStore))
     return true
-  })
-
-  ipcMain.handle('ai:downloadEngine', async (): Promise<{ ok: boolean; error?: string }> => {
-    if (!modelStore || !aiManager) return { ok: false, error: 'The model store is not initialized.' }
-    const result = await modelStore.downloadEngine((percent) => {
-      win?.webContents.send('ai:engineProgress', { percent })
-    })
-    if (result.ok) aiManager.setProvider(createProviderForStore(modelStore))
-    return result
   })
 
   ipcMain.handle('ai:setEmbeddingModel', (_event, modelId: unknown): boolean => {

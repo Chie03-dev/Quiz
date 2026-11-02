@@ -8,30 +8,32 @@ import { z } from 'zod'
 
 // --- WebSocket message payload schemas (phone -> server) ---
 
+/** A phone's join payload. pin and name are required by docs/protocol.md. */
 export const joinPayloadSchema = z.object({
-  pin: z.string().optional(),
-  name: z.string().optional(),
+  pin: z.string().min(1),
+  name: z.string().min(1),
   deviceToken: z.string().optional(),
   photo: z.unknown().optional()
 })
 
+/** A phone's answer payload. value is narrowed per question type by quizRun.isValidAnswer. */
 export const answerPayloadSchema = z.object({
-  qid: z.unknown(),
-  value: z.unknown(),
-  seq: z.unknown()
+  qid: z.string().min(1),
+  value: z.union([z.string(), z.boolean(), z.array(z.string()), z.record(z.string(), z.string())]),
+  seq: z.number().int().nonnegative()
 })
 
 export const focusLostPayloadSchema = z.object({
   reason: z.enum(['background', 'window', 'unpinned']).optional()
 })
 
-export const heartbeatPayloadSchema = z.object({}).passthrough()
+export const heartbeatPayloadSchema = z.object({}).strict()
 
-export const focusGainedPayloadSchema = z.object({}).passthrough()
+export const focusGainedPayloadSchema = z.object({}).strict()
 
-export const resumeRequestPayloadSchema = z.object({}).passthrough()
+export const resumeRequestPayloadSchema = z.object({}).strict()
 
-export const finishPayloadSchema = z.object({}).passthrough()
+export const finishPayloadSchema = z.object({}).strict()
 
 // --- IPC payload schemas ---
 
@@ -61,7 +63,7 @@ export const storedQuizSchema = z.object({
   title: z.string(),
   timeLimitSec: z.number(),
   questions: z.array(z.any())
-}).passthrough()
+})
 
 export const modelIdSchema = z.string().nullable().optional()
 

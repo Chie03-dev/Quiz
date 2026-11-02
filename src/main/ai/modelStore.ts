@@ -1,11 +1,7 @@
-import { createWriteStream, existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { get as httpGet, type ClientRequest, type IncomingMessage } from 'node:http'
-import { get as httpsGet } from 'node:https'
-import { URL } from 'node:url'
-import JSZip from 'jszip'
 
-import type { AiTiming, DownloadProgress, DownloadResult, ModelInfo } from '../../shared/types'
+import type { AiTiming, ModelInfo } from '../../shared/types'
 import type { ModelConfig } from './types'
 
 /** The seconds a question takes before anything was measured. */
@@ -13,7 +9,9 @@ export const DEFAULT_SECONDS_PER_QUESTION = 6
 /** The seconds the model needs before it answers the first question. */
 export const DEFAULT_START_UP_SECONDS = 10
 
-/** The catalog of models the app knows how to download. */
+/** The catalog of models the app knows about. The app never downloads models;
+ * an instructor who wants a GGUF model places the file in the models folder
+ * (or points the app at it) by other means, keeping the app fully offline. */
 export const AVAILABLE_MODELS: Omit<ModelInfo, 'downloaded'>[] = [
   {
     id: 'qwen2.5-1.5b-instruct-q4',
@@ -22,8 +20,6 @@ export const AVAILABLE_MODELS: Omit<ModelInfo, 'downloaded'>[] = [
       'About 1.0 GB. It writes good questions you can mostly trust - still worth a read before the quiz.',
     sizeBytes: 1_117_320_736,
     fileName: 'qwen2.5-1.5b-instruct-q4_k_m.gguf',
-    downloadUrl:
-      'https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf',
     version: 'q4_k_m'
   },
   {
@@ -33,19 +29,9 @@ export const AVAILABLE_MODELS: Omit<ModelInfo, 'downloaded'>[] = [
       'About 2.2 GB. The strongest of the three, but the slowest on a laptop.',
     sizeBytes: 2_393_231_072,
     fileName: 'Phi-3-mini-4k-instruct-q4.gguf',
-    downloadUrl:
-      'https://huggingface.co/microsoft/Phi-3-mini-4k-instruct-gguf/resolve/main/Phi-3-mini-4k-instruct-q4.gguf',
     version: 'q4'
-  },
+  }
 ]
-
-/** How many redirects a download may follow before it gives up. */
-const MAX_REDIRECTS = 5
-
-/** The pinned llama.cpp release used for the automatic engine download. */
-const LLAMA_CPP_TAG = 'b11960'
-const LLAMA_CPP_ASSET = 'llama-b11960-bin-win-cpu-x64.zip'
-const LLAMA_CPP_URL = `https://github.com/ggml-org/llama.cpp/releases/download/${LLAMA_CPP_TAG}/${LLAMA_CPP_ASSET}`
 
 /**
  * Where the downloaded models live and which one the AI layer uses.
@@ -160,7 +146,7 @@ export class ModelStore {
     return { provider: 'gguf', model: model.name, temperature: 0.7 }
   }
 
-  /** The llama.cpp binary the app should use, or null for the auto-detected one. */
+  /** The llama.cpp binary the app should use, or null when none is configured. */
   getEnginePath(): string | null {
     const path = this.engineFile()
     if (existsSync(path)) {
@@ -173,11 +159,10 @@ export class ModelStore {
           }
         }
       } catch {
-        // Fall through to the bundled engine.
+        // Fall through to null.
       }
     }
-    const bundled = this.bundledEnginePath()
-    return bundled && existsSync(bundled) ? bundled : null
+    return null
   }
 
   /** Remembers the llama.cpp binary to run. An empty path clears it. */
@@ -186,86 +171,6 @@ export class ModelStore {
     const value = enginePath && enginePath.trim().length > 0 ? enginePath.trim() : null
     writeFileSync(this.engineFile(), JSON.stringify({ enginePath: value }, null, 2), 'utf8')
     return true
-  }
-
-  /** Where the automatically downloaded llama.cpp build is unpacked. */
-  private engineDir(): string {
-    return join(this.modelsDir, '..', 'llama-cpp', LLAMA_CPP_TAG)
-  }
-
-  /** The binary inside the unpacked build, when present. */
-  private bundledEnginePath(): string {
-    return join(this.engineDir(), 'llama-cli.exe')
-  }
-
-  /** Downloads and unpacks the llama.cpp Windows CPU build. */
-  async downloadEngine(onProgress: (percent: number) => void = () => {}): Promise<{ ok: boolean; error?: string }> {
-    this.ensureDir()
-    const dir = this.engineDir()
-    if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
-    if (existsSync(this.bundledEnginePath())) return { ok: true }
-
-    try {
-      onProgress(0)
-      const response = await fetch(LLAMA_CPP_URL)
-      if (!response.ok) return { ok: false, error: `Download failed: HTTP ${response.status}` }
-      const total = Number(response.headers.get('content-length') ?? 0)
-      const reader = response.body?.getReader()
-      if (!reader) return { ok: false, error: 'The download stream is unavailable.' }
-      const chunks: Uint8Array[] = []
-      let received = 0
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        if (value) {
-          chunks.push(value)
-          received += value.byteLength
-          if (total > 0) onProgress(Math.min(95, Math.round((received / total) * 100)))
-        }
-      }
-      const buffer = Buffer.concat(chunks.map((c) => Buffer.from(c)))
-      onProgress(96)
-      const zip = await JSZip.loadAsync(buffer)
-      const entries = Object.keys(zip.files)
-      let written = 0
-      for (const name of entries) {
-        const file = zip.files[name]
-        if (file.dir) continue
-        // Guard against path traversal in the archive.
-        const relative = name.replace(/^[/\\]+/, '')
-        if (relative.includes('..')) continue
-        const target = join(dir, relative)
-        const parent = join(target, '..')
-        if (!existsSync(parent)) mkdirSync(parent, { recursive: true })
-        const data = await file.async('nodebuffer')
-        writeFileSync(target, data)
-        written++
-        onProgress(96 + Math.round((written / Math.max(1, entries.length)) * 4))
-      }
-      if (!existsSync(this.bundledEnginePath())) {
-        return { ok: false, error: 'The downloaded archive did not contain llama-cli.exe.' }
-      }
-      onProgress(100)
-      return { ok: true }
-    } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) }
-    }
-  }
-
-  /** Downloads a model. Calls onProgress with 0..100. */
-  async downloadModel(
-    modelId: string,
-    onProgress: (p: DownloadProgress) => void
-  ): Promise<DownloadResult> {
-    const model = AVAILABLE_MODELS.find((m) => m.id === modelId)
-    if (!model) return { ok: false, error: `Unknown model ${modelId}` }
-    if (this.isDownloaded(modelId)) return { ok: true, modelId }
-
-    this.ensureDir()
-    const dest = join(this.modelsDir, model.fileName)
-    onProgress({ loaded: 0, total: model.sizeBytes, percent: 0 })
-
-    return this.fetchModel(new URL(model.downloadUrl), dest, model, onProgress, MAX_REDIRECTS)
   }
 
   /** Deletes a downloaded model file. */
@@ -363,120 +268,7 @@ export class ModelStore {
     )
   }
 
-  /**
-   * Downloads one file, following the redirects the model hosts use.
-   */
-  private fetchModel(
-    url: URL,
-    dest: string,
-    model: Omit<ModelInfo, 'downloaded'>,
-    onProgress: (p: DownloadProgress) => void,
-    redirectsLeft: number
-  ): Promise<DownloadResult> {
-    return new Promise((resolve) => {
-      let settled = false
-      const finish = (result: DownloadResult): void => {
-        if (settled) return
-        settled = true
-        resolve(result)
-      }
-
-      const request: ClientRequest = this.open(url, (res: IncomingMessage) => {
-        const status = res.statusCode ?? 0
-        const location = res.headers.location
-
-        if (status >= 300 && status < 400 && location) {
-          res.resume()
-          if (redirectsLeft <= 0) {
-            finish({ ok: false, error: 'The download followed too many redirects.' })
-            return
-          }
-          let next: URL
-          try {
-            next = new URL(location, url)
-          } catch {
-            finish({ ok: false, error: 'The download redirected to an invalid address.' })
-            return
-          }
-          this.fetchModel(next, dest, model, onProgress, redirectsLeft - 1).then(finish)
-          return
-        }
-
-        if (status >= 400) {
-          res.resume()
-          this.removeFile(dest)
-          finish({ ok: false, error: `The download failed (HTTP ${status}).` })
-          return
-        }
-
-        const header = res.headers['content-length']
-        const total = header ? Number(header) : 0
-        let loaded = 0
-        const file = createWriteStream(dest)
-
-        file.on('error', (err: Error) => {
-          this.removeFile(dest)
-          finish({ ok: false, error: err.message })
-        })
-
-        file.on('close', () => {
-          if (settled) return
-          let actual = 0
-          try {
-            actual = statSync(dest).size
-          } catch {
-            actual = 0
-          }
-          if (actual === 0) {
-            this.removeFile(dest)
-            finish({ ok: false, error: 'The download produced an empty file.' })
-            return
-          }
-          if (total > 0 && actual < total * 0.99) {
-            this.removeFile(dest)
-            finish({ ok: false, error: 'The downloaded file is incomplete.' })
-            return
-          }
-          finish({ ok: true, modelId: model.id })
-        })
-
-        res.on('data', (chunk: Buffer) => {
-          loaded += chunk.length
-          const known = total > 0 ? total : model.sizeBytes
-          onProgress({
-            loaded,
-            total: known,
-            percent: total > 0 ? Math.min(100, Math.round((loaded / total) * 100)) : 0
-          })
-        })
-
-        res.on('error', () => {
-          file.destroy()
-          this.removeFile(dest)
-          finish({ ok: false, error: 'The connection dropped while downloading.' })
-        })
-
-        res.on('end', () => {
-          file.end()
-        })
-
-        res.pipe(file)
-      })
-
-      request.on('error', (err: Error) => {
-        this.removeFile(dest)
-        finish({ ok: false, error: err.message })
-      })
-    })
-  }
-
-  /** Opens a request for either protocol the model hosts use. */
-  private open(url: URL, onResponse: (res: IncomingMessage) => void): ClientRequest {
-    if (url.protocol === 'http:') return httpGet(url, onResponse)
-    return httpsGet(url, onResponse)
-  }
-
-  private ensureDir(): void {
+    private ensureDir(): void {
     if (!existsSync(this.modelsDir)) mkdirSync(this.modelsDir, { recursive: true })
   }
 

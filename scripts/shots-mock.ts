@@ -60,10 +60,10 @@ const MOCK_HTML_CONTENT = `<!doctype html>
         thumb: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
         createdAt: 1728000000000 }];
       var aiModels = [
-        { id: 'qwen2.5-0.5b', name: 'Qwen2.5 0.5B', description: 'Small model for basic question generation.', sizeBytes: 300000000, fileName: 'qwen2.5-0.5b-q4_0.gguf', downloadUrl: 'https://example.com/qwen2.5-0.5b-q4_0.gguf', downloaded: true, version: '1', kind: 'chat', active: true },
-        { id: 'qwen2.5-1.5b', name: 'Qwen2.5 1.5B', description: 'Medium model for broader coverage.', sizeBytes: 900000000, fileName: 'qwen2.5-1.5b-q4_0.gguf', downloadUrl: 'https://example.com/qwen2.5-1.5b-q4_0.gguf', downloaded: false, version: '1', kind: 'chat' },
-        { id: 'phi3-mini', name: 'Phi-3 Mini', description: 'Efficient model for fast answering.', sizeBytes: 1200000000, fileName: 'phi3-mini-q4.gguf', downloadUrl: 'https://example.com/phi3-mini-q4.gguf', downloaded: true, version: '1', kind: 'chat' },
-        { id: 'bge-small', name: 'BGE Small', description: 'Embedding search model.', sizeBytes: 25000000, fileName: 'bge-small.gguf', downloadUrl: 'https://example.com/bge-small.gguf', downloaded: true, version: '1', kind: 'embedding', active: true }
+        { id: 'qwen2.5-0.5b', name: 'Qwen2.5 0.5B', description: 'Small model for basic question generation.', sizeBytes: 300000000, fileName: 'qwen2.5-0.5b-q4_0.gguf', downloaded: true, version: '1', kind: 'chat', active: true },
+        { id: 'qwen2.5-1.5b', name: 'Qwen2.5 1.5B', description: 'Medium model for broader coverage.', sizeBytes: 900000000, fileName: 'qwen2.5-1.5b-q4_0.gguf', downloaded: false, version: '1', kind: 'chat' },
+        { id: 'phi3-mini', name: 'Phi-3 Mini', description: 'Efficient model for fast answering.', sizeBytes: 1200000000, fileName: 'phi3-mini-q4.gguf', downloaded: true, version: '1', kind: 'chat' },
+        { id: 'bge-small', name: 'BGE Small', description: 'Embedding search model.', sizeBytes: 25000000, fileName: 'bge-small.gguf', downloaded: true, version: '1', kind: 'embedding', active: true }
       ];
       var quizzes = [
         { id: 'q1', title: 'Computer Basics', timeLimitSec: 300, questionCount: 8, createdAt: 1728000000000, updatedAt: 1728000000000 },

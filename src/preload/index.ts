@@ -20,8 +20,6 @@ import type {
   StoredQuiz,
   StoredQuestion,
   ModelInfo,
-  DownloadResult,
-  ModelProgress,
   AiStatus,
   AiTiming,
   GenerateProgress
@@ -130,9 +128,6 @@ const api = {
   /** Where the models live and which llama.cpp binary is used. */
   aiInfo: (): Promise<{ modelsDir: string; enginePath: string | null }> =>
     ipcRenderer.invoke('ai:info'),
-  /** Downloads a model by id. */
-  aiDownloadModel: (modelId: string): Promise<DownloadResult> =>
-    ipcRenderer.invoke('ai:downloadModel', modelId),
   /** Sets the active model (pass null to use the built-in generator). */
   aiSetModel: (modelId: string | null): Promise<boolean> =>
     ipcRenderer.invoke('ai:setModel', modelId),
@@ -147,21 +142,6 @@ const api = {
     ipcRenderer.invoke('ai:setEngine', enginePath),
   /** Opens a file dialog to pick the llama.cpp binary. */
   aiSelectEngine: (): Promise<string | null> => ipcRenderer.invoke('ai:selectEngine'),
-  /** Downloads the llama.cpp Windows CPU build automatically. */
-  aiDownloadEngine: (): Promise<{ ok: boolean; error?: string }> =>
-    ipcRenderer.invoke('ai:downloadEngine'),
-  /** Reports how far an engine download has come. */
-  onEngineProgress: (cb: (progress: { percent: number }) => void): (() => void) => {
-    const listener = (_e: unknown, progress: { percent: number }): void => cb(progress)
-    ipcRenderer.on('ai:engineProgress', listener)
-    return () => ipcRenderer.removeListener('ai:engineProgress', listener)
-  },
-  /** Reports how far a model download has come. */
-  onModelProgress: (cb: (progress: ModelProgress) => void): (() => void) => {
-    const listener = (_e: unknown, progress: ModelProgress): void => cb(progress)
-    ipcRenderer.on('ai:modelProgress', listener)
-    return () => ipcRenderer.removeListener('ai:modelProgress', listener)
-  },
   onStateChanged: (cb: (state: StateSnapshot) => void): (() => void) => {
     const listener = (_e: unknown, state: StateSnapshot): void => cb(state)
     ipcRenderer.on('state:changed', listener)

@@ -5,12 +5,6 @@ import { Button } from '../components/Button'
 import { Field } from '../components/Field'
 import { Icon } from '../components/Icon'
 
-/** A download in flight, with how far it got. */
-interface Progress {
-  modelId: string
-  percent: number
-}
-
 /** Human-readable file size. */
 function formatSize(bytes: number): string {
   if (bytes >= 1_000_000_000) return `${(bytes / 1_000_000_000).toFixed(1)} GB`
@@ -23,13 +17,9 @@ export function Settings(): React.JSX.Element {
   const [modelSearch, setModelSearch] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
-  const [busy, setBusy] = useState<string | null>(null)
-  const [progress, setProgress] = useState<Progress | null>(null)
   const [status, setStatus] = useState<AiStatus | null>(null)
   const [modelsDir, setModelsDir] = useState('')
   const [enginePath, setEnginePath] = useState('')
-  const [engineDownloading, setEngineDownloading] = useState(false)
-  const [engineProgress, setEngineProgress] = useState<number | null>(null)
 
   const loadModels = useCallback(async (): Promise<void> => {
     try {
@@ -59,34 +49,6 @@ export function Settings(): React.JSX.Element {
       setEnginePath(info.enginePath ?? '')
     })
   }, [loadModels, loadStatus])
-
-  // The download reports its progress over IPC; the screen follows it.
-  useEffect(
-    () =>
-      window.quiz.onModelProgress((p) => {
-        setProgress({ modelId: p.modelId, percent: p.percent })
-      }),
-    []
-  )
-
-  useEffect(() => window.quiz.onEngineProgress((p) => setEngineProgress(p.percent)), [])
-
-  const download = async (id: string): Promise<void> => {
-    setBusy(id)
-    setError('')
-    setProgress({ modelId: id, percent: 0 })
-    try {
-      const result = await window.quiz.aiDownloadModel(id)
-      if (!result.ok) setError(result.error)
-      await loadModels()
-      await loadStatus()
-    } catch (err) {
-      setError(String(err))
-    } finally {
-      setBusy(null)
-      setProgress(null)
-    }
-  }
 
   const activate = async (model: ModelInfo | null): Promise<void> => {
     setError('')
@@ -134,24 +96,6 @@ export function Settings(): React.JSX.Element {
     await loadStatus()
   }
 
-  const downloadEngine = async (): Promise<void> => {
-    setEngineDownloading(true)
-    setEngineProgress(0)
-    setError('')
-    try {
-      const result = await window.quiz.aiDownloadEngine()
-      if (!result.ok) setError(result.error ?? 'The engine could not be downloaded.')
-      const info = await window.quiz.aiInfo()
-      setEnginePath(info.enginePath ?? '')
-      await loadStatus()
-    } catch (err) {
-      setError(String(err))
-    } finally {
-      setEngineDownloading(false)
-      setEngineProgress(null)
-    }
-  }
-
   const activeModel = models.find((m) => m.active) ?? null
   const filteredModels = models.filter((m) =>
     `${m.name} ${m.description}`.toLowerCase().includes(modelSearch.trim().toLowerCase())
@@ -171,15 +115,28 @@ export function Settings(): React.JSX.Element {
     <div className="settings-page">
       <section className="settings-section">
         <h2>How to make AI work</h2>
-        <p className="settings-subtitle">
-          The app downloads the model, but it does not bundle llama.cpp. Follow these steps once.
+                <p className="settings-subtitle">
+          The app does not download models or llama.cpp. To use a GGUF model, obtain the model file
+          and the llama.cpp binary by other means, then point the app at them below. Everything runs
+          locally; nothing is sent over the network.
         </p>
         <ol className="settings-steps" style={{ margin: 0, paddingLeft: 20, lineHeight: 1.7 }}>
-          <li>Click <strong>Download engine automatically</strong> below, or download a Windows build of llama.cpp and keep <code>llama-cli.exe</code>.</li>
-          <li>If you downloaded it yourself, in <strong>Inference engine</strong>, click <strong>Browse…</strong>, select <code>llama-cli.exe</code>, then click <strong>Save</strong>.</li>
-          <li>Download a model below. <strong>Qwen2.5 1.5B</strong> is the smallest and fastest to try.</li>
-          <li>Click <strong>Use this model</strong> on the downloaded model.</li>
-          <li>Generate questions. If you see <code>spawn llama-cli ENOENT</code>, the binary path is missing or wrong.</li>
+          <li>
+            Download a Windows build of <code>llama-cli.exe</code> (llama.cpp) on another machine and
+            copy it here, or keep <code>llama-cli.exe</code> on the system PATH.
+          </li>
+          <li>
+            In <strong>Inference engine</strong>, click <strong>BrowseÃ¢â‚¬Â¦</strong>, select{' '}
+            <code>llama-cli.exe</code>, then click <strong>Save</strong>.
+          </li>
+          <li>
+            Place a GGUF model file in the models folder shown below (or point the app at it), then
+            click <strong>Use this model</strong>.
+          </li>
+          <li>
+            Generate questions. If you see <code>spawn llama-cli ENOENT</code>, the binary path is
+            missing or wrong.
+          </li>
         </ol>
         <p className="settings-note" style={{ marginTop: 10 }}>
           You can also add the folder containing <code>llama-cli.exe</code> to your Windows PATH and restart the app.
@@ -189,8 +146,8 @@ export function Settings(): React.JSX.Element {
       <section className="settings-section">
         <h2>AI models</h2>
         <p className="settings-subtitle">
-          Download a model once and it stays on this machine. Nothing is sent anywhere. The chosen
-          model answers every generated question and every answer key.
+          Place a model file in the models folder and it stays on this machine. Nothing is sent
+          anywhere. The chosen model answers every generated question and every answer key.
         </p>
 
         <div className="settings-status" data-testid="settings-status">
@@ -217,16 +174,7 @@ export function Settings(): React.JSX.Element {
               AI answers require a downloaded model. Start with {firstRunNudge.name} (about{' '}
               {formatSize(firstRunNudge.sizeBytes)}) — it's the smallest.
             </p>
-            <Button
-              size="sm"
-              variant="primary"
-              icon={<Icon name="download" />}
-              testId={`settings-nudge-download-${firstRunNudge.id}`}
-              disabled={busy !== null}
-              onClick={() => void download(firstRunNudge.id)}
-            >
-              {busy === firstRunNudge.id ? 'Downloading…' : 'Download'}
-            </Button>
+            
           </div>
         )}
 
@@ -250,14 +198,6 @@ export function Settings(): React.JSX.Element {
                   {model.downloaded && <Badge tone="ok">Downloaded</Badge>}
                   {model.active && <Badge tone="accent">Active</Badge>}
                 </div>
-                {busy === model.id && progress && (
-                  <div className="settings-progress">
-                    <div className="settings-progress-bar">
-                      <div className="settings-progress-fill" style={{ width: `${progress.percent}%` }} />
-                    </div>
-                    <span className="settings-progress-label">{progress.percent}%</span>
-                  </div>
-                )}
               </div>
 
               <div className="settings-model-actions">
@@ -271,25 +211,13 @@ export function Settings(): React.JSX.Element {
                     {model.kind === 'embedding' ? 'Use as search model' : 'Use this model'}
                   </Button>
                 )}
-                {!model.downloaded && (
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    icon={<Icon name="download" />}
-                    testId={`settings-download-${model.id}`}
-                    disabled={busy !== null}
-                    onClick={() => void download(model.id)}
-                  >
-                    {busy === model.id ? 'Downloading…' : 'Download'}
-                  </Button>
-                )}
+                
                 {model.downloaded && (
                   <Button
                     size="sm"
                     variant="danger"
                     icon={<Icon name="trash" />}
                     testId={`settings-delete-${model.id}`}
-                    disabled={busy !== null}
                     onClick={() => void remove(model)}
                   >
                     Delete
@@ -349,20 +277,6 @@ export function Settings(): React.JSX.Element {
             <Button size="sm" variant="primary" testId="settings-engine-save" onClick={() => void saveEngine()}>
               Save
             </Button>
-            <Button
-              size="sm"
-              variant="secondary"
-              icon={<Icon name="download" />}
-              testId="settings-engine-download"
-              disabled={engineDownloading || (enginePath.includes('llama-cpp') && enginePath.endsWith('llama-cli.exe'))}
-              onClick={() => void downloadEngine()}
-            >
-              {engineDownloading
-                ? `Downloading… ${engineProgress ?? 0}%`
-                : enginePath.includes('llama-cpp') && enginePath.endsWith('llama-cli.exe')
-                  ? 'Already downloaded'
-                  : 'Download engine automatically'}
-            </Button>
           </div>
         </div>
       </section>
@@ -381,8 +295,8 @@ export function Settings(): React.JSX.Element {
         </div>
         <p className="settings-note">
            {searchModel
-             ? 'The search model is downloaded, so the app also finds the passages that mean the same thing as the question.'
-             : 'Download a search model above to let the app find the passages that mean the same as the question, not only the ones with the same words.'}
+             ? 'The search model is installed, so the app also finds the passages that mean the same thing as the question.'
+             : 'Install a search model above to let the app find the passages that mean the same as the question, not only the ones with the same words.'}
         </p>
       </section>
     </div>
