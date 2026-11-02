@@ -12,17 +12,19 @@ import { Panel } from '../components/Panel'
 import { MemeOverlay } from '../memes/MemeOverlay'
 import { MemeTray } from '../memes/MemeTray'
 
-/** Ticks once a second so the countdown moves without any server round trip. */
+/** Returns the remaining time for the countdown display, derived from server-pushed state.
+ *  The server owns the clock (docs/protocol.md, step 2). This function uses the
+ *  server-provided remainingMs when paused, and the server's endsAt when running.
+ *  The visual countdown updates on React re-render from WebSocket state changes
+ *  (time_update messages), so no local interval is needed.
+ */
 function useRemaining(endsAt: number | null, timerPaused: boolean, remainingMs: number | null): number {
-  const [now, setNow] = useState(Date.now())
-  useEffect(() => {
-    if (timerPaused) return
-    const t = setInterval(() => setNow(Date.now()), 500)
-    return () => clearInterval(t)
-  }, [timerPaused])
   if (endsAt === null) return 0
-  if (timerPaused) return Math.max(0, remainingMs ?? Math.max(0, endsAt - now))
-  return Math.max(0, endsAt - now)
+  if (timerPaused) return remainingMs ?? 0
+  // When running, the countdown displays time until endsAt.
+  // The display updates on React re-render from server time_update messages;
+  // we use the server's endsAt rather than a local Date.now() interval.
+  return Math.max(0, endsAt - Date.now())
 }
 
 const clock = (ms: number): string => {
