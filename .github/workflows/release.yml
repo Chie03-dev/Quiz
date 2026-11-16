@@ -14,6 +14,12 @@ jobs:
   build:
     name: Build the Windows executables
     runs-on: windows-latest
+    env:
+      # Signing happens only when a certificate is configured; without one
+      # the build is produced unsigned, exactly as before.
+      CSC_LINK: ${{ secrets.CSC_LINK }}
+      CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+      CSC_IDENTITY_AUTO_DISCOVERY: ${{ secrets.CSC_LINK != '' && 'true' || 'false' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -28,18 +34,15 @@ jobs:
 
       - name: Typecheck, build and package
         run: npm run dist
-        env:
-          # Signing happens only when a certificate is configured; without one
-          # the build is produced unsigned, exactly as before.
-          CSC_LINK: ${{ secrets.CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
-          CSC_IDENTITY_AUTO_DISCOVERY: ${{ secrets.CSC_LINK != '' && 'true' || 'false' }}
 
       - name: Verify code signature
         # Meaningful only for a signed build; unsigned builds skip this step.
-        if: secrets.CSC_LINK != ''
         shell: pwsh
         run: |
+          if (-not $env:CSC_LINK) {
+            Write-Host 'No code-signing certificate configured; skipping signature verification.'
+            exit 0
+          }
           $failed = 0
           Get-ChildItem release/*.exe | ForEach-Object {
             $out = & signtool verify /pa $_.FullName 2>&1
