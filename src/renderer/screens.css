@@ -42,7 +42,7 @@
 .ai__file-note {
   margin: 0;
   font-size: var(--fs-sm);
-  color: var(--ui-text-secondary);
+  color: var(--ui-text-muted);
   line-height: 1.5;
 }
 
@@ -216,7 +216,7 @@
   display: flex;
   justify-content: center;
   padding: var(--sp-4);
-  background: #ffffff;
+  background: var(--ui-surface);
   border-radius: var(--r-md);
 }
 
@@ -844,7 +844,7 @@
 
 .lock.is-on .lock__thumb {
   transform: translateX(16px);
-  background: #ffffff;
+  background: var(--ui-text-on-accent);
 }
 
 .lock:focus-within {
@@ -1613,19 +1613,19 @@
 .settings-section h2 {
   margin: 0;
   font-size: var(--fs-lg);
-  color: var(--ui-heading);
+  color: var(--ui-text);
 }
 
 .settings-subtitle {
   margin: 0;
   font-size: var(--fs-sm);
-  color: var(--ui-text-secondary);
+  color: var(--ui-text-muted);
   line-height: 1.5;
 }
 
 .settings-loading {
   font-size: var(--fs-sm);
-  color: var(--ui-text-secondary);
+  color: var(--ui-text-muted);
 }
 
 .settings-error {
@@ -1639,14 +1639,14 @@
   gap: var(--sp-2);
   padding: var(--sp-3);
   border: 2px dashed var(--ui-border);
-  border-radius: var(--radius-md);
+  border-radius: var(--r-md);
   background: var(--ui-surface);
 }
 
 .settings-nudge__body {
   margin: 0;
   font-size: var(--fs-sm);
-  color: var(--ui-text-secondary);
+  color: var(--ui-text-muted);
   line-height: 1.4;
 }
 
@@ -1662,7 +1662,7 @@
   justify-content: space-between;
   padding: var(--sp-3);
   border: 1px solid var(--ui-border);
-  border-radius: var(--radius-md);
+  border-radius: var(--r-md);
   background: var(--ui-surface);
   gap: var(--sp-3);
 }
@@ -1677,13 +1677,13 @@
 .settings-model-info h3 {
   margin: 0;
   font-size: var(--fs-md);
-  color: var(--ui-heading);
+  color: var(--ui-text);
 }
 
 .settings-model-desc {
   margin: 0;
   font-size: var(--fs-sm);
-  color: var(--ui-text-secondary);
+  color: var(--ui-text-muted);
   line-height: 1.5;
 }
 
@@ -1703,8 +1703,8 @@
   justify-content: space-between;
   padding: var(--sp-3);
   border: 1px solid var(--ui-border);
-  border-radius: var(--radius-md);
-  background: var(--ui-surface-alt);
+  border-radius: var(--r-md);
+  background: var(--ui-surface-2);
   gap: var(--sp-3);
 }
 
@@ -1717,7 +1717,7 @@
 
 .settings-note {
   font-size: var(--fs-sm);
-  color: var(--ui-text-secondary);
+  color: var(--ui-text-muted);
   line-height: 1.5;
 }
 
@@ -1744,7 +1744,7 @@
 
 .settings-progress-label {
   font-size: var(--fs-sm);
-  color: var(--ui-text-secondary);
+  color: var(--ui-text-muted);
   min-width: 3ch;
   text-align: right;
 }
@@ -1752,7 +1752,7 @@
 .settings-path {
   margin: 0;
   font-size: var(--fs-sm);
-  color: var(--ui-text-secondary);
+  color: var(--ui-text-muted);
   word-break: break-all;
 }
 
@@ -1767,5 +1767,6 @@
   flex: 1;
   min-width: 260px;
 }
+
 
 

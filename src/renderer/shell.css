@@ -37,7 +37,7 @@
   height: 32px;
   border-radius: var(--r-md);
   background: var(--ui-accent);
-  color: #ffffff;
+  color: var(--ui-text-on-accent);
   font-weight: var(--fw-bold);
   font-size: var(--fs-md);
   flex: 0 0 auto;

@@ -17,6 +17,7 @@
   --ui-text: #eef1f8;
   --ui-text-muted: #9aa5c4;
   --ui-text-dim: #6d789a;
+  --ui-text-on-accent: #ffffff;
 
   /* --- accents (indigo / teal / amber, matching the student app theme) --- */
   --ui-accent: #6366f1;

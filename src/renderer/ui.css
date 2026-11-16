@@ -101,7 +101,7 @@ ul {
 
 .ui-btn--primary {
   background: var(--ui-accent);
-  color: #ffffff;
+  color: var(--ui-text-on-accent);
 }
 
 .ui-btn--primary:hover:not(:disabled) {
@@ -125,7 +125,7 @@ ul {
 
 .ui-btn--danger:hover:not(:disabled) {
   background: var(--ui-danger);
-  color: #ffffff;
+  color: var(--ui-text-on-accent);
 }
 
 .ui-btn--ghost {
